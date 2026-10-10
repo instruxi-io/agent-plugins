@@ -143,6 +143,18 @@
       "headers": []
     },
     {
+      "id": "src/dispatch/api.mjs GET /graphs/{}/review",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "GET",
+      "path": "/graphs/{}/review",
+      "sends": [],
+      "reads": [
+        "data"
+      ],
+      "headers": []
+    },
+    {
       "id": "src/dispatch/api.mjs GET /graphs/{}/nodes/{}",
       "file": "src/dispatch/api.mjs",
       "service": "graph",

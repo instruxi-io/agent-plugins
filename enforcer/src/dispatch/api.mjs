@@ -114,6 +114,10 @@ export class API {
     return (await this.call('GET', `/graphs/${g}/nodes/${n}/runs`)).data || [];
   }
   // api-used: reads data
+  async reviewOpen(g) {
+    return (await this.call('GET', `/graphs/${g}/review?open`)).data || [];
+  }
+  // api-used: reads data
   async node(g, n) {
     return one((await this.call('GET', `/graphs/${g}/nodes/${n}`)).data);
   }

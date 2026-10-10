@@ -147,6 +147,10 @@ hook already records.
 Bounded and fails open: no `gh`, no network, a private repo or a timeout all
 leave the report exactly as the model wrote it.
 
+### Attended dispatch
+
+With `--attend` (or `ENFORCER_DISPATCH_ATTEND=1`) the dispatcher tells you when it needs you and waits for your answer. On every pass it collects the open review items and the gates that are active with every prerequisite done, prints one `ATTENTION <kind> <key>: <why> (answer with: graphwatch attend <graph>, or graph_review / graph_decide)` line per new item (once per item, even across a restart; the seen set lives in the state dir) and calls `notify-send` when it is installed. When nothing is runnable but something needs you it does not exit: it polls every 15 seconds, logs `waiting on you: N item(s)` at most every 10 minutes, and launches as soon as a node becomes runnable. `enforcer dispatch status` shows `needs you: N`. Without the flag nothing changes.
+
 ## The graph-worker agent
 
 `agents/graph-worker.md` is the worker protocol as a plugin subagent

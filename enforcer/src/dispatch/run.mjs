@@ -38,6 +38,7 @@ import { unsafeIdent } from './ident.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
+import { ATTEND_POLL_SECONDS, ATTEND_NOTE_SECONDS, needsYou, newItems, attentionLine, loadSeen, saveSeen, notify } from './attention.mjs';
 import { writeLog, redactFile, redactLogsDir, pruneLogs, addSecret, DEFAULT_LOG_DAYS, DEFAULT_LOG_MAX_BYTES } from './logs.mjs';
 
 /** Per-worker spend cap passed as --max-budget-usd unless the operator overrides it. */
@@ -104,6 +105,8 @@ export function defaultArgs(o = {}) {
     maxAttempts: 2,
     types: DEFAULT_TYPES,
     interval: 30,
+    attend: false,
+    attendPoll: ATTEND_POLL_SECONDS,
     exitWhenIdle: false,
     heartbeat: 120,
     landTimeout: 3000,
@@ -158,6 +161,7 @@ export class Dispatcher {
     this.ciFetch = null; // ciFetch: test hook returning the feed's JSON text
     this.leaseAt = 0;
     this.verdictNoted = 0;
+    this.attendNoted = 0;
     this.terminating = null; // the signal name once SIGTERM/SIGINT arrived: an explicit state flag, not an exception
     this.wake = null;
   }
@@ -767,6 +771,29 @@ export class Dispatcher {
     return true;
   }
 
+  /** --attend: ring once per new item (seen set persisted in the state dir); returns the open count. */
+  async attention(nodes) {
+    let review = [];
+    let ready = new Set();
+    try {
+      if (typeof this.api.reviewOpen === 'function') review = await this.api.reviewOpen(this.g);
+      ready = new Set((await this.api.frontier(this.g)).map((n) => n.id));
+    } catch (e) {
+      if (!(e instanceof APIError)) throw e;
+      this.say(`attention: API error (${e.message}); retrying`);
+    }
+    const items = needsYou(nodes, review, ready);
+    const seen = loadSeen(this.state);
+    const fresh = newItems(seen, items);
+    for (const i of fresh) {
+      this.say(attentionLine(i, this.g));
+      notify(`Enforcer: ${i.kind} needs you`, `${i.ref}: ${i.why}`);
+      seen.add(i.id);
+    }
+    if (fresh.length) saveSeen(this.state, seen);
+    return items.length;
+  }
+
   async loop() {
     const a = this.args;
     if (a.dryRun) {
@@ -838,6 +865,14 @@ export class Dispatcher {
         return 0;
       }
       const busy = nodes.some((n) => n.status === 'running' && !lapsed(n));
+      let attendOpen = 0;
+      if (a.attend) {
+        try {
+          attendOpen = await this.attention(nodes);
+        } catch (e) {
+          this.say(`attention failed (${e.name}: ${e.message}); continuing`);
+        }
+      }
       const waiting = a.exitWhenIdle ? [] : this.verifyingGate(nodes);
       if (waiting.length && !this.workers.size && !launched.length && !busy) {
         idle = 0;
@@ -845,6 +880,14 @@ export class Dispatcher {
           this.say(`waiting on verdict for ${waiting.join(', ')}`);
           this.verdictNoted = now();
         }
+      } else if (a.attend && attendOpen > 0 && !this.workers.size && !launched.length && !busy) {
+        idle = 0;
+        if (now() - this.attendNoted > ATTEND_NOTE_SECONDS) {
+          this.say(`waiting on you: ${attendOpen} item(s)`);
+          this.attendNoted = now();
+        }
+        await this.sleep(a.attendPoll * 1000);
+        continue;
       } else if (!this.workers.size && !launched.length && !busy) {
         if (++idle >= 2) {
           const left = nodes
@@ -880,6 +923,7 @@ const OPTS = {
   types: { type: 'string' },
   interval: { type: 'string' },
   'exit-when-idle': { type: 'boolean' },
+  attend: { type: 'boolean' },
   heartbeat: { type: 'string' },
   'land-timeout': { type: 'string' },
   'state-dir': { type: 'string' },
@@ -947,6 +991,7 @@ export function parseDispatchArgs(argv, env = process.env) {
     types: v.types || d.types,
     interval: num(v.interval, d.interval),
     exitWhenIdle: !!v['exit-when-idle'],
+    attend: !!v.attend || env.ENFORCER_DISPATCH_ATTEND === '1',
     heartbeat: num(v.heartbeat, d.heartbeat),
     landTimeout: num(v['land-timeout'], d.landTimeout),
     stateDir,

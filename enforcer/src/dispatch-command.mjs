@@ -172,6 +172,7 @@ export async function statusText(graph, env = process.env) {
   for (const n of workers) L.push(`  ${n.key}  ${mins(n)} min  ${model(n)}`);
   if (!workers.length) L.push('  none running');
   L.push(`nodes: ${done.length} done, ${open.length} open, ${landing.length} landing blocked, ${needsYou.length} needs you`);
+  L.push(`needs you: ${needsYou.length}`);
   for (const n of landing) L.push(`  landing blocked: ${n.key}`);
   L.push(`review items (${review.length}):`);
   for (const n of review) {
