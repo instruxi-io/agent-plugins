@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.6
+
+This release makes dispatched workers actually receive the context pack, and say why when they cannot.
+
+- Dispatched workers get ENFORCER_BASE_URL and fetch the context pack from the graph's own route, and print one stderr line saying why when no pack is injected.
+
 ## 1.3.5
 
 This release makes workers start with the graph's context pack and turns compactions into graph memory.
