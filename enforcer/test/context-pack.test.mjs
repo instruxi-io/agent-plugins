@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
 
 const tmp = mkdtempSync(join(tmpdir(), 'ctxpack-'));
 process.env.HOME = tmp;
@@ -15,6 +16,8 @@ process.env.GRAPH_BASE_URL = 'http://127.0.0.1:1';
 delete process.env.ENFORCER_CONTEXT_PACK;
 const { sessionStart, rememberOnCompact, touchedFiles } = await import('../src/graph/hooks/session.mjs');
 const { workerEnv } = await import('../src/dispatch/launch.mjs');
+const { findConfig } = await import('../src/graph/hooks/common.mjs');
+const { contextPackText } = await import('../src/graph/context-pack.mjs');
 const { parseDispatchArgs } = await import('../src/dispatch/run.mjs');
 test.after(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -26,9 +29,9 @@ const opts = (ctx, fetches = []) => ({
   env: {},
   warn: () => {},
   post: async (_c, _m, path) => (path.endsWith('/context') ? ctx : { data: [] }),
-  fetchFile: async (ref, dest) => {
-    fetches.push(ref);
-    writeFileSync(dest, BYTES);
+  getPack: async (_c, h, { cached }) => {
+    fetches.push(h.slice(0, 4));
+    return cached ? { status: 304, bytes: null } : { status: 200, bytes: Buffer.from(BYTES) };
   },
 });
 const ctxOf = (r) => r?.hookSpecificOutput?.additionalContext ?? '';
@@ -42,7 +45,7 @@ test('the session hook injects identical bytes for the same pack hash', async ()
   assert.ok(a.startsWith(head));
   assert.ok(b.startsWith(head));
   assert.equal(a.slice(0, head.length), b.slice(0, head.length));
-  assert.deepEqual(fetches, ['f1'], 'fetched once per hash');
+  assert.equal(fetches.length, 2, 'second call revalidates');
   if (process.platform !== 'win32') assert.equal(statSync(join(tmp, 'state', 'context', `${sha}.md`)).mode & 0o777, 0o600);
 });
 
@@ -54,7 +57,7 @@ test('no pack means no injection', async () => {
 test('a fetch error injects nothing and says so once on stderr', async () => {
   const warns = [];
   const o = opts({ data: { pack: { sha256: 'a'.repeat(64), file_id: 'f2' } } });
-  o.fetchFile = async () => {
+  o.getPack = async () => {
     throw new Error('boom');
   };
   o.warn = (m) => warns.push(m);
@@ -100,4 +103,81 @@ test('compaction writes a graph-scoped summary with the touched files', async ()
   const c2 = [];
   await rememberOnCompact(ev, async (_c, _m, path) => (c2.push(path), path === '/graphs/g1/observations' ? null : { success: true }));
   assert.deepEqual(c2, ['/graphs/g1/observations', '/graphs/g1/nodes/n1/observations']);
+});
+
+test('workerEnv carries the base url', () => {
+  assert.equal(workerEnv('g', { ENFORCER_BASE_URL: 'https://x.example' }).ENFORCER_BASE_URL, 'https://x.example');
+  assert.equal(workerEnv('g', {}, { baseUrl: 'https://y.example' }).ENFORCER_BASE_URL, 'https://y.example');
+  assert.match(workerEnv('g', {}).ENFORCER_BASE_URL, /^https?:\/\/[^/]+$/, 'the resolved host root, with no api path');
+});
+
+test('findConfig falls back to the default host when only GRAPH_ID is set', () => {
+  const saved = process.env.GRAPH_BASE_URL;
+  delete process.env.GRAPH_BASE_URL;
+  try {
+    const cfg = findConfig(tmp);
+    assert.equal(cfg.base_url, 'https://api.instruxi.dev');
+    assert.equal(cfg.graph_id, 'g1');
+  } finally {
+    process.env.GRAPH_BASE_URL = saved;
+  }
+});
+
+const serve = async (handler) => {
+  const seen = [];
+  const srv = createServer((req, res) => {
+    seen.push({ url: req.url, inm: req.headers['if-none-match'], key: req.headers['x-api-key'] });
+    handler(req, res);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  return { seen, base: `http://127.0.0.1:${srv.address().port}`, close: () => srv.close() };
+};
+
+test('the pack is fetched from the graph route and injected byte-identical', async () => {
+  const ctx = JSON.stringify({ data: { pack: { sha256: sha } } });
+  const fx = await serve((req, res) => {
+    if (req.url.endsWith('/context/pack')) {
+      if (req.headers['if-none-match'] === `"${sha}"`) return res.writeHead(304, { ETag: `"${sha}"` }).end();
+      return res.writeHead(200, { ETag: `"${sha}"`, 'Content-Type': 'text/markdown' }).end(BYTES);
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(ctx);
+  });
+  try {
+    rmSync(join(tmp, 'state', 'context'), { recursive: true, force: true });
+    const cfg = { graph_id: 'g1', base_url: fx.base, api_key: 'worker-key' };
+    const head = `enforcer-graph context pack ${sha.slice(0, 12)}\n${BYTES}`;
+    const warns = [];
+    assert.equal(await contextPackText(cfg, { env: {}, warn: (m) => warns.push(m) }), head);
+    const packCalls = () => fx.seen.filter((c) => c.url === '/api/v1/graph/graphs/g1/context/pack');
+    assert.equal(packCalls().length, 1);
+    assert.equal(packCalls()[0].inm, undefined);
+    assert.equal(packCalls()[0].key, 'worker-key');
+    // 304: the cached copy is kept
+    assert.equal(await contextPackText(cfg, { env: {}, warn: (m) => warns.push(m) }), head);
+    assert.equal(packCalls().length, 2);
+    assert.equal(packCalls()[1].inm, `"${sha}"`);
+    assert.deepEqual(warns, []);
+    assert.equal(readFileSync(join(tmp, 'state', 'context', `${sha}.md`), 'utf8'), BYTES);
+  } finally {
+    fx.close();
+  }
+});
+
+test('every skip reason prints one stderr line', async () => {
+  const reasons = async (cfg, o) => {
+    const w = [];
+    const r = await contextPackText(cfg, { env: { GRAPH_ID: 'g1' }, warn: (m) => w.push(m), ...o });
+    assert.equal(r, null);
+    assert.equal(w.length, 1, JSON.stringify(w));
+    assert.match(w[0], /^enforcer-graph: context pack not injected \(.+\)$/);
+    return w[0];
+  };
+  const cfg = { graph_id: 'g1', base_url: 'http://x', api_key: 'k' };
+  const withPack = async () => ({ data: { pack: { sha256: 'b'.repeat(64) } } });
+  assert.match(await reasons(null, {}), /no base url/);
+  assert.match(await reasons(cfg, { env: { GRAPH_ID: 'g1', ENFORCER_CONTEXT_PACK: '0' } }), /switched off/);
+  assert.match(await reasons(cfg, { post: async () => ({ data: {} }) }), /no pack on the graph/);
+  assert.match(await reasons(cfg, { post: withPack, getPack: async () => ({ status: 404, bytes: null }) }), /no pack on the graph/);
+  assert.match(await reasons(cfg, { post: withPack, getPack: async () => ({ status: 403, bytes: null }) }), /HTTP 403/);
+  assert.match(await reasons(cfg, { post: withPack, getPack: async () => ({ status: 200, bytes: Buffer.from('other') }) }), /sha mismatch/);
 });

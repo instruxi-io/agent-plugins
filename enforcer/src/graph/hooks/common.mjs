@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { stateBase, privateDir, privateWrite } from '../state.mjs';
 import { readCredentials } from '../../credentials.mjs';
 import { envBaseUrl } from '../../config.mjs';
+import { DEFAULT_BASE } from './version-check.mjs';
 import { LEGACY_PROJECT_CONFIG } from '../../../hooks/claude/paths.mjs';
 
 export const GRAPH_TOOL_PREFIXES = ['mcp__plugin_enforcer_enforcer__graph_', 'mcp__enforcer__graph_', 'mcp__enforcer-graph__graph_'];
@@ -37,6 +38,8 @@ export function findConfig(start) {
   cfg.api_key = env[cfg.api_key_env || 'GRAPH_API_KEY'] || env.GRAPH_API_KEY || '';
   const doc = cfg.api_key ? null : readCredentials();
   if (!cfg.base_url && doc) cfg.base_url = doc.enforcer?.base_url || '';
+  // base_url is the HOST ROOT (https://api.instruxi.dev): src/graph/http.mjs appends /api/v1/graph. A dispatched worker (GRAPH_ID set) with no base anywhere falls back to the default host.
+  if (!cfg.base_url && env.GRAPH_ID) cfg.base_url = DEFAULT_BASE;
   cfg.base_url = String(cfg.base_url || '').replace(/\/+$/, '');
   if (!cfg.graph_id || !cfg.base_url) return null;
   const e = doc?.enforcer || {};
