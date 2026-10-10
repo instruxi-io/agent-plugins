@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.3.5
+
+This release makes workers start with the graph's context pack and turns compactions into graph memory.
+
+- Scout: documents the claude --autocompact flag and its measured cost (CONTEXT_BUDGET.md).
+- enforcer dispatch run --attend rings (ATTENTION line, notify-send) when a review item or ready gate needs a person, stays up while waiting, and dispatch status shows needs you.
+- Workers start with the graph's context pack (SessionStart), PreCompact writes graph-scoped summary observations, and dispatch gains --context on|off.
+
 ## 1.3.4
 
 This release makes a gate a human decision: a person decides it with graph_decide, and a worker never claims or reports one.
