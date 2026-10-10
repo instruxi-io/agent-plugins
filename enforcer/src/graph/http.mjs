@@ -47,3 +47,18 @@ export async function httpStatus(cfg, method, path, body, o = {}) {
   const [status, out] = await httpResult(cfg, method, path, body, o);
   return [status, out];
 }
+
+/** Raw bytes: {status, bytes, etag}; status 0 (bytes null) when no response came back. A 304 carries no bytes. Never throws. */
+export async function httpBytes(cfg, path, headers = {}, o = {}) {
+  try {
+    const res = await apiFetch(
+      `${cfg.base_url}/api/v1/graph${path}`,
+      { method: 'GET', headers: { ...(cfg.api_key ? { 'X-API-Key': cfg.api_key } : {}), ...headers } },
+      { auth: !cfg.api_key, timeoutMs: timeoutMs(), retries: 1, baseDelayMs: 50, maxDelayMs: 200, hooks: 'on', ...o },
+    );
+    const bytes = res.ok ? Buffer.from(await res.arrayBuffer()) : null;
+    return { status: res.status, bytes, etag: res.headers?.get?.('etag') || null };
+  } catch {
+    return { status: 0, bytes: null, etag: null };
+  }
+}

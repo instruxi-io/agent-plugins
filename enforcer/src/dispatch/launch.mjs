@@ -7,6 +7,7 @@ import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, 
 import { openStream, redactFile } from './logs.mjs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveConfig, DEFAULT_BASE_URL, BASE_URL_VAR } from '../config.mjs';
 import { DOT } from '../../hooks/claude/paths.mjs';
 import { PROFILE_NAME } from '../../lib/governor/profiles/headless-worker.mjs';
 
@@ -93,6 +94,7 @@ export const ENV_ALLOW = [
   'USER',
   'LOGNAME',
   'GRAPH_ID',
+  BASE_URL_VAR,
   'ENFORCER_PROFILE',
   'ENFORCER_GOVERNOR_RULES',
   'ENFORCER_CONTEXT_PACK',
@@ -128,7 +130,7 @@ const allowed = (k) => ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.s
 export function workerEnv(
   graphId,
   env = process.env,
-  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on' } = {},
+  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on', baseUrl = null } = {},
 ) {
   const root = pluginDirs()[0];
   const out = {};
@@ -140,6 +142,12 @@ export function workerEnv(
     CLAUDE_PLUGIN_ROOT: root,
     ENFORCER_PLUGIN_ROOT: root,
   });
+  // The host root the dispatcher itself talks to (the same resolver its API client uses): without it a worker holding only an API key has no base and its hooks go silent.
+  try {
+    out[BASE_URL_VAR] = baseUrl || resolveConfig({ env }).baseUrl;
+  } catch {
+    if (!out[BASE_URL_VAR]) out[BASE_URL_VAR] = DEFAULT_BASE_URL;
+  }
   out.ENFORCER_GOVERNOR_RULES = workerRules === 'on' ? 'on' : 'off'; // always set from the flag: an inherited value never decides
   out.ENFORCER_CONTEXT_PACK = context === 'off' ? '0' : '1'; // always set from the flag
   if (release) out.ENFORCER_RELEASE_NODE = '1';

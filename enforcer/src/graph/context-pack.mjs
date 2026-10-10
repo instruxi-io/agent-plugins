@@ -1,8 +1,8 @@
 // The graph's context pack: one immutable file per graph, fetched once per hash into the state dir and injected byte-identical.
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { http } from './http.mjs';
+import { http, httpBytes } from './http.mjs';
 import { stateBase, privateDir, privateWrite } from './state.mjs';
 const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
 
@@ -17,47 +17,46 @@ export const packHeader = (sha) => `enforcer-graph context pack ${String(sha).sl
 
 const cachePath = (sha) => join(stateBase(), 'context', `${String(sha).toLowerCase()}.md`);
 
-/** Default download: the existing files download path (bin/files.mjs), bounded by a 3 s timeout. */
-export async function downloadPack(ref, dest) {
-  const mod = '../../bin/files.mjs'; // a variable specifier: bin/files.mjs is its own program, not part of the typechecked source graph
-  const { download } = await import(mod);
-  const fetchImpl = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-  await download(ref, { out: dest, force: true }, { fetchImpl });
+/** Default fetch: GET /graphs/{id}/context/pack with the worker's own credential (ETag is the sha256; 304 when If-None-Match matches). */
+export async function fetchPack(cfg, sha, { cached = false } = {}) {
+  const r = await httpBytes(cfg, `/graphs/${cfg.graph_id}/context/pack`, cached ? { 'If-None-Match': `"${sha}"` } : {}, { timeoutMs: FETCH_TIMEOUT_MS });
+  return { status: r.status, bytes: r.bytes };
 }
 
+const reasonFor = (status) => (status === 404 ? 'no pack on the graph' : status === 0 ? 'HTTP no response' : `HTTP ${status}`);
+
 /**
- * The text to inject, or null (no graph, switched off, no pack, or a failure). Never throws; a failure prints one stderr notice.
- * `post(cfg, 'GET', path)` returns the parsed body or null; `fetchFile(ref, dest)` writes the file to dest.
+ * The text to inject, or null (no graph, switched off, no pack, or a failure). Never throws; whenever GRAPH_ID is set and nothing is
+ * injected it prints exactly one stderr line `enforcer-graph: context pack not injected (<reason>)`.
+ * `post(cfg, 'GET', path)` returns the parsed body or null; `getPack(cfg, sha, {cached})` returns {status, bytes}.
  */
-export async function contextPackText(cfg, { post = http, fetchFile = downloadPack, env = process.env, warn = (m) => process.stderr.write(m + '\n') } = {}) {
-  try {
-    if (!cfg || !contextEnabled(env)) return null;
-    // api-used: reads data.pack.sha256,data.pack.file_id
-    const body = await post(cfg, 'GET', `/graphs/${cfg.graph_id}/context`, undefined, { timeoutMs: FETCH_TIMEOUT_MS });
-    const d = isObj(body) && isObj(body.data) ? body.data : body;
-    const pack = isObj(d) ? d.pack : null;
-    if (!isObj(pack) || !SHA.test(String(pack.sha256 || ''))) return null;
-    const sha = String(pack.sha256).toLowerCase();
-    const p = cachePath(sha);
-    if (!existsSync(p)) {
-      const ref = pack.file_id || pack.path;
-      if (!ref) return null;
-      privateDir(join(stateBase(), 'context'));
-      const tmp = `${p}.part-${process.pid}`;
-      try {
-        await fetchFile(String(ref), tmp);
-        const bytes = readFileSync(tmp);
-        if (createHash('sha256').update(bytes).digest('hex') !== sha) throw new Error('sha256 does not match the graph row');
-        privateWrite(p, bytes);
-      } finally {
-        rmSync(tmp, { force: true });
-      }
-    }
-    return packHeader(sha) + readFileSync(p, 'utf8');
-  } catch (e) {
+export async function contextPackText(cfg, { post = http, getPack = fetchPack, env = process.env, warn = (m) => process.stderr.write(m + '\n') } = {}) {
+  const say = (reason) => {
     try {
-      warn(`enforcer-graph: context pack not injected (${String(e?.message || e).slice(0, 120)})`);
+      if (env.GRAPH_ID || cfg) warn(`enforcer-graph: context pack not injected (${reason})`);
     } catch {}
     return null;
+  };
+  try {
+    if (!contextEnabled(env)) return say('switched off');
+    if (!cfg) return say('no base url');
+    // api-used: reads data.pack.sha256
+    const body = await post(cfg, 'GET', `/graphs/${cfg.graph_id}/context`, undefined, { timeoutMs: FETCH_TIMEOUT_MS });
+    if (body === null || body === undefined) return say('HTTP error reading the graph context');
+    const d = isObj(body) && isObj(body.data) ? body.data : body;
+    const pack = isObj(d) ? d.pack : null;
+    if (!isObj(pack) || !SHA.test(String(pack.sha256 || ''))) return say('no pack on the graph');
+    const sha = String(pack.sha256).toLowerCase();
+    const p = cachePath(sha);
+    const cached = existsSync(p);
+    const r = await getPack(cfg, sha, { cached });
+    if (r.status === 304 && cached) return packHeader(sha) + readFileSync(p, 'utf8');
+    if (r.status !== 200 || !r.bytes) return say(reasonFor(r.status));
+    if (createHash('sha256').update(r.bytes).digest('hex') !== sha) return say('sha mismatch');
+    privateDir(join(stateBase(), 'context'));
+    privateWrite(p, r.bytes);
+    return packHeader(sha) + r.bytes.toString('utf8');
+  } catch (e) {
+    return say(String(e?.message || e).slice(0, 120));
   }
 }

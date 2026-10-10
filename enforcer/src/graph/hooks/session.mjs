@@ -116,14 +116,16 @@ export async function sessionStart(inp, opts = {}) {
     const lines = await statusLines(inp, opts.post);
     try {
       const cfg = findConfig(inp.cwd || process.env.CLAUDE_PROJECT_DIR);
-      const pack = cfg
-        ? await contextPackText(cfg, {
-            post: opts.post || http,
-            fetchFile: opts.fetchFile,
-            ...(opts.env ? { env: opts.env } : {}),
-            ...(opts.warn ? { warn: opts.warn } : {}),
-          })
-        : null;
+      const env = opts.env || process.env;
+      const pack =
+        cfg || env.GRAPH_ID
+          ? await contextPackText(cfg, {
+              post: opts.post || http,
+              ...(opts.getPack ? { getPack: opts.getPack } : {}),
+              ...(opts.env ? { env: opts.env } : {}),
+              ...(opts.warn ? { warn: opts.warn } : {}),
+            })
+          : null;
       if (pack) lines.unshift(pack);
     } catch {}
     let w = null;
