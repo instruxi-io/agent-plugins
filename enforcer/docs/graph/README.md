@@ -365,3 +365,12 @@ A graph can carry one context pack: an immutable file whose sha256 sits on the g
 Before a compaction, the PreCompact hook writes the last assistant summary as a graph-scoped observation of kind `summary` with `data.node_key`, `data.run_id` and `data.files` (the files the transcript touched). A service without graph scope gets the node-scoped write instead.
 
 `enforcer dispatch run --context on|off` (default on) sets `ENFORCER_CONTEXT_PACK=1|0` for workers; `off` suppresses the injection. `enforcer plan check` prints a WARN when the graph has no pack.
+
+### The acceptance allow-list and credentials
+
+Graph-authored acceptance lines run only in a shape from `src/acceptance-allowlist.mjs`, with a minimal environment
+and a temporary HOME. `grep -R` is not allowed (it follows symlinks found inside the tree); `grep -r` is. The one
+exception to the environment rule is the read-only `gh pr view` shape: it is passed `GH_TOKEN` (or `GITHUB_TOKEN`)
+and `GH_CONFIG_DIR` from the operator's environment, and no other shape sees them. With neither token set the line is
+skipped with `no GH_TOKEN for gh` instead of being run. `enforcer plan check` refuses a node whose `data.repo` is not
+a plain name (`^[A-Za-z0-9._-]+$`) with a WARN line.

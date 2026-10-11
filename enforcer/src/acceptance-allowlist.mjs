@@ -178,8 +178,8 @@ export const ACCEPTANCE_SHAPES = Object.freeze(
     },
     {
       name: 'grep',
-      usage: 'grep [-cnilEFwvxrRhHqo] <literal> <relative path>...',
-      match: (a, root) => grepShape(a, root, ['grep'], /^-[cnilEFwvxrRhHqo]+$/, 1),
+      usage: 'grep [-cnilEFwvxrhHqo] <literal> <relative path>...',
+      match: (a, root) => grepShape(a, root, ['grep'], /^-[cnilEFwvxrhHqo]+$/, 1),
     },
     {
       name: 'git grep',
@@ -223,13 +223,17 @@ function headTail(tool, a, root) {
 }
 
 /** Decide one command: {argv, shape} when it fully matches a shape, else {skip: SKIP_REASON + why}. */
-export function allowedCommand(cmd, { root = process.cwd() } = {}) {
+export function allowedCommand(cmd, { root = process.cwd(), env = process.env } = {}) {
   const t = tokenize(cmd);
   if (t.error) return { skip: `${SKIP_REASON} (${t.error})` };
   const shape = ACCEPTANCE_SHAPES.find((s) => s.match(t.argv, root));
   if (!shape) return { skip: `${SKIP_REASON} (${t.argv[0]})` };
+  if (shape.name === 'gh pr view' && !ghToken(env)) return { skip: 'no GH_TOKEN for gh' };
   return { argv: t.argv, shape: shape.name };
 }
+
+/** The operator's GitHub token for the read-only `gh pr view` shape, or ''. */
+const ghToken = (env) => env?.GH_TOKEN || env?.GITHUB_TOKEN || '';
 
 /** Add the flags a Go test needs for `--- PASS: <Name>` to appear, as argv (the string form is evidence-run's goTestFlags). */
 export function goTestArgv(argv, literals = []) {
@@ -264,7 +268,7 @@ const PASS_ENV = new Set([
 
 /** The minimal environment an allowed line runs with: PATH, locale, the Go cache locations, and `home` as HOME. No
  *  credential, no token, no NODE_OPTIONS reaches the command. */
-export function isolatedEnv(env, home) {
+export function isolatedEnv(env, home, { gh = false } = {}) {
   /** @type {Record<string, string>} */
   const out = {};
   for (const [k, v] of Object.entries(env || {})) if (v !== undefined && PASS_ENV.has(k.toUpperCase())) out[k] = v;
@@ -272,6 +276,11 @@ export function isolatedEnv(env, home) {
   // the Go module and build caches stay where they were: they hold downloaded code and build output, not credentials
   if (!('GOMODCACHE' in out)) out.GOMODCACHE = join(env?.GOPATH || join(realHome, 'go'), 'pkg', 'mod');
   if (!('GOFLAGS' in out)) out.GOFLAGS = '-modcacherw';
+  // only the read-only `gh pr view` shape gets the operator's token and gh config dir; nothing else does
+  if (gh) {
+    if (ghToken(env)) out.GH_TOKEN = ghToken(env);
+    if (env?.GH_CONFIG_DIR) out.GH_CONFIG_DIR = env.GH_CONFIG_DIR;
+  }
   return { ...out, HOME: home, USERPROFILE: home, TMPDIR: home, TEMP: home, TMP: home, GIT_PAGER: 'cat', PAGER: 'cat', GIT_CONFIG_NOSYSTEM: '1' };
 }
 
@@ -335,7 +344,7 @@ export function spawnAllowed(argv, { cwd, env = process.env, timeoutMs = 600000,
     const [bin, args] = binFor(argv);
     const r = run(bin, args, {
       cwd,
-      env: isolatedEnv(env, home),
+      env: isolatedEnv(env, home, { gh: argv[0] === 'gh' && argv[1] === 'pr' && argv[2] === 'view' }),
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
