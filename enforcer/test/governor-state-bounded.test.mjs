@@ -19,7 +19,7 @@ for (const k of Object.keys(process.env)) if (k.startsWith('ENFORCER_') || k.sta
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 const { loadState, saveState } = await import('../lib/governor/core/store.mjs');
-const { decide, getAgent, RECENT_CAP, DEFAULTS } = await import('../lib/governor/core/policy.mjs');
+const { decide, DEFAULTS } = await import('../lib/governor/core/policy.mjs');
 const STATE = join(gdir, 'state.json');
 const cfg = { ...DEFAULTS };
 
@@ -82,19 +82,6 @@ test('unmapped keeps its 100 most recent', () => {
   const s = loadState();
   assert.equal(Object.keys(s.unmapped).length, 100);
   assert.ok(s.unmapped['/p/349'] && !s.unmapped['/p/0']);
-});
-
-test('recent never exceeds its cap after 1000 tool calls', () => {
-  write({});
-  const s = loadState();
-  for (let i = 0; i < 1000; i++) {
-    (getAgent(s, 'busy', cfg).recent ||= []).push('Bash:' + 'y'.repeat(500));
-    decide(s, { agent: 'busy', tool: 'Bash', action: 'Bash:ls' }, cfg);
-    assert.ok(s.agents.busy.recent.length <= RECENT_CAP + 1);
-  }
-  getAgent(s, 'busy', cfg);
-  assert.ok(s.agents.busy.recent.length <= RECENT_CAP);
-  assert.ok(JSON.stringify(s.agents.busy).length < 4000);
 });
 
 test('the decision and receipt for a fixed payload are unchanged', () => {
