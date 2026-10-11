@@ -45,7 +45,11 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plu
 - **Context pack and recall.** Shipped in 1.3.6 and off by default per graph.
   Plumbing is verified end to end; the first A/B on four-node graphs measured
   no token saving (the comparison was confounded by unequal tasks). A paired
-  deep-node run is in progress; no saving is claimed until it reports.
+  deep-node run (three chained audit nodes, same model both sides) measured
+  20% fewer turns and 31% fewer cache-read tokens with the pack and recall on,
+  verdicts unchanged; it is one pair and one node went the other way, so no
+  saving is claimed until repeats report (docs/CONTEXT_BASELINE.md in
+  enforcer-graph).
 - **Hook latency.** 1.3.3 trimmed the pre-tool-use hook's startup by a few
   milliseconds on an empty home; on a home with a long receipts history the
   hook still costs about 100 ms per tool call. The tail-read fix is not done.
