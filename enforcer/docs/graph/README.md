@@ -178,6 +178,10 @@ The one command is `/enforcer:dispatch <graph-id>` (or `enforcer dispatch <graph
 It will ask three things of you: resolve the gates (smoke tests and releases are never dispatched), look at the review items where a verdict needs a person, and unblock a node marked "landing blocked" (a conflict or CI outage the dispatcher could not clear) or "needs you". Merged work is reported as done, never as failed.
 
 
+### Autocompact
+
+`enforcer dispatch run --autocompact auto|<tokens>` (or `ENFORCER_DISPATCH_AUTOCOMPACT`) passes `claude --autocompact <tokens>` to claude workers, which compacts a worker's context at a window of 100000 to 1000000 tokens. The default `auto` changes nothing. The scout ([CONTEXT_BUDGET.md](CONTEXT_BUDGET.md)) measured that it cut last-call context from 295K to 156K and cache_read by 66 percent on a synthetic long node, and cost 26 percent more on a short one, because compaction only pays when many calls follow. Use it on deep nodes only. The `done` log line shows `autocompact=<value>` when set and `compactions=<n>` when the worker compacted.
+
 ## The plugin must be ENABLED, and the allowlist must name the tools as they load
 
 - A disabled `enforcer` plugin contributes no hooks: no lease keepalive, no

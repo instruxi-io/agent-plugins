@@ -82,3 +82,10 @@ export function countTurns(path, harness = 'claude') {
   for (const e of events(path, harness)) if (e.type === 'assistant') n++;
   return n;
 }
+
+/** Count the compact_boundary events (auto-compaction) in a claude worker's stream. */
+export function countCompactions(path) {
+  let n = 0;
+  for (const e of claudeEvents(path)) if (e.type === 'system' && e.subtype === 'compact_boundary') n++;
+  return n;
+}

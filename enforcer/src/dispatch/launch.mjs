@@ -235,6 +235,7 @@ export function launchCmd(prompt, model, args, key, { session = null, resume = f
   if (maxTurns) cmd.push('--max-turns', String(maxTurns));
   cmd.push('--allowedTools', allowedTools().join(','), '--permission-prompts', 'none', '--output-format', 'stream-json', '--verbose', '--name', 'graph:' + key);
   if (args.maxBudgetUsd) cmd.push('--max-budget-usd', String(args.maxBudgetUsd));
+  if (args.autocompact && args.autocompact !== 'auto') cmd.push('--autocompact', String(args.autocompact));
   return cmd;
 }
 
