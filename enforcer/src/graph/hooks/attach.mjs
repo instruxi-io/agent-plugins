@@ -138,6 +138,7 @@ export function evidenceGaps(hints, evidence) {
 // judged no_evidence, while `cd enforcer && npm test` ran for minutes inside the hook).
 const ACCEPT_LINE_MS = 8_000;
 const ACCEPT_BUDGET_MS = 15_000;
+const ACCEPT_HEADROOM_MS = 1_000;
 const ACCEPT_MIN_MS = 500;
 // Cheap read-only commands run first so a slow suite never starves the one-second `ls` the judge asks for.
 const FAST = /^\s*(ls|cat|grep|wc|head|tail|test|stat|git\s+(log|status|rev-parse|tag|diff)|gh\s+(pr|run)\s+(view|list|checks))\b/;
@@ -155,7 +156,8 @@ export function acceptanceRecords(inp, run, deps = {}) {
       if (g.status === 0 && g.stdout.trim()) cwd = g.stdout.trim();
     } catch {}
     const lineMs = deps.acceptanceTimeoutMs ?? ACCEPT_LINE_MS;
-    const deadline = Date.now() + (deps.acceptanceBudgetMs ?? ACCEPT_BUDGET_MS);
+    let deadline = Date.now() + (deps.acceptanceBudgetMs ?? ACCEPT_BUDGET_MS);
+    if (Number.isFinite(deps.deadline)) deadline = Math.min(deadline, deps.deadline - ACCEPT_HEADROOM_MS); // the hook's shared deadline
     const order = lines.map((l, i) => i).sort((a, b) => (FAST.test(lines[b]) ? 1 : 0) - (FAST.test(lines[a]) ? 1 : 0));
     const node = { key: run.key, node_id: run.node_id, data: { acceptance: lines } };
     const items = [],

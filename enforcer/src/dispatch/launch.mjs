@@ -431,6 +431,16 @@ export async function killGroup(p, grace = 30000, killWait = 10000) {
   killNonce(p.nonce);
 }
 
+/** True when the process exists (kill -0), whether or not it leads a group: a dispatcher started with `&` is not a leader. */
+export function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
 /** True when pid is alive and a session leader (pgid == pid): how a worker we launched looks; a recycled pid usually is not. */
 export function pidAliveGroup(pid) {
   try {

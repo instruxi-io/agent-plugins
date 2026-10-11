@@ -110,6 +110,9 @@ const runOf = (ev) => {
     return undefined;
   }
 };
+/** One deadline for the whole hook, taken at entry: the governor half and the graph half share it (a hook the harness kills
+ *  at its timeout drops all of its output). */
+export const hookDeadline = (event, t0 = Date.now()) => t0 + (EVENTS[event]?.budget || 5000);
 export async function native(handlers, ev, deadline) {
   let out = null;
   for (const h of handlers) {
@@ -121,7 +124,7 @@ export async function native(handlers, ev, deadline) {
     try {
       const mod = await import(`./graph/hooks/${NATIVE[h][0]}.mjs`);
       const r = await Promise.race([
-        mod[NATIVE[h][1]](ev),
+        h === 'attach_evidence' ? mod[NATIVE[h][1]](ev, { deadline }) : mod[NATIVE[h][1]](ev),
         new Promise((res) => {
           timer = setTimeout(() => res(null), left);
         }),
@@ -154,9 +157,12 @@ export async function runEvent(name, opts = {}) {
     return 2;
   }
   const spec = EVENTS[event];
+  const deadline = hookDeadline(event);
+  const govRun = opts.governorFn || governor;
+  const nativeRun = opts.nativeFn || native;
   let raw = '';
   try {
-    raw = readFileSync(0, 'utf8');
+    raw = typeof opts.input === 'string' ? opts.input : readFileSync(0, 'utf8');
   } catch {}
   let ev = {};
   try {
@@ -165,7 +171,7 @@ export async function runEvent(name, opts = {}) {
   if (!isObj(ev)) ev = {};
   // The harness names the event itself; a shim routed an event it does not own stays silent.
   let out = null;
-  if (spec.gov && !opts.graphOnly) out = await governor(spec.gov, raw);
+  if (spec.gov && !opts.graphOnly) out = await govRun(spec.gov, raw);
   const denied = out?.hookSpecificOutput?.permissionDecision === 'deny';
   let handlers = [];
   const tool = ev.tool_name || '';
@@ -182,11 +188,11 @@ export async function runEvent(name, opts = {}) {
   let code = 0;
   if (handlers.length && (event === 'SessionStart' || graphContextLive(ev))) {
     // session-start notices print with or without a graph
-    const r = await native(handlers, ev, Date.now() + (spec.budget || 5000));
+    const r = await nativeRun(handlers, ev, deadline);
     out = merge(out, r.out);
     code = r.code;
   }
-  if (out) process.stdout.write(JSON.stringify(out) + '\n');
+  if (out) (opts.write || ((t) => process.stdout.write(t)))(JSON.stringify(out) + '\n');
   return code;
 }
 const EXIT_NAMES = () => EVENT_NAMES.join('|');

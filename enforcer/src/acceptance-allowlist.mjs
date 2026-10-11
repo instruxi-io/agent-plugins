@@ -349,9 +349,19 @@ export function spawnAllowed(argv, { cwd, env = process.env, timeoutMs = 600000,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
+      detached: process.platform !== 'win32', // its own process group, so a timeout can kill the grandchildren too
       timeout: timeoutMs,
       maxBuffer: 64 << 20,
     });
+    if (r.error?.code === 'ETIMEDOUT') {
+      if (process.platform !== 'win32' && r.pid) {
+        try {
+          process.kill(-r.pid, 'SIGKILL');
+        } catch {
+          /* the group is already gone */
+        }
+      }
+    }
     if (r.error?.code === 'ETIMEDOUT') return { exit: 124, out: `timed out after ${Math.round(timeoutMs / 1000)} s`, timedOut: true };
     if (r.error) return { exit: 127, out: String(r.error.message), error: r.error };
     return { exit: r.status ?? 1, out: (r.stdout || '') + (r.stderr || '') };
