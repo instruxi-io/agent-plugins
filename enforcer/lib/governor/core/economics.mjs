@@ -204,6 +204,6 @@ export function evaluate(state, ev, cfg, now = Date.now()) {
   }
   // Advisory only: never changes the verdict, only says the model and the job
   // look mismatched. A hook cannot switch models, so this is for the human.
-  const advice = cfg.adviseModel !== false ? modelAdvice(a.model, taskShape(a.task || ev.task)) : null;
+  const advice = !isOff(cfg.adviseModel) ? modelAdvice(a.model, taskShape(a.task || ev.task)) : null;
   return advice ? Verdict.allow('inside the limit, doing new work', { ...of, advice }) : null;
 }

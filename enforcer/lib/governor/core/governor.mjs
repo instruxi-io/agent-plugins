@@ -209,7 +209,7 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
         if (failed || answered) saveState(state);
       });
     // Ship what has been decided, without waiting (at most every 30s).
-    if (loadConfig().shipOn !== false) kick(30_000, shipper);
+    if (!isOff(loadConfig().shipOn)) kick(30_000, shipper);
   }
 
   /** Count a new agent starting, for the fan-out rate check. */
@@ -325,7 +325,7 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
 
   /** Ship the record now-ish: delayMs is the throttle (0 at session end). */
   function flush(delayMs = 30_000) {
-    if (loadConfig().shipOn !== false) kick(delayMs, shipper);
+    if (!isOff(loadConfig().shipOn)) kick(delayMs, shipper);
   }
 
   return { harness, adapterVersion, shipper, config, before, after, spawned, brief, session, flush };
