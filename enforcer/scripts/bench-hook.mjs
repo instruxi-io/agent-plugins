@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Hook latency bench: runs `bin/enforcer event <name>` N times against a fixed Bash payload and
 // compares the median with a bare `node -e 0` on the same host.
-//   node scripts/bench-hook.mjs [event] [--runs N]
+//   node scripts/bench-hook.mjs [event] [--runs N] [--populated]
+//   --populated: first builds a governor dir like a long-lived home (700 agents, 350 unmapped, 500 cursor
+//   files) and also prints `populated_overhead_ms=`.
 //   event: pre-tool-use (default), post-tool-use, stop, session-start, ...
 // Prints `bare_node_ms=<median> hook_ms=<median> overhead_ms=<hook - bare>` and exits 0.
 // Every run gets a temp HOME (and temp config, state and plugin data dirs), so the real
 // ~/.config is never read or written; decisioning is off there by default, so nothing goes to the network.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 const args = process.argv.slice(2);
 const at = args.indexOf('--runs');
 const runs = Math.max(3, Number(at >= 0 ? args[at + 1] : 30) || 30);
+const populated = args.includes('--populated');
 const event = args.find((a, i) => !a.startsWith('--') && args[i - 1] !== '--runs') || 'pre-tool-use';
 const cli = fileURLToPath(new URL('../bin/enforcer', import.meta.url));
 
@@ -56,8 +59,24 @@ const median = (xs) => {
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 
-try {
-  // warm the file cache and the V8 compile cache
+// A synthetic long-lived governor dir: agents shaped like real ones (the big ones carry ~30 KB of `recent`).
+const populate = () => {
+  const dir = join(base, '.config', 'enforcer', 'governor');
+  mkdirSync(dir, { recursive: true });
+  const agents = {};
+  for (let i = 0; i < 700; i++) {
+    const id = `agent-${i}`;
+    const recent = [];
+    for (let j = 0; j < (i % 3 === 0 ? 8 : 1); j++) recent.push(`Bash:${'x'.repeat(3700)}`);
+    agents[id] = { id, tokens: 1000 + i, recent, escalated: false, status: 'active', budget: 500000, soft: 0.8, cost: 0, task: `task ${i}`, tool: 'Bash' };
+  }
+  const unmapped = {};
+  for (let i = 0; i < 350; i++) unmapped[`/home/u/proj-${i}`] = `proj-${i}`;
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ agents, unmapped }));
+  for (let i = 0; i < 500; i++) writeFileSync(join(dir, `cursor-sess-${i}.json`), JSON.stringify({ offset: i, usd: 0 }));
+};
+
+const measure = () => {
   for (let i = 0; i < 3; i++) time([cli, 'event', event], input);
   const bare = [];
   const hook = [];
@@ -66,10 +85,20 @@ try {
     bare.push(time(['-e', '0'], ''));
     hook.push(time([cli, 'event', event], input));
   }
-  const b = median(bare);
-  const h = median(hook);
+  return [median(bare), median(hook)];
+};
+
+try {
+  const [b, h] = measure(); // also warms the file cache and the V8 compile cache
   console.log(`event=${event} runs=${runs}`);
   console.log(`bare_node_ms=${b.toFixed(1)} hook_ms=${h.toFixed(1)} overhead_ms=${(h - b).toFixed(1)}`);
+  console.log(`empty_overhead_ms=${(h - b).toFixed(1)}`);
+  if (populated) {
+    populate();
+    const [pb, ph] = measure();
+    console.log(`populated_hook_ms=${ph.toFixed(1)}`);
+    console.log(`populated_overhead_ms=${(ph - pb).toFixed(1)}`);
+  }
 } finally {
   rmSync(base, { recursive: true, force: true });
   rmSync(cwd, { recursive: true, force: true });
