@@ -35,7 +35,12 @@ export function needsYou(nodes, reviewItems = [], readyIds = new Set()) {
     const deps = n.depends_on || n.prerequisites || n.requires;
     const decidable = Array.isArray(deps) ? deps.every((d) => (byId.get(d?.id ?? d?.key ?? d) || {}).status === 'done') : readyIds.has(n.id);
     if (decidable)
-      out.push({ kind: 'gate', id: `gate:${n.key ?? n.id}`, ref: String(n.key ?? n.id), why: one(n.data?.decision || n.title || 'a gate is ready to decide') });
+      out.push({
+        kind: 'gate',
+        id: `gate:${n.key ?? n.id}${(n.epoch ?? n.data?.epoch) != null ? `:${n.epoch ?? n.data.epoch}` : ''}`,
+        ref: String(n.key ?? n.id),
+        why: one(n.data?.decision || n.title || 'a gate is ready to decide'),
+      });
   }
   return out;
 }

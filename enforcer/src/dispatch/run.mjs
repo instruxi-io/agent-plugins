@@ -20,6 +20,8 @@ import {
   killGroup,
   alive,
   pidAliveGroup,
+  pidAlive,
+  procStartTime,
   verifyWorker,
   killNonce,
   harnessRefusal,
@@ -198,6 +200,7 @@ export class Dispatcher {
   // ---- reading the plan
   async candidates(nodes) {
     const front = await this.api.frontier(this.g);
+    this.lastFrontier = front; // attention() reuses this pass's frontier instead of fetching it again
     const ours = new Set(this.workers.keys());
     const out = [];
     const seen = new Set();
@@ -254,7 +257,7 @@ export class Dispatcher {
     }
     if (this.stopping() || this.blocked) {
       if (chosen.length) this.say(`${this.blocked ? 'blocked' : 'stop file present'}: not launching ${chosen.map((n) => n.key).join(', ')}`);
-      return { nodes, launched: [] };
+      return { nodes, launched: [], frontier: this.lastFrontier };
     }
     const launched = [];
     for (const n of chosen) {
@@ -266,7 +269,7 @@ export class Dispatcher {
         this.say(`launch ${n.key} failed (${e.name}: ${e.message}); continuing`);
       }
     }
-    return { nodes, launched };
+    return { nodes, launched, frontier: this.lastFrontier };
   }
 
   // ---- base resolution
@@ -642,7 +645,9 @@ export class Dispatcher {
       // what proves a pid is still the worker we launched: its start time and the launch nonce in its environment
       const meta = Object.fromEntries(live.map(([k, w]) => [k, { start: w.proc.start ?? null, nonce: w.proc.nonce ?? null }]));
       const p = join(this.state, 'pids.json');
-      writeFileSync(p + '.tmp', JSON.stringify({ dispatcher: process.pid, host: hostname(), workers, meta }), { mode: 0o600 });
+      writeFileSync(p + '.tmp', JSON.stringify({ dispatcher: process.pid, dispatcherStart: procStartTime(process.pid), host: hostname(), workers, meta }), {
+        mode: 0o600,
+      });
       chmodSync(p + '.tmp', 0o600);
       renameSync(p + '.tmp', p);
     } catch {
@@ -662,7 +667,11 @@ export class Dispatcher {
       return [];
     }
     if (rec.host != null && rec.host !== hostname()) return [];
-    if (rec.dispatcher && rec.dispatcher !== process.pid && pidAliveGroup(rec.dispatcher)) return [];
+    if (rec.dispatcher && rec.dispatcher !== process.pid && pidAlive(rec.dispatcher)) {
+      // the same process, not a reused pid: its start time still matches when one was recorded
+      const st = rec.dispatcherStart == null ? null : procStartTime(rec.dispatcher);
+      if (st === null || st === rec.dispatcherStart) return [];
+    }
     const reaped = [];
     for (const [key, pid] of Object.entries(rec.workers || {})) {
       if (!Number.isInteger(pid) || pid === process.pid || !pidAliveGroup(pid)) continue;
@@ -798,12 +807,12 @@ export class Dispatcher {
   }
 
   /** --attend: ring once per new item (seen set persisted in the state dir); returns the open count. */
-  async attention(nodes) {
+  async attention(nodes, frontier = null) {
     let review = [];
     let ready = new Set();
     try {
       if (typeof this.api.reviewOpen === 'function') review = await this.api.reviewOpen(this.g);
-      ready = new Set((await this.api.frontier(this.g)).map((n) => n.id));
+      ready = new Set((frontier || (await this.api.frontier(this.g))).map((n) => n.id));
     } catch (e) {
       if (!(e instanceof APIError)) throw e;
       this.say(`attention: API error (${e.message}); retrying`);
@@ -811,12 +820,27 @@ export class Dispatcher {
     const items = needsYou(nodes, review, ready);
     const seen = loadSeen(this.state);
     const fresh = newItems(seen, items);
+    // forget ids that no longer need a person, so a gate re-activated later rings again
+    const current = new Set(items.map((i) => i.id));
+    let changed = false;
+    for (const id of [...seen])
+      if (!current.has(id)) {
+        seen.delete(id);
+        changed = true;
+      }
+    for (const i of fresh) seen.add(i.id);
+    if (fresh.length || changed) {
+      try {
+        saveSeen(this.state, seen); // save first: a failed save must not re-ring on every pass
+      } catch (e) {
+        this.say(`attention: could not save the seen set (${e.message}); not ringing this pass`);
+        return items.length;
+      }
+    }
     for (const i of fresh) {
       this.say(attentionLine(i, this.g));
       notify(`Enforcer: ${i.kind} needs you`, `${i.ref}: ${i.why}`);
-      seen.add(i.id);
     }
-    if (fresh.length) saveSeen(this.state, seen);
     return items.length;
   }
 
@@ -859,17 +883,25 @@ export class Dispatcher {
           if ([401, 403, 404, 'auth'].includes(e.status)) return 1;
         }
         this.writePids();
+        if (a.attend) {
+          try {
+            await this.attention(await this.api.nodes(this.g));
+          } catch (e) {
+            this.say(`attention failed during a hold (${e.name}: ${e.message}); continuing`);
+          }
+        }
         await this.sleep(Math.min(Math.max(a.interval, 1) * 1000, (Math.max(this.limitedUntil - now(), 0) + 0.01) * 1000, 300000));
         continue;
       }
       let nodes;
       let launched;
+      let frontier;
       try {
         await this.reap();
         if (this.limitedUntil > now()) continue; // a worker just reported a usage limit: hold, do not tick
         if (!(await this.renewIfDue())) return 3;
         this.writePids();
-        ({ nodes, launched } = await this.tick());
+        ({ nodes, launched, frontier } = await this.tick());
       } catch (e) {
         if (e instanceof APIError) {
           this.say(`API error (pass skipped, retrying): ${e.message}`);
@@ -894,7 +926,7 @@ export class Dispatcher {
       let attendOpen = 0;
       if (a.attend) {
         try {
-          attendOpen = await this.attention(nodes);
+          attendOpen = await this.attention(nodes, frontier);
         } catch (e) {
           this.say(`attention failed (${e.name}: ${e.message}); continuing`);
         }
