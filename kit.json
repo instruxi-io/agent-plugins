@@ -1,7 +1,7 @@
 {
   "_comment": "What `claude-loadout setup` installs. The marketplace catalog (.claude-plugin/marketplace.json) says where each plugin comes from; this says which ones a new developer gets by default, what each person must supply themselves, and the MCP servers no plugin can carry because they authenticate per developer. The wizard reads this from the marketplace clone Claude Code already makes, so it needs no extra credentials.",
   "name": "instruxi",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "marketplace": "instruxi-io/claude-plugins",
   "plugins": [
     {

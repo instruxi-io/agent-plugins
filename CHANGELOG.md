@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.3.7
+
+This release stops the governor's state from growing with every session and lets the dispatcher cap a worker's context.
+
+- enforcer dispatch run --autocompact auto|100000..1000000 (or ENFORCER_DISPATCH_AUTOCOMPACT) caps a claude worker's context; off by default, and the done line counts compactions.
+- The governor state file stays small: idle agents are evicted after sweepDays, `recent` and `unmapped` are capped, and the scratch sweep also runs from PreToolUse once a day.
+
 ## 1.3.6
 
 This release makes dispatched workers actually receive the context pack, and say why when they cannot.
