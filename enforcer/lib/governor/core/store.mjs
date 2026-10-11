@@ -30,7 +30,7 @@ import {
 } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { makeState } from './policy.mjs';
+import { makeState, DEFAULTS, capRecent } from './policy.mjs';
 import { normalizeBooleans, isOn } from './bool.mjs';
 import { migrateDir } from './migrate.mjs';
 
@@ -240,11 +240,34 @@ export function receiptHead(file = RECEIPTS) {
   return null;
 }
 
+export const UNMAPPED_CAP = 100;
+const DAY_MS = 86400000;
+// Keep the state file small however many sessions have run: cap each agent's `recent`, drop agents idle
+// longer than sweepDays (0 keeps forever; an escalated agent or one with a pendingAsk is never dropped;
+// one with no lastSeen, from an older file, is stamped now rather than dropped) and keep the newest
+// UNMAPPED_CAP unmapped folders (object order is insertion order, so the tail is the newest).
+function bound(s, now = Date.now()) {
+  const days = Number(loadConfig().sweepDays ?? DEFAULTS.sweepDays);
+  const cutoff = Number.isFinite(days) && days > 0 ? now - days * DAY_MS : null;
+  for (const [id, a] of Object.entries(s.agents || {})) {
+    if (!a || typeof a !== 'object') continue;
+    capRecent(a);
+    if (typeof a.lastSeen !== 'number') a.lastSeen = now;
+    else if (cutoff !== null && a.lastSeen < cutoff && !a.escalated && !a.pendingAsk) delete s.agents[id];
+  }
+  const keys = Object.keys(s.unmapped || {});
+  if (keys.length > UNMAPPED_CAP) {
+    const keep = {};
+    for (const k of keys.slice(-UNMAPPED_CAP)) keep[k] = s.unmapped[k];
+    s.unmapped = keep;
+  }
+}
+
 export function loadState() {
   const s = makeState();
   const saved = readJSON(STATE, null);
   if (saved) {
-    for (const k of ['agents', 'periods', 'burn', 'spawns', 'clients', 'unmapped', 'prevHash']) {
+    for (const k of ['agents', 'periods', 'burn', 'spawns', 'clients', 'unmapped', 'prevHash', 'sweptAt']) {
       if (saved[k] !== undefined) s[k] = saved[k];
     }
   }
@@ -253,6 +276,7 @@ export function loadState() {
   // continue from the chain's own head so the next receipt extends it.
   const head = receiptHead();
   if (head && head !== s.prevHash) s.prevHash = head;
+  if (saved) bound(s);
   s.chainStart = s.prevHash;
   return s;
 }
