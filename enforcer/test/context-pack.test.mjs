@@ -101,7 +101,7 @@ test('compaction writes a graph-scoped summary with the touched files', async ()
   assert.equal(calls[0].body.data.run_id, 'r1');
   // an older service refuses graph scope: the node-scoped write follows
   const c2 = [];
-  await rememberOnCompact(ev, async (_c, _m, path) => (c2.push(path), path === '/graphs/g1/observations' ? null : { success: true }));
+  await rememberOnCompact(ev, async (_c, _m, path) => (c2.push(path), path === '/graphs/g1/observations' ? { ok: false, status: 404 } : { success: true }));
   assert.deepEqual(c2, ['/graphs/g1/observations', '/graphs/g1/nodes/n1/observations']);
 });
 

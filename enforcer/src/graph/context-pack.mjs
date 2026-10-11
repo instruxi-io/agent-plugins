@@ -50,7 +50,16 @@ export async function contextPackText(cfg, { post = http, getPack = fetchPack, e
     const p = cachePath(sha);
     const cached = existsSync(p);
     const r = await getPack(cfg, sha, { cached });
-    if (r.status === 304 && cached) return packHeader(sha) + readFileSync(p, 'utf8');
+    if (r.status === 304 && cached) {
+      // the cache is shared, writable state: hash the bytes on every use
+      const onDisk = readFileSync(p);
+      if (createHash('sha256').update(onDisk).digest('hex') === sha) return packHeader(sha) + onDisk.toString('utf8');
+      const again = await getPack(cfg, sha, { cached: false });
+      if (again.status !== 200 || !again.bytes || createHash('sha256').update(again.bytes).digest('hex') !== sha) return say('cached pack sha mismatch');
+      privateDir(join(stateBase(), 'context'));
+      privateWrite(p, again.bytes);
+      return packHeader(sha) + again.bytes.toString('utf8');
+    }
     if (r.status !== 200 || !r.bytes) return say(reasonFor(r.status));
     if (createHash('sha256').update(r.bytes).digest('hex') !== sha) return say('sha mismatch');
     privateDir(join(stateBase(), 'context'));

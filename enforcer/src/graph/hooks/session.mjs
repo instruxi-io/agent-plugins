@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { actorKey, stateBase, tightenState, privateDir, privateWrite } from '../state.mjs';
 import { loadRun } from '../run.mjs';
 import { sweepSessions, prFooter } from '../evidence.mjs';
-import { http } from '../http.mjs';
+import { http, httpStatus } from '../http.mjs';
+import { redact } from '../redact.mjs';
 import { contextPackText } from '../context-pack.mjs';
 import { readCredentials, signInProblem, isFederated } from '../../credentials.mjs';
 import { envBaseUrl } from '../../config.mjs';
@@ -188,7 +189,13 @@ export function touchedFiles(path, limit = 200) {
   return [...seen].slice(0, limit);
 }
 
-export async function rememberOnCompact(inp, post = http) {
+/** Default writer: the parsed body on success, else {ok: false, status} (status 0 = no response, e.g. a timeout). */
+async function postWithStatus(cfg, method, path, body) {
+  const [status, out] = await httpStatus(cfg, method, path, body);
+  return out && out.success !== false ? out : { ok: false, status };
+}
+
+export async function rememberOnCompact(inp, post = postWithStatus) {
   try {
     const sid = inp.session_id;
     const run = loadRun(actorKey(inp));
@@ -196,12 +203,15 @@ export async function rememberOnCompact(inp, post = http) {
     const cfg = findConfig(inp.cwd || process.env.CLAUDE_PROJECT_DIR);
     if (!cfg) return null;
     const text = lastAssistantText(inp.transcript_path || '') || 'context was compacted while this run was open; no assistant summary was available';
-    const body = `Progress at compaction (${inp.trigger || 'auto'}), run ${run.run_id} in session ${sid}:\n${text}`;
+    const body = redact(`Progress at compaction (${inp.trigger || 'auto'}), run ${run.run_id} in session ${sid}:\n${text}`)[0];
     const source = `claude-code:compact:${sid}`;
-    const data = { session_id: sid, run_id: run.run_id, node_key: run.key || run.node_id, files: touchedFiles(inp.transcript_path || '') };
+    const data = JSON.parse(
+      redact(JSON.stringify({ session_id: sid, run_id: run.run_id, node_key: run.key || run.node_id, files: touchedFiles(inp.transcript_path || '') }))[0],
+    );
     // api-used: sends body,source,kind,data
     const wrote = await post(cfg, 'POST', `/graphs/${run.graph_id}/observations`, { body, source, kind: 'summary', scope: 'graph', data });
-    if (!wrote) {
+    // fall back only on a definite unsupported route (404/405); a timeout may have committed, so it never double-posts
+    if (wrote && wrote.ok === false && (wrote.status === 404 || wrote.status === 405)) {
       // an older service without graph scope: today's node-scoped write
       await post(cfg, 'POST', `/graphs/${run.graph_id}/nodes/${run.node_id}/observations`, { body, source, data: { ...data, kind: 'progress' } });
     }
