@@ -24,6 +24,7 @@ const consult = async (...a) => (await import('./central.mjs')).consult(...a);
 import { evaluate as workerEvaluate } from './worker.mjs';
 import { evaluate as economics } from './economics.mjs';
 import { DEFAULTS, priceOf, tokensForDollars, dollarsForTokens, getAgent, setModel, clientFor, sha256 } from './policy.mjs';
+import { sweep } from './sweep.mjs';
 import { withLock, loadState, saveState, loadConfig, writeReceipt, commit } from './store.mjs';
 import { effective, refresh, stale } from './managed.mjs';
 import { kick, SHIPPER } from './kick.mjs';
@@ -125,6 +126,13 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
     // against the previous head, so parallel calls must not interleave.
     const held = withLock(() => {
       const state = loadState();
+      // Per-session scratch files are also swept here, at most once a day (not only at SessionStart).
+      if (!(Date.now() - (state.sweptAt || 0) < 86400000)) {
+        state.sweptAt = Date.now();
+        try {
+          sweep(cfg);
+        } catch {}
+      }
       const reading = cost.read(event, cfg);
       // Price the agent at its OWN model before judging it.
       const a = getAgent(state, event.agent, cfg);

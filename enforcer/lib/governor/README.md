@@ -277,3 +277,7 @@ The Governor is one idea applied to one resource. The idea is **Enforcer**, Inst
 ## License
 
 Functional Source License 1.1 (FSL-1.1-ALv2). Free to run on your own agents, in production, including commercially. You may not offer it as a competing commercial product or service. Becomes Apache 2.0 two years after each release. See [LICENSE](LICENSE).
+
+## State growth
+
+`state.json` is read, parsed and rewritten on every hook call, so it is kept small. Each agent entry is stamped with `lastSeen` when touched; on load, agents idle longer than `sweepDays` (default 7, 0 keeps forever) are dropped, except an escalated agent or one with a pending ask. An entry with no `lastSeen` (an older file) is stamped, not dropped. `unmapped` keeps its 100 most recent folders and an agent's `recent` list is held to a few clipped entries (no rule reads it). The cursor and cost scratch files are swept from PreToolUse at most once a day (`sweptAt` in state) as well as at SessionStart. Measure with `node scripts/bench-hook.mjs --populated`.
