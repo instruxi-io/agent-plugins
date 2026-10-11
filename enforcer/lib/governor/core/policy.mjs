@@ -488,15 +488,10 @@ export function setModel(a, model) {
   a.model = model;
 }
 
-// Older versions kept a per-agent `recent` list of whole tool calls (commands included), which grew
-// an entry to 36 KB. No rule reads it (budgets use tokens/cost, burn uses BURN_WINDOW, retries use
-// `fails`), so it is held to a small fixed window, oldest dropped, each line clipped.
-export const RECENT_CAP = 2;
-export const RECENT_CHARS = 24;
-export function capRecent(a) {
-  if (!Array.isArray(a.recent)) return a;
-  if (a.recent.length > RECENT_CAP) a.recent = a.recent.slice(-RECENT_CAP);
-  a.recent = a.recent.map((r) => (typeof r === 'string' && r.length > RECENT_CHARS ? r.slice(0, RECENT_CHARS) : r));
+// Older versions kept a per-agent `recent` list of whole tool calls (commands included). Nothing reads
+// it any more (jev-hooks owns loop detection), so it is dropped from every entry on load.
+export function dropRecent(a) {
+  if (a && typeof a === 'object') delete a.recent;
   return a;
 }
 
@@ -519,7 +514,7 @@ export function getAgent(state, id, cfg, now = Date.now()) {
   }
   const a = state.agents[id];
   a.lastSeen = now; // idle agents are evicted by it (store.mjs loadState)
-  return capRecent(a);
+  return dropRecent(a);
 }
 
 // The one call. Returns { verdict, reason, receipt, hash, agent }.

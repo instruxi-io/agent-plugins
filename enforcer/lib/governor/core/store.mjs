@@ -30,7 +30,7 @@ import {
 } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
-import { makeState, DEFAULTS, capRecent } from './policy.mjs';
+import { makeState, DEFAULTS, dropRecent } from './policy.mjs';
 import { normalizeBooleans, isOn } from './bool.mjs';
 import { migrateDir } from './migrate.mjs';
 
@@ -242,7 +242,7 @@ export function receiptHead(file = RECEIPTS) {
 
 export const UNMAPPED_CAP = 100;
 const DAY_MS = 86400000;
-// Keep the state file small however many sessions have run: cap each agent's `recent`, drop agents idle
+// Keep the state file small however many sessions have run: drop each agent's `recent`, drop agents idle
 // longer than sweepDays (0 keeps forever; an escalated agent or one with a pendingAsk is never dropped;
 // one with no lastSeen, from an older file, is stamped now rather than dropped) and keep the newest
 // UNMAPPED_CAP unmapped folders (object order is insertion order, so the tail is the newest).
@@ -251,7 +251,7 @@ function bound(s, now = Date.now()) {
   const cutoff = Number.isFinite(days) && days > 0 ? now - days * DAY_MS : null;
   for (const [id, a] of Object.entries(s.agents || {})) {
     if (!a || typeof a !== 'object') continue;
-    capRecent(a);
+    dropRecent(a);
     if (typeof a.lastSeen !== 'number') a.lastSeen = now;
     else if (cutoff !== null && a.lastSeen < cutoff && !a.escalated && !a.pendingAsk) delete s.agents[id];
   }
