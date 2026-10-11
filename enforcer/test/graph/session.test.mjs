@@ -17,7 +17,7 @@ function fresh() {
   delete process.env.GRAPH_ID;
   const proj = join(root, 'proj');
   mkdirSync(join(proj, '.enforcer'), { recursive: true });
-  writeFileSync(join(proj, '.enforcer', 'graph.json'), JSON.stringify({ graph_id: 'g1', base_url: 'http://stub.invalid' }));
+  writeFileSync(join(proj, '.enforcer', 'graph.json'), JSON.stringify({ graph_id: 'g1', base_url: 'http://127.0.0.1:9' }));
   process.env.GRAPH_API_KEY = 'k';
   return { root, proj, sid: `s${++n}` };
 }

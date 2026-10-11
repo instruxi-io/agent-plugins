@@ -13,6 +13,7 @@ import { request } from '../lib/api/client.mjs';
 import { headers, allNodes } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
 import { substitute } from './evidence-run.mjs'; // the one place that knows the acceptance-line rules
+import { safeIdent } from './dispatch/ident.mjs';
 import { ACCEPTANCE_SHAPES, allowedCommand, goTestArgv, removeTree, spawnAllowed } from './acceptance-allowlist.mjs';
 
 /** The shared allow list (src/acceptance-allowlist.mjs); removeTree moved there with the runner. */
@@ -67,7 +68,7 @@ export function checkLine(line, cwd, env, { timeoutMs = 300000, graph = '' } = {
   if (!sub.skip) p.cmd = sub.cmd; // `<graph>` filled in, as `enforcer evidence run` does
   if (/<[^<>\s][^<>]*>/.test(p.cmd)) return { state: 'SKIPPED', note: 'placeholder in command' };
   if (!cwd || !existsSync(cwd)) return { state: 'SKIPPED', note: `no checkout at ${cwd}` };
-  const ok = allowedCommand(p.cmd, { root: cwd });
+  const ok = allowedCommand(p.cmd, { root: cwd, env });
   if (ok.skip) return { state: 'SKIPPED', note: ok.skip };
   const r = spawnAllowed(goTestArgv(ok.argv, p.literals), { cwd, env, timeoutMs });
   if (r.timedOut) return { state: 'SKIPPED', note: `timed out after ${Math.round(timeoutMs / 1000)}s` };
@@ -134,6 +135,12 @@ export async function planCheck({
     const warns = accs.length ? await serverLint(base, graph, h, accs.map(String)) : [];
     for (const [i, a] of accs.entries()) {
       await new Promise((r) => setImmediate(r)); // let the previous line reach the reader before the next command blocks
+      if (n.data?.repo && !safeIdent(n.data.repo)) {
+        skipped++;
+        emit(`SKIPPED ${n.key}: ${String(a).replace(/\s+/g, ' ').slice(0, 100)} -- data.repo is not a safe name`);
+        emit(`WARN ${n.key}: data.repo ${JSON.stringify(String(n.data.repo))} does not match ^[A-Za-z0-9._-]+$; line ${i} was not run`);
+        continue;
+      }
       const cwd = n.data?.repo ? join(repoRoot, n.data.repo) : repoRoot;
       const r = checkLine(String(a), cwd, env, { timeoutMs, graph });
       if (r.state === 'MISMATCH') bad++;

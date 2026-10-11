@@ -154,7 +154,14 @@ test('legitimate acceptance lines still run', () => {
   ]);
   // plan check accepts the same lines, and a PR view with its number filled in
   for (const l of REAL) assert.equal(planCheck.skipReason(planCheck.parseLine(l).cmd, repo), null, l);
-  assert.equal(planCheck.skipReason('gh pr view 229 -R instruxi-io/claude-plugins --json state,mergeCommit', repo), null);
+  const hadToken = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'test-token'; // the gh shape is skipped without one
+  try {
+    assert.equal(planCheck.skipReason('gh pr view 229 -R instruxi-io/claude-plugins --json state,mergeCommit', repo), null);
+  } finally {
+    if (hadToken === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = hadToken;
+  }
   assert.equal(planCheck.skipReason('git merge-base --is-ancestor 38913ec origin/main', repo), null);
 
   // and for real: node lines run and their literals are found

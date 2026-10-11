@@ -1,0 +1,1 @@
+Hooks refuse a repo graph.json that names a foreign host or a non-ENFORCER_/GRAPH_ key variable; a failed worker token mint no longer falls back to the agent key, minted tokens are revoked on exit, workers get an empty ENFORCER_HOME, and *.log streams are redacted.

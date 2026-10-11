@@ -14,7 +14,8 @@ import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch } f
 import {
   launchCmd,
   workerEnv,
-  mintWorkerToken,
+  mintWorkerCredential,
+  revokeWorkerCredential,
   spawnWorker,
   killGroup,
   alive,
@@ -347,13 +348,25 @@ export class Dispatcher {
     // The worker gets a minted one-day token when ENFORCER_WORKER_AGENT_ID is set; the agent key stays in the dispatcher.
     // Without it the agent key is the only credential there is, so it is passed on (see docs/graph/DISPATCHER.md).
     let token = null;
+    let minted = null;
     try {
-      token = typeof this.api.call === 'function' ? await mintWorkerToken(this.api, process.env, `worker-${n.key}`.slice(0, 60)) : null;
+      minted = typeof this.api.call === 'function' ? await mintWorkerCredential(this.api, process.env, `worker-${n.key}`.slice(0, 60)) : null;
     } catch (e) {
-      this.say(`worker token not minted for ${n.key}: ${e.message}`);
+      // Fail closed: never fall through to the full-power agent key. The node stays on the frontier and the next pass tries again.
+      this.say(`worker token mint failed: ${e.status ?? e.code ?? e.message} (${n.key} not launched; retrying next pass)`);
+      this.attempts.set(n.key, attempt - 1);
+      return;
     }
+    if (minted) token = minted.secret;
     if (token) addSecret(token);
     else if (this.args.agentKey) token = this.args.agentKey;
+    // With a credential of its own the worker gets an empty ENFORCER_HOME, so the operator's shared sign-in is not on disk for it.
+    let enforcerHome = null;
+    if (token) {
+      enforcerHome = join(this.state, `home-${n.key}`);
+      mkdirSync(enforcerHome, { recursive: true, mode: 0o700 });
+      chmodSync(enforcerHome, 0o700);
+    }
     if (mcpConfig) {
       try {
         writeAgentMcpConfig(this.state, n.key, a.mcpUrl, token || a.agentKey);
@@ -365,9 +378,19 @@ export class Dispatcher {
     const proc = spawnWorker(cmd, {
       cwd: path,
       logPath,
-      env: workerEnv(this.g, process.env, { token, release: n.type === 'release', workerRules: this.args.workerRules, context: this.args.context }),
+      env: workerEnv(this.g, process.env, {
+        token,
+        release: n.type === 'release',
+        workerRules: this.args.workerRules,
+        context: this.args.context,
+        enforcerHome,
+      }),
       cleanup: mcpConfig ? [mcpConfig] : [],
       secrets: [a.agentKey, token].filter(Boolean),
+    });
+    proc.done.then(async () => {
+      if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
+      if (minted) await revokeWorkerCredential(this.api, minted);
     });
     const w = {
       kind: 'agent',
