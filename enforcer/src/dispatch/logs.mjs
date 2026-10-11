@@ -99,7 +99,7 @@ export function redactLogsDir(dir, secrets = []) {
     return 0;
   }
   let files = 0;
-  for (const n of names) if (n.endsWith('.jsonl') && redactFile(join(dir, n), secrets)) files++;
+  for (const n of names) if ((n.endsWith('.jsonl') || n.endsWith('.log')) && redactFile(join(dir, n), secrets)) files++;
   return files;
 }
 

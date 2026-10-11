@@ -130,7 +130,7 @@ const allowed = (k) => ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.s
 export function workerEnv(
   graphId,
   env = process.env,
-  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on', baseUrl = null } = {},
+  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on', baseUrl = null, enforcerHome = null } = {},
 ) {
   const root = pluginDirs()[0];
   const out = {};
@@ -161,6 +161,8 @@ export function workerEnv(
   if (token) {
     out.GRAPH_API_KEY = token;
     out.ENFORCER_API_KEY = token;
+    // HOME stays (git, gh and friends need it) but the shared sign-in lives under ENFORCER_HOME: point that at an empty per-run directory.
+    if (enforcerHome) out.ENFORCER_HOME = enforcerHome;
   }
   if (env.ENFORCER_WORKER_GH_TOKEN) out.GH_TOKEN = env.ENFORCER_WORKER_GH_TOKEN;
   return out;
@@ -168,10 +170,28 @@ export function workerEnv(
 
 /** Mint a worker-scoped credential for the run through the agent credential route; null when no worker agent is configured. */
 export async function mintWorkerToken(api, env = process.env, name = 'graph-worker') {
+  return (await mintWorkerCredential(api, env, name))?.secret || null;
+}
+
+/** As mintWorkerToken, but returns {secret, id, agent} so the caller can revoke it; throws when the mint answered without a secret. */
+export async function mintWorkerCredential(api, env = process.env, name = 'graph-worker') {
   const agent = env.ENFORCER_WORKER_AGENT_ID;
   if (!agent) return null;
   const r = await api.call('POST', `/agents/${agent}/credentials`, { name, scopes: WORKER_SCOPES, expires_in_days: 1 });
-  return r?.data?.secret || null;
+  const secret = r?.data?.secret || null;
+  if (!secret) throw new Error(`no secret in the mint response (status ${r?.status ?? 'unknown'})`);
+  return { secret, id: r?.data?.id || r?.data?.credential_id || null, agent };
+}
+
+/** Delete a minted worker credential; best effort, returns true when the call did not throw. */
+export async function revokeWorkerCredential(api, cred) {
+  if (!cred?.id) return false;
+  try {
+    await api.call('DELETE', `/agents/${cred.agent}/credentials/${cred.id}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The worker's own MCP connection when it runs as an agent: Claude Code prefers its stored `/mcp` OAuth sign-in for the plugin's
