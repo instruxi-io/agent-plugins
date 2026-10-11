@@ -1,1 +1,0 @@
-Dispatcher: attend rings for every new item (gates keyed by epoch, seen set pruned) and during holds, reuses the tick's frontier, reaps only verified orphans; acceptance timeouts kill the process group; session hook shares one deadline.

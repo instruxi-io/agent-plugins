@@ -1,1 +1,0 @@
-Acceptance allow-list: grep -R is no longer allowed (it followed symlinks out of the checkout), plan check refuses an unsafe data.repo, and the gh pr view shape runs with the operator's GH_TOKEN or skips.
