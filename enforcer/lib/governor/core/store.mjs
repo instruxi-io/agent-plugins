@@ -246,6 +246,9 @@ const DAY_MS = 86400000;
 // longer than sweepDays (0 keeps forever; an escalated agent or one with a pendingAsk is never dropped;
 // one with no lastSeen, from an older file, is stamped now rather than dropped) and keep the newest
 // UNMAPPED_CAP unmapped folders (object order is insertion order, so the tail is the newest).
+// Only a plain idle `active` agent is evictable: any other status or any human-set field is a latch.
+const evictable = (a) =>
+  (a.status === undefined || a.status === 'active') && !a.groundedBy && !a.budgetRaised && !a.burnFlagged && !a.pendingAsk && !a.escalated;
 function bound(s, now = Date.now()) {
   const days = Number(loadConfig().sweepDays ?? DEFAULTS.sweepDays);
   const cutoff = Number.isFinite(days) && days > 0 ? now - days * DAY_MS : null;
@@ -253,7 +256,7 @@ function bound(s, now = Date.now()) {
     if (!a || typeof a !== 'object') continue;
     dropRecent(a);
     if (typeof a.lastSeen !== 'number') a.lastSeen = now;
-    else if (cutoff !== null && a.lastSeen < cutoff && !a.escalated && !a.pendingAsk) delete s.agents[id];
+    else if (cutoff !== null && a.lastSeen < cutoff && evictable(a)) delete s.agents[id];
   }
   const keys = Object.keys(s.unmapped || {});
   if (keys.length > UNMAPPED_CAP) {

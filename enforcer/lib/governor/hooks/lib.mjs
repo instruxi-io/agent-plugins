@@ -4,7 +4,6 @@
 // JSON -- that combination is ignored.
 import { readFileSync } from 'node:fs';
 import { headlessFrom } from '../core/worker.mjs';
-import { loadConfig } from '../src/store.mjs';
 
 // In-process mode (bin/enforcer event): the runner sets globalThis.__enforcerEvent = { input, out }
 // and imports a shim. Where a shim would write JSON and exit, it records the JSON and throws
@@ -100,10 +99,11 @@ export function done() {
 // What a hook does when it cannot decide. failMode (config) is `ask` or `deny`;
 // unset, a headless run (no one to ask) denies and a person is asked. Never
 // "allow": a hook that throws exits 1, which Claude Code treats as non-blocking.
-export function failDecision() {
+// Loaded lazily: importing the store hardens the whole governor dir, which the hot path should not pay for.
+export async function failDecision() {
   let mode;
   try {
-    mode = loadConfig().failMode;
+    mode = (await import('../src/store.mjs')).loadConfig().failMode;
   } catch {}
   if (mode === 'ask' || mode === 'deny') return mode;
   return headlessFrom(process.env) ? 'deny' : 'ask';
@@ -123,7 +123,7 @@ export async function guardPre(event, fn) {
       process.stderr.write(`enforcer-governor: governor_error: ${msg}\n`);
     } catch {}
     emit(event, {
-      permissionDecision: failDecision(),
+      permissionDecision: await failDecision(),
       permissionDecisionReason: `enforcer-governor:governor_error ${msg}\nThe governor failed while checking this action, so it is not allowed to proceed unchecked.`,
     });
   }

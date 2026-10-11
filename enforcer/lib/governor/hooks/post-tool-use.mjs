@@ -15,9 +15,10 @@ await guard(async () => {
   if (!failed) {
     let quiet = false;
     try {
-      const { loadState, loadConfig } = await import('../core/store.mjs');
-      quiet = !(loadState().agents || {})[agentOf(ev)]?.pendingAsk;
-      if (quiet && loadConfig().shipOn !== false) {
+      // One key, read straight from the file: no bound(), no receipt-head read, no config read.
+      const { peekPendingAsk, peekShipOn } = await import('../core/peek.mjs');
+      quiet = !peekPendingAsk(agentOf(ev));
+      if (quiet && peekShipOn()) {
         const { kick } = await import('../core/ship.mjs');
         kick(30_000, fileURLToPath(new URL('../bin/ship.mjs', import.meta.url)));
       }

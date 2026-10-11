@@ -3,7 +3,7 @@
 // `rulesOn === false` (anything else enforced) while status read `=== true`
 // (anything else printed OFF), so the two could disagree about the same file.
 
-export const BOOLEAN_SETTINGS = Object.freeze(['budgetOn', 'rulesOn', 'policyOn', 'shadow', 'allowEnvOff']);
+export const BOOLEAN_SETTINGS = Object.freeze(['budgetOn', 'rulesOn', 'policyOn', 'shadow', 'allowEnvOff', 'shipOn', 'adviseModel']);
 
 const TRUE = new Set(['true', 'on', 'yes', '1']);
 const FALSE = new Set(['false', 'off', 'no', '0']);
