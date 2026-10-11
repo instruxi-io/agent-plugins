@@ -11,6 +11,43 @@ export const GRAPH_TOOL_PREFIXES = ['mcp__plugin_enforcer_enforcer__graph_', 'mc
 export const isGraphTool = (n) => GRAPH_TOOL_PREFIXES.some((p) => String(n || '').startsWith(p));
 export const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
 
+const hostOf = (u) => {
+  try {
+    return new URL(String(u)).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+};
+
+/** A repo's graph.json is untrusted: it may name only an ENFORCER_ or GRAPH_ prefixed variable as the key source, and only the configured enforcer host
+ *  (or localhost) as the base. Anything else is dropped with one stderr notice, so a cloned repo cannot send an env secret to its own host. */
+function guardRepoCredentialRouting(cfg, env) {
+  if (cfg.api_key_env !== undefined && !/^(ENFORCER|GRAPH)_[A-Z0-9_]*$/.test(String(cfg.api_key_env))) {
+    process.stderr.write(
+      `enforcer: ignoring api_key_env ${JSON.stringify(String(cfg.api_key_env))} from the repo graph config: only ENFORCER_* or GRAPH_* variables may be named\n`,
+    );
+    delete cfg.api_key_env;
+  }
+  if (cfg.base_url) {
+    const host = hostOf(cfg.base_url);
+    const trusted = new Set(['localhost', '127.0.0.1', hostOf(DEFAULT_BASE)]);
+    for (const u of [envBaseUrl(env), env.GRAPH_BASE_URL]) if (u) trusted.add(hostOf(u));
+    try {
+      const sh = readCredentials()?.enforcer?.base_url;
+      if (sh) trusted.add(hostOf(sh));
+    } catch {
+      /* no shared sign-in */
+    }
+    trusted.delete('');
+    if (!host || !trusted.has(host)) {
+      process.stderr.write(
+        `enforcer: ignoring base_url host ${host || JSON.stringify(String(cfg.base_url))} from the repo graph config: not the configured enforcer host\n`,
+      );
+      delete cfg.base_url;
+    }
+  }
+}
+
 /** Walk up from `start` for the project graph config; env wins field by field. null when unusable. */
 export function findConfig(start) {
   let cfg = {};
@@ -32,6 +69,7 @@ export function findConfig(start) {
     d = up;
   }
   const env = process.env;
+  guardRepoCredentialRouting(cfg, env);
   if (env.GRAPH_ID) cfg.graph_id = env.GRAPH_ID;
   if (env.GRAPH_BASE_URL) cfg.base_url = env.GRAPH_BASE_URL;
   if (envBaseUrl(env)) cfg.base_url = envBaseUrl(env);
