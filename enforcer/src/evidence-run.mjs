@@ -122,7 +122,7 @@ export function prepareLine(line, { cwd, graph, nodeKey, nodeId, testDb, pr, env
   cmd = sub.cmd;
   if (/(^|[\s;&|(])(\S*bin\/enforcer|enforcer)\s+evidence\s+run\b/.test(cmd)) return { skip: 'would run itself' };
   if (!sub.resolvedPr && (/(^|[\s;&|(])gh\s/.test(cmd) || /\bpull request\b/i.test(line))) return { skip: 'PR line: proved by the delivery step' };
-  const ok = allowedCommand(cmd, { root: cwd });
+  const ok = allowedCommand(cmd, { root: cwd, env });
   if (ok.skip) return { skip: ok.skip };
   return { cmd: goTestFlags(cmd, p.literals), argv: goTestArgv(ok.argv, p.literals), cwd, literals: p.literals, exit: p.exit };
 }

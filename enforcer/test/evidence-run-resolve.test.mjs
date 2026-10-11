@@ -5,7 +5,7 @@ import { prepareLine, substitute, clipEvidence } from '../src/evidence-run.mjs';
 import { literalIn } from '../src/literal-match.mjs';
 
 const LINE = '`gh pr view <n> -R instruxi-io/claude-plugins --json state,mergeCommit` prints `"state":"MERGED"`';
-const base = { cwd: process.cwd(), graph: 'g', nodeKey: 'my-node', nodeId: 'id1', env: {} };
+const base = { cwd: process.cwd(), graph: 'g', nodeKey: 'my-node', nodeId: 'id1', env: { GH_TOKEN: 't' } };
 
 test('n resolves to the pull request of the node branch', () => {
   const calls = [];
@@ -20,7 +20,7 @@ test('n resolves to the pull request of the node branch', () => {
 test('an explicit pr flag overrides the lookup', () => {
   const lookup = () => assert.fail('must not look up');
   assert.match(prepareLine(LINE, { ...base, lookup, pr: '9' }).cmd, /view 9 /);
-  assert.match(prepareLine(LINE, { ...base, lookup, env: { ENFORCER_EVIDENCE_PR: '11' } }).cmd, /view 11 /);
+  assert.match(prepareLine(LINE, { ...base, lookup, env: { GH_TOKEN: 't', ENFORCER_EVIDENCE_PR: '11' } }).cmd, /view 11 /);
   assert.match(prepareLine(LINE, { ...base, lookup, pr: 'x; rm' }).skip, /invalid pull request number/);
 });
 
