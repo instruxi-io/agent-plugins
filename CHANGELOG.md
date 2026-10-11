@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.8
+
+This release stops the governor storing raw tool-call history, so its state file stays small.
+
+- The governor no longer records or keeps the per-agent raw tool-call history (recent).
+
 ## 1.3.7
 
 This release stops the governor's state from growing with every session and lets the dispatcher cap a worker's context.
