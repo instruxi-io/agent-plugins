@@ -701,7 +701,7 @@ export function decide(state, ev, config = {}) {
   // Advisory only: it never changes the verdict, it just tells you the model
   // and the job look mismatched. Enforcement happens only on the proxy, where
   // we actually own the request.
-  if (cfg.adviseModel !== false) {
+  if (!isOff(cfg.adviseModel)) {
     const advice = modelAdvice(a.model, taskShape(a.task || ev.task));
     if (advice) r.advice = advice;
   }

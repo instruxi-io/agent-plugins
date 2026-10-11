@@ -53,8 +53,8 @@ const cap = (managed, local) => {
 };
 /** A plain number where smaller is tighter (0 is a real value, not "off"). */
 const lower = (managed, local) => {
-  const m = Number(managed),
-    l = Number(local);
+  const m = managed == null ? NaN : Number(managed),
+    l = local == null ? NaN : Number(local);
   if (!Number.isFinite(m)) return local;
   if (!Number.isFinite(l)) return m;
   return Math.min(m, l);
@@ -200,6 +200,15 @@ export function stale({ now = Date.now } = {}) {
   }
 }
 
+let staleNoted = false;
+function noteStale() {
+  if (staleNoted) return;
+  staleNoted = true;
+  try {
+    process.stderr.write('enforcer-governor: organisation settings are over a day old (offline?); the last floor still applies\n');
+  } catch {}
+}
+
 export function readManaged({ now = Date.now } = {}) {
   try {
     const d = JSON.parse(readFileSync(CACHE, 'utf8'));
@@ -209,7 +218,11 @@ export function readManaged({ now = Date.now } = {}) {
     // the network, and refresh() replaces this floor once it succeeds with the
     // new credential. Until then the LAST floor stands; dropping it on a
     // mismatch let any process unset the floor by setting ENFORCER_API_KEY.
-    if (now() - (d.at || 0) > TTL_MS) return {};
+    // Nothing expires the floor: an old cache is still served, marked stale, with one notice.
+    if (now() - (d.at || 0) > TTL_MS) {
+      noteStale();
+      return Object.defineProperty({ ...settings }, 'stale', { value: true, enumerable: false });
+    }
     return settings;
   } catch {
     return {};
