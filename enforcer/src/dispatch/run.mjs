@@ -33,7 +33,7 @@ import {
 import { modelFor, nodeMaxTurns } from './model.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
-import { countTurns } from './stream.mjs';
+import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
@@ -385,7 +385,9 @@ export class Dispatcher {
     };
     this.workers.set(n.key, w);
     this.peak = Math.max(this.peak, this.workers.size);
-    this.say(`launch ${n.key} pid=${proc.pid} model=${model} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${t2}`);
+    const acNote = a.autocompact && (a.autocompact !== 'auto' || !this.acSaid) ? ` autocompact=${a.autocompact}` : '';
+    this.acSaid = true;
+    this.say(`launch ${n.key} pid=${proc.pid} model=${model} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`);
   }
 
   async launchMerge(n, [pr, slug], tag) {
@@ -565,8 +567,9 @@ export class Dispatcher {
         continue;
       }
       const u = s.usage || {};
+      const compactions = harness === 'claude' ? countCompactions(w.logPath) : 0;
       this.say(
-        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} cold cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}`,
+        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} cold cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
       for (const ln of judgeLines(key, s.verification)) this.say(ln);
       let outcome = await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
@@ -943,6 +946,7 @@ const OPTS = {
   agent: { type: 'string' },
   'allow-browser-signin': { type: 'boolean' },
   harness: { type: 'string' },
+  autocompact: { type: 'string' },
   experimental: { type: 'boolean' },
   grok: { type: 'string' },
   codex: { type: 'string' },
@@ -972,6 +976,9 @@ export function parseDispatchArgs(argv, env = process.env) {
   if (!WORKER_RULES_MODES.includes(workerRules)) throw new Error('--worker-rules must be on or off');
   const context = v.context ?? 'on';
   if (!['on', 'off'].includes(context)) throw new Error('--context must be on or off');
+  const autocompact = String(v.autocompact ?? env.ENFORCER_DISPATCH_AUTOCOMPACT ?? 'auto');
+  if (autocompact !== 'auto' && !(/^\d+$/.test(autocompact) && Number(autocompact) >= 100000 && Number(autocompact) <= 1000000))
+    throw new Error('--autocompact must be auto or 100000..1000000');
   const workers = num(v.workers, 3);
   if (!(workers >= 1)) throw new Error('--workers must be >= 1');
   const cfg = env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
@@ -1008,6 +1015,7 @@ export function parseDispatchArgs(argv, env = process.env) {
     takeover: !!v.takeover,
     noLease: !!v['no-lease'],
     harness,
+    autocompact,
     experimental: !!v.experimental,
     agent: v.agent || null,
     allowBrowserSignin: !!v['allow-browser-signin'],
