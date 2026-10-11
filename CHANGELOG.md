@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.3.9
+
+This release is the audit fixes: acceptance lines stay inside the checkout, credentials cannot be redirected by a repo file, compaction is redacted, human latches survive, and attend rings reliably.
+
+- Dispatcher: attend rings for every new item (gates keyed by epoch, seen set pruned) and during holds, reuses the tick's frontier, reaps only verified orphans; acceptance timeouts kill the process group; session hook shares one deadline.
+- Eviction keeps human-set latches, the organisation floor is served stale instead of expiring, shipOn and adviseModel read as booleans, and PostToolUse peeks one key.
+- Acceptance allow-list: grep -R is no longer allowed (it followed symlinks out of the checkout), plan check refuses an unsafe data.repo, and the gh pr view shape runs with the operator's GH_TOKEN or skips.
+- Compaction summaries are redacted before they are written to graph memory, a cached context pack is re-hashed on every 304, and the node-scoped fallback runs only on a 404 or 405.
+- Hooks refuse a repo graph.json that names a foreign host or a non-ENFORCER_/GRAPH_ key variable; a failed worker token mint no longer falls back to the agent key, minted tokens are revoked on exit, workers get an empty ENFORCER_HOME, and *.log streams are redacted.
+
 ## 1.3.8
 
 This release stops the governor storing raw tool-call history, so its state file stays small.
