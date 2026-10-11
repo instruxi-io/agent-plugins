@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { countCompactions } from '../src/dispatch/stream.mjs';
 import { launchCmd } from '../src/dispatch/launch.mjs';
 import { Dispatcher, defaultArgs, parseDispatchArgs, main } from '../src/dispatch/run.mjs';
 
@@ -59,7 +60,7 @@ test('the env var sets the default and the flag overrides it', () => {
   assert.equal(parseDispatchArgs(['g', '--autocompact', 'auto'], e).autocompact, 'auto');
 });
 
-test('compact_boundary events are counted in the done line', async () => {
+test('compact_boundary events are counted in the done line', { skip: process.platform === 'win32' && 'the fake claude is a sh script' }, async () => {
   const state = tmp();
   const ev = [
     { type: 'system', subtype: 'init', session_id: 's' },
@@ -71,6 +72,7 @@ test('compact_boundary events are counted in the done line', async () => {
     .map((e) => JSON.stringify(e))
     .join('\n');
   writeFileSync(join(state, 'events.jsonl'), ev + '\n');
+  assert.equal(countCompactions(join(state, 'events.jsonl')), 2);
   const bin = join(state, 'claude');
   writeFileSync(bin, `#!/bin/sh\ncat '${join(state, 'events.jsonl')}'\n`);
   chmodSync(bin, 0o755);
