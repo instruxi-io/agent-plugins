@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.10
+
+This release makes switching sign-ins reach the tool server: login revokes the replaced token and tells you how to reconnect.
+
+- Login now revokes the previous access token when a sign-in replaces one, and prints the reconnect step (docs/KNOWN_ISSUES.md Switching sign-ins).
+
 ## 1.3.9
 
 This release is the audit fixes: acceptance lines stay inside the checkout, credentials cannot be redirected by a repo file, compaction is redacted, human latches survive, and attend rings reliably.
