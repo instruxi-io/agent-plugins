@@ -103,7 +103,7 @@ deny contains "ask: publishing from an agent needs a person to confirm" if {
 
 **Rate limits, not just totals.** The incidents that cost real money are rate incidents. Dollars per minute, new agents per minute, and errors per minute are each watched and each *ask* rather than block, and ask once, so an overnight run waits for you instead of dying or nagging.
 
-**A record an audit can read.** `node bin/enforcer governor verify` walks the file and names the first line that does not add up. It also fails when lines are missing from the end, or when `receipts.jsonl` is gone while `state.json` still names a head. What it cannot see from this machine alone is a file truncated together with `state.json` deleted: everything it checks against lives here. The receipts shipped to the server are the only external anchor. Every receipt carries who the agent acted for, what it tried, which model answered, and which rule decided.
+**A record an audit can read.** `node bin/enforcer governor verify` walks the file, names every break and counts the lines that still chain. It also fails when lines are missing from the end, or when `receipts.jsonl` is gone while `state.json` still names a head. What it cannot see from this machine alone is a file truncated together with `state.json` deleted: everything it checks against lives here. The receipts shipped to the server are the only external anchor. Every receipt carries who the agent acted for, what it tried, which model answered, and which rule decided.
 
 ## Commands
 
@@ -113,7 +113,7 @@ Run from the plugin root:
 |---|---|
 | `node bin/enforcer governor status` | whether decisioning is on, spend per agent, limits, current burn, state of the record |
 | `node bin/enforcer governor report [--since 24h\|7d\|30d] [--json] [--verbose]` | spend, tools, errors and decisions from local data |
-| `node bin/enforcer governor verify` | check the chain, name the first broken line |
+| `node bin/enforcer governor verify` | check the chain, names every break and counts the lines that still chain |
 | `node bin/enforcer governor config [--why]` | every setting, what it does, and which you have changed |
 | `node bin/enforcer governor enable <rules\|budget\|policy>` | turn a decisioning check on (`disable` turns it off) |
 | `node bin/enforcer governor set <name> <value>` | change a validated setting, such as `shadow` |
