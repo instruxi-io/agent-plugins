@@ -1,6 +1,6 @@
 # Known issues and limits
 
-What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plugin 1.3.6, enforcer-graph 4d2d106 and enforcer-v3-mcp 3116406.
+What we know is imperfect, stated plainly. Last reviewed 2026-10-12, against plugin 1.3.10, enforcer-graph 2b3757b and enforcer-v3-mcp a3c26e7.
 
 ## Security and data
 
@@ -11,9 +11,26 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plu
 - **Worker credentials.** Dispatched workers act as a named agent account with
   its own expiring key. A worker's environment holds that key for the length of
   its run; a SIGKILL can leave a key file behind in the state directory until the
-  next prune. Workers share the operator's `HOME`; per-worker home isolation was
-  rejected because copying Claude's single-use refresh token would sign the
-  operator out.
+  next prune. Since 1.3.9 a worker's `ENFORCER_HOME` is an empty per-run
+  directory, so the operator's sign-in file is not visible to it (it keeps
+  `HOME` for ordinary tools); a failed token mint no longer falls back to the
+  full agent key, and minted tokens are revoked when the worker exits.
+- **Repository files cannot redirect credentials.** Until 1.3.9 a cloned repo's
+  `.enforcer/graph.json` could name any host and any environment variable as
+  the key, and the hooks would send that variable there on session start. A
+  repo file's `api_key_env` is now honoured only for `ENFORCER_*` or `GRAPH_*`
+  names and its `base_url` only for the configured enforcer host or localhost;
+  anything else is ignored with a notice.
+- **Acceptance lines stay inside the checkout.** Until 1.3.9 the allow-list
+  accepted `grep -R`, which follows symlinks out of the tree, and `plan check`
+  took `data.repo` unvalidated. Both are closed. Also fixed in 1.3.9: the
+  `gh pr view` acceptance shape had been dead since 1.3.2 (the isolated
+  environment stripped `GH_TOKEN`), so the judge had been shown a failing `gh`
+  record for every pull-request line; it now passes the operator's token
+  through read-only, or skips the line and says so.
+- **Compaction summaries are redacted.** Until 1.3.9 the text a session
+  remembered on compaction went to graph memory unredacted; it now passes the
+  same redaction as evidence.
 - **Telemetry.** Off unless enabled. When enabled it can include tool-call
   metadata; review the collector config before turning it on.
 - **Judge billing outages.** A TypeSafe billing failure is named (`billing`),
@@ -39,8 +56,8 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plu
   updates the hooks and the `enforcer` CLI at once, but the MCP tool server keeps
   the previous session: Claude Code runs the headers helper only before connecting
   and after a 401. Login revokes the old access token so the next call re-runs the
-  helper; if the tools still show the old identity, run `/mcp`, pick enforcer and
-  reconnect (or restart Claude Code).
+  helper (1.3.10); if the tools still show the old identity, run `/mcp`, pick
+  enforcer and reconnect (or restart Claude Code).
 - **Judge rejections.** Measured over 657 runs: 37% of rejections were later
   overruled by a person, almost always because an acceptance line could not be
   run (prose instead of a command, an unresolved `<n>`). Since 1.3.2 the
@@ -54,10 +71,29 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plu
   chains, same model both sides, pack and recall on versus off) measured no
   reliable saving: turns changed -20%, +2% and -1%, cache reads -31%, +4% and
   -13%, with 12 of 12 verdicts unchanged. The first pair's figure did not
-  replicate and is not claimed (docs/CONTEXT_BASELINE.md in enforcer-graph).
-- **Hook latency.** 1.3.3 trimmed the pre-tool-use hook's startup by a few
-  milliseconds on an empty home; on a home with a long receipts history the
-  hook still costs about 100 ms per tool call. The tail-read fix is not done.
+  replicate and is not claimed. A third test on 2026-10-12 (one identical
+  100-turn audit node, three arms, two reps each) found pack and recall cost
+  MORE than control on a single long node, and the dispatcher's
+  `--autocompact 100000` halved wall time and cut cache reads 40-60% without
+  cutting cost, while the judge's confidence in the result dropped. All of it
+  is in docs/CONTEXT_BASELINE.md in enforcer-graph; every feature stays off by
+  default.
+- **Hook latency.** Fixed in 1.3.8. The cause was not the receipts file (it was
+  always tail-read) but `state.json`: 725 agent entries never evicted, 90% of
+  it the retired loop detector's history, read, parsed and rewritten on every
+  call (2.05 MB on a four-week home). State is now bounded (0.25 MB after one
+  call on the same home) and the per-agent history field is gone. Measured
+  overhead over a bare node start: 60 ms before, 42 ms after; 1.3.9 took the
+  post-tool-use fast path from 52 ms to 32 ms. Eviction never drops an agent a
+  person has grounded, paused or given a raised budget, and the organisation
+  floor is served stale rather than expiring after a day offline (both 1.3.9).
+- **Gate runs and echo evidence.** A `gate` node's run can still be accepted by
+  the judge on evidence that is only an `echo` of the decision. Gates are meant
+  for people: use `graph_decide` or `graphwatch decide` rather than reporting a
+  gate as a worker.
+- **Stale rejected-verdict items.** When a rejected run is retried and the
+  retry is verified, the first attempt's `verdict_rejected` item stays in the
+  review queue until someone accepts it; it is informational and parks nothing.
 - **Sign-in scopes.** A plain OAuth sign-in does not see `graph_review`,
   `graph_share`, `graph_unshare`, `graph_lifecycle` or `agent_groups`; the owner
   API key does. Attended mode's `resolve` may need the key until the default
@@ -67,8 +103,10 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plu
 
 - **Dependencies.** Dependabot and SHA-pinned actions are in place on
   claude-plugins, enforcer-graph-demos, gvnr-site and enforcer-v3-portal (since
-  2026-10-09). Branch protection blocks force-push and deletion everywhere;
-  required human review is still not enabled.
+  2026-10-09). The pinned-action bumps to checkout 7.0.1 and setup-node 7.0.0
+  merged 2026-10-12; the TypeScript 7 bump is open with failing checks. Branch
+  protection blocks force-push and deletion everywhere; required human review
+  is still not enabled.
 - **jev-hooks** is a separate, community project (MIT) that needs your own
   TypeSafe key. Whether distributing a client driven by users' own keys fits
   TypeSafe's agreement is still unconfirmed with them.
