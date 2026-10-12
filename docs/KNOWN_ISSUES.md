@@ -35,6 +35,12 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-11, against plu
   `requires` order. A truly cyclic document is still rejected.
 - **MCP tool list after reconnect.** Agent tools can be missing from the list
   after `/mcp` reconnects until the session restarts.
+- **Switching sign-ins.** `/enforcer:login` as a different account or workspace
+  updates the hooks and the `enforcer` CLI at once, but the MCP tool server keeps
+  the previous session: Claude Code runs the headers helper only before connecting
+  and after a 401. Login revokes the old access token so the next call re-runs the
+  helper; if the tools still show the old identity, run `/mcp`, pick enforcer and
+  reconnect (or restart Claude Code).
 - **Judge rejections.** Measured over 657 runs: 37% of rejections were later
   overruled by a person, almost always because an acceptance line could not be
   run (prose instead of a command, an unresolved `<n>`). Since 1.3.2 the
