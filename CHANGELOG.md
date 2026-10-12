@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.11
+
+This release makes `governor verify` report every broken receipt and how many still chain.
+
+- Governor verify now names every broken line, counts how many lines still chain and says whether the last line is the recorded head; a broken record still fails with exit code 1.
+
 ## 1.3.10
 
 This release makes switching sign-ins reach the tool server: login revokes the replaced token and tells you how to reconnect.
