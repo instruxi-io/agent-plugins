@@ -405,16 +405,23 @@ export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
     n = 0,
     legacy = 0,
     brokeAt = 0,
+    breakCount = 0,
+    linked = 0,
     hashed = false;
+  const breaks = [];
+  const broke = () => {
+    if (!brokeAt) brokeAt = n;
+    breakCount++;
+    if (breaks.length < 50) breaks.push(n);
+  };
   for (const line of readFileSync(file, 'utf8').split('\n')) {
     if (!line.trim()) continue;
     n++;
-    if (brokeAt) continue;
     let e;
     try {
       e = JSON.parse(line);
     } catch {
-      brokeAt = n;
+      broke();
       continue;
     }
     const { hash, ...body } = e;
@@ -426,25 +433,27 @@ export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
         continue;
       } // the blind path's own, declared as such: unverifiable, not tampering
       if (hashed) {
-        brokeAt = n;
+        broke();
         continue;
       }
       legacy++;
       continue;
     }
     hashed = true;
-    if (sha256(prev + JSON.stringify(body)) !== hash) {
-      brokeAt = n;
-      continue;
-    }
+    if (sha256(prev + JSON.stringify(body)) !== hash) broke();
+    else linked++;
+    // Re-anchor on the stored hash, so the walk goes on past a break and counts
+    // what still chains. This only adds information: a break stays a failure.
     prev = hash;
   }
-  if (brokeAt) return { ok: false, receipts: n, brokeAt };
+  const st0 = state ?? (file === RECEIPTS ? readJSON(STATE, null) : null);
+  const headMatches = !!(st0 && typeof st0.prevHash === 'string' && hashed && st0.prevHash === prev);
+  if (brokeAt) return { ok: false, receipts: n, brokeAt, breaks, breakCount, linked, headMatches };
   // The head must be the one state last recorded: a truncated tail still chains
   // line by line, and only the head shows that lines are missing.
   const st = state ?? (file === RECEIPTS ? readJSON(STATE, null) : null);
   if (st && typeof st.prevHash === 'string' && hashed && st.prevHash !== prev) {
-    return { ok: false, receipts: n, brokeAt: n, headMismatch: true, head: prev };
+    return { ok: false, receipts: n, brokeAt: n, headMismatch: true, head: prev, breaks, breakCount, linked, headMatches: false };
   }
-  return { ok: true, receipts: n, brokeAt: 0, unverifiable: legacy || undefined, head: prev };
+  return { ok: true, receipts: n, brokeAt: 0, unverifiable: legacy || undefined, head: prev, breaks, breakCount, linked, headMatches: true };
 }

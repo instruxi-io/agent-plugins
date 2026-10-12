@@ -47,7 +47,13 @@ if (cmd === 'verify') {
     console.log(
       `All ${v.receipts} records check out.${v.unverifiable ? ` (${v.unverifiable} carry no hash and could not be chain-checked: either written before hashes were stored, or decided while the governor could not read its own chain.)` : ''}`,
     );
-  else console.log(`The record does NOT check out. Line ${v.brokeAt} of ${v.receipts} does not match the one before it.\nFile: ${RECEIPTS}`);
+  else {
+    const shown = v.breaks.slice(0, 10).join(', ');
+    const more = v.breakCount > 10 ? ` and ${v.breakCount - 10} more` : '';
+    console.log(
+      `The record does NOT check out. ${v.breakCount} of ${v.receipts} lines do not match the one before them (first: line ${v.brokeAt}; lines ${shown}${more}). ${v.linked} of ${v.receipts} lines chain correctly. The last line ${v.headMatches ? 'is' : 'is not'} the head the governor recorded.\nFile: ${RECEIPTS}`,
+    );
+  }
   // Non-zero on a broken chain, so a script or CI step can gate on it.
   process.exit(v.ok ? 0 : 1);
 }

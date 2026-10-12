@@ -16,7 +16,7 @@ let pass = 0;
 const ok = (label, fn) => {
   fn();
   pass++;
-  console.log('  ok  ' + label);
+  console.log('  ok  - ' + label);
 };
 const sha = (s) => createHash('sha256').update(s).digest('hex');
 const reset = () => {
@@ -159,6 +159,61 @@ ok('verify rejects head mismatch', () => {
   const v = verify(RECEIPTS, { state: s });
   assert.equal(v.ok, false);
   assert.equal(v.headMismatch, true);
+});
+
+ok('verify names every break and counts the lines that still chain', () => {
+  reset();
+  const s = loadState();
+  for (let i = 1; i <= 200; i++) link(s, i);
+  const ls = lines();
+  for (const i of [17, 120]) ls[i] = ls[i].replace('"n":', '"n":9');
+  writeFileSync(RECEIPTS, ls.join('\n') + '\n');
+  const v = verify(RECEIPTS, { state: s });
+  assert.equal(v.ok, false);
+  assert.deepEqual(v.breaks, [18, 121]);
+  assert.equal(v.breakCount, 2);
+  assert.equal(v.brokeAt, 18);
+  assert.equal(v.linked, 198);
+  assert.equal(v.headMatches, true);
+});
+
+ok('verify still fails the record when the head does not match', () => {
+  reset();
+  const s = loadState();
+  for (let i = 1; i <= 5; i++) link(s, i);
+  writeFileSync(RECEIPTS, lines().slice(0, 3).join('\n') + '\n');
+  const v = verify(RECEIPTS, { state: s });
+  assert.equal(v.ok, false);
+  assert.equal(v.headMismatch, true);
+  assert.equal(v.headMatches, false);
+  assert.equal(v.linked, 3);
+});
+
+ok('verify on an intact chain is unchanged', () => {
+  reset();
+  const s = loadState();
+  for (let i = 1; i <= 10; i++) link(s, i);
+  const v = verify(RECEIPTS, { state: s });
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.breaks, []);
+  assert.equal(v.linked, v.receipts);
+  assert.equal(v.headMatches, true);
+});
+
+ok('verify report text for a broken chain exits 1', () => {
+  reset();
+  const s = loadState();
+  for (let i = 1; i <= 6; i++) link(s, i);
+  const ls = lines();
+  ls[2] = ls[2].replace('"n":', '"n":9');
+  writeFileSync(RECEIPTS, ls.join('\n') + '\n');
+  const r = spawnSync(process.execPath, [new URL('../core/report.mjs', import.meta.url).pathname, 'verify'], {
+    env: { ...process.env, GOVERNOR_HOME: home },
+    encoding: 'utf8',
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /lines do not match the one before them/);
+  assert.match(r.stdout, /5 of 6 lines chain correctly/);
 });
 
 console.log(`\n  ${pass} passed`);
