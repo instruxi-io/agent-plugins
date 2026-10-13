@@ -117,6 +117,7 @@ export function defaultArgs(o = {}) {
     stopFile: null,
     onLimit: 'wait',
     limitBackoff: 1800,
+    apiGrace: 600, // seconds a graph that answers 404 is retried before the dispatcher exits (a roll, a blip)
     ciBackoff: 300,
     ciProbeInterval: 300,
     ciStatusUrl: CI_STATUS_URL,
@@ -163,6 +164,7 @@ export class Dispatcher {
     this.ciChecked = now();
     this.ciFetch = null; // ciFetch: test hook returning the feed's JSON text
     this.leaseAt = 0;
+    this.notFoundSince = 0; // epoch seconds of the first 404 in the current run of them; 0 = none
     this.verdictNoted = 0;
     this.attendNoted = 0;
     this.terminating = null; // the signal name once SIGTERM/SIGINT arrived: an explicit state flag, not an exception
@@ -880,7 +882,7 @@ export class Dispatcher {
         } catch (e) {
           if (!(e instanceof APIError)) throw e;
           this.say(`API error renewing the lease during a hold: ${e.message}`);
-          if ([401, 403, 404, 'auth'].includes(e.status)) return 1;
+          if ([401, 403, 'auth'].includes(e.status)) return 1; // a 404 here is retried: the main loop applies the grace window
         }
         this.writePids();
         if (a.attend) {
@@ -902,13 +904,28 @@ export class Dispatcher {
         if (!(await this.renewIfDue())) return 3;
         this.writePids();
         ({ nodes, launched, frontier } = await this.tick());
+        if (this.notFoundSince) {
+          this.say(`graph ${this.g} is answering again after ${Math.round(now() - this.notFoundSince)}s of 404`);
+          this.notFoundSince = 0;
+        }
       } catch (e) {
         if (e instanceof APIError) {
           this.say(`API error (pass skipped, retrying): ${e.message}`);
           if ([401, 403, 'auth'].includes(e.status)) return 1;
           if (e.status === 404) {
-            this.say(`HTTP 404: graph ${this.g} not found.${NOT_FOUND_HINT}; exiting 1`);
-            return 1;
+            // A 404 is not always a wrong graph id: a graph service being rolled, or an ingress without its routes for a
+            // moment, answers 404 too. Exiting on the first one stranded every running node with no one to re-claim it
+            // (the lease lapses, the node stays "running" and sits on the frontier, no dispatcher alive). So retry for
+            // apiGrace seconds, saying so, and only then give up loudly.
+            if (!this.notFoundSince) this.notFoundSince = now();
+            const waited = now() - this.notFoundSince;
+            if (waited >= a.apiGrace) {
+              const why = `graph ${this.g} answered 404 for ${Math.round(waited / 60)} min.${NOT_FOUND_HINT}`;
+              this.say(`HTTP 404: ${why}; exiting 1`);
+              notify('Enforcer dispatcher stopped', `${why} Running nodes will go stale until it is restarted.`);
+              return 1;
+            }
+            this.say(`HTTP 404 from graph ${this.g} for ${Math.round(waited)}s; retrying for up to ${a.apiGrace}s (a roll or a blip, or a wrong graph id)`);
           }
         } else this.say(`pass failed (${e.name}: ${e.message}); retrying`); // a bug in one pass must not orphan the workers
         await this.sleep(a.interval * 1000);
@@ -988,6 +1005,7 @@ const OPTS = {
   'stop-file': { type: 'string' },
   'on-limit': { type: 'string' },
   'limit-backoff': { type: 'string' },
+  'api-grace': { type: 'string' },
   'ci-backoff': { type: 'string' },
   'ci-probe-interval': { type: 'string' },
   'ci-status-url': { type: 'string' },
@@ -1060,6 +1078,7 @@ export function parseDispatchArgs(argv, env = process.env) {
     stopFile: v['stop-file'] || join(stateDir, 'STOP'),
     onLimit: v['on-limit'] === 'exit' ? 'exit' : 'wait',
     limitBackoff: num(v['limit-backoff'], d.limitBackoff),
+    apiGrace: num(v['api-grace'], d.apiGrace),
     ciBackoff: num(v['ci-backoff'], d.ciBackoff),
     ciProbeInterval: num(v['ci-probe-interval'], d.ciProbeInterval),
     ciStatusUrl: v['ci-status-url'] || d.ciStatusUrl,
