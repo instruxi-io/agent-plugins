@@ -1,6 +1,7 @@
 import test from 'node:test';
+import { join, delimiter } from 'node:path';
 import assert from 'node:assert/strict';
-import { workerEnv, mintWorkerToken, ENV_ALLOW, ENV_ALLOW_PREFIX, WORKER_SCOPES } from '../../src/dispatch/launch.mjs';
+import { PLUGIN_DIR, workerEnv, mintWorkerToken, ENV_ALLOW, ENV_ALLOW_PREFIX, WORKER_SCOPES } from '../../src/dispatch/launch.mjs';
 
 const dirty = {
   PATH: '/bin',
@@ -20,7 +21,7 @@ test('worker env contains no key not on the allowlist', () => {
   for (const k of Object.keys(e)) assert.ok(ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.startsWith(p)), k);
   for (const k of ['AWS_SECRET_ACCESS_KEY', 'GH_TOKEN', 'GITHUB_TOKEN', 'GRAPH_API_KEY']) assert.equal(e[k], undefined);
   assert.equal(e.GRAPH_ID, 'g1');
-  assert.equal(e.PATH, '/bin');
+  assert.equal(e.PATH, [join(PLUGIN_DIR, 'bin'), '/bin'].join(delimiter), "the operator's PATH passes, behind this plugin's own bin");
 });
 
 test("ENFORCER_API_KEY is never the operator's: absent without a worker token, the worker token with one", () => {

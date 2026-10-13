@@ -161,6 +161,26 @@ export const ACCEPTANCE_SHAPES = Object.freeze(
       },
     },
     {
+      // pnpm takes the same read-only scripts as npm; `pnpm generate`, `pnpm build` or any other script stays refused.
+      name: 'pnpm test',
+      usage: 'pnpm [-C <dir>] [--filter <package>] <test|lint|format:check|typecheck> | pnpm [-C <dir>] [--filter <package>] run <same>',
+      match: (a, root) => {
+        if (a[0] !== 'pnpm') return false;
+        let i = 1;
+        for (;;) {
+          if (a[i] === '-C' || a[i] === '--dir') {
+            if (!inRepo(a[i + 1], root)) return false;
+            i += 2;
+          } else if (a[i] === '--filter' || a[i] === '-F') {
+            if (!plain(a[i + 1]) || a[i + 1].startsWith('-')) return false;
+            i += 2;
+          } else break;
+        }
+        const rest = a.slice(i);
+        return (rest.length === 1 && NPM_SCRIPTS.has(rest[0])) || (rest.length === 2 && rest[0] === 'run' && NPM_SCRIPTS.has(rest[1]));
+      },
+    },
+    {
       name: 'go test',
       usage: 'go [-C <dir>] test <./pkg/...> [-v -race -short -cover -failfast -json -count -p -run -tags -timeout]',
       match: (a, root) => goShape(a, root, 'test', true),

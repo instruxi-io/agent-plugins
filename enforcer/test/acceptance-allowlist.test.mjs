@@ -68,6 +68,10 @@ test('hostile acceptance lines never run', () => {
     () => `cat ${join(outside, 'secret')}`,
     () => 'node ../outside/evil.mjs',
     () => 'npm --prefix .. test',
+    () => 'pnpm -C .. test',
+    () => 'pnpm generate',
+    (m) => `pnpm exec touch ${m}`,
+    (m) => `pnpm --filter touch ${m} test`,
     () => 'node --test --require=../outside/evil.mjs f.txt',
     () => 'grep -f ../outside/secret f.txt',
     () => 'git grep --open-files-in-pager=touch hello',
@@ -124,6 +128,8 @@ const REAL = [
   "`grep -c '^## 1.3.1' CHANGELOG.md` prints `1`",
   '`node test/version-identity.test.mjs` exits 0 and prints a `# fail 0` line',
   "`git grep -n -E '\\(#[0-9]{2,4}\\)' -- graphwatch graph-live` exits 1 (no match)",
+  '`pnpm --filter @instruxi-io/graph-hooks typecheck` exits 0',
+  '`pnpm -C graphwatch run lint` exits 0',
 ];
 
 test('legitimate acceptance lines still run', () => {
