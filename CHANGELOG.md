@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.14
+
+- Dispatched workers get this plugin's `bin` first on PATH, so `enforcer` inside a worker is the dispatcher's own version rather than a stale harness shim; acceptance lines may run `pnpm [-C dir] [--filter pkg] test|lint|format:check|typecheck` (and the same after `run`), as npm already could.\n
+
 ## 1.3.13
 
 - Acceptance lines run for the report are final records: `enforcer evidence run` output is captured one record per line (`line`), listed last and never cut by the cap; the report hook skips a line that already has one instead of noting it as unfinished, and tells the worker to run the lines itself before reporting.
