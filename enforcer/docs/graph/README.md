@@ -280,6 +280,7 @@ caller uses:
 | node --test | `node --test <path under the repo>...` |
 | node script | `node <script .js/.mjs/.cjs under the repo> [plain args]` |
 | npm test | `npm [--prefix <dir>] test`, `npm [--prefix <dir>] run <test, lint, format:check, typecheck>` |
+| pnpm test | `pnpm [-C <dir>] [--filter <package>] <test, lint, format:check, typecheck>`, or the same after `run` |
 | go test | `go [-C <dir>] test <./pkg/...> [-v -race -short -cover -failfast -json -count -p -run -tags -timeout]` |
 | go vet | `go [-C <dir>] vet <./pkg/...>` |
 | ls, cat, head, tail, wc, test | a few named flags and relative paths |

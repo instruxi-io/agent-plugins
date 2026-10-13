@@ -1,0 +1,1 @@
+Dispatched workers get this plugin's `bin` first on PATH, so `enforcer` inside a worker is the dispatcher's own version rather than a stale harness shim; acceptance lines may run `pnpm [-C dir] [--filter pkg] test|lint|format:check|typecheck` (and the same after `run`), as npm already could.\n

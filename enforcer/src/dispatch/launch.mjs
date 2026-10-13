@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { assertIdent } from './ident.mjs';
 import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, rmSync, readdirSync } from 'node:fs';
 import { openStream, redactFile } from './logs.mjs';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig, DEFAULT_BASE_URL, BASE_URL_VAR } from '../config.mjs';
 import { DOT } from '../../hooks/claude/paths.mjs';
@@ -135,6 +135,10 @@ export function workerEnv(
   const root = pluginDirs()[0];
   const out = {};
   for (const [k, v] of Object.entries(env)) if (allowed(k) && v !== undefined) out[k] = v;
+  // `enforcer` inside a worker is THIS plugin's bin, ahead of whatever the operator's PATH resolves: on 2026-10-13 the
+  // shell shim `enforcer harness install` writes ran a Grok runtime copy two minor versions old, and every worker
+  // launched through it died at once (`--agent enforcer:graph-worker not found`) or ran old evidence code.
+  out.PATH = [join(root, 'bin'), ...(out.PATH ? [out.PATH] : [])].join(delimiter);
   Object.assign(out, {
     GRAPH_ID: graphId,
     ENFORCER_PROFILE: PROFILE_NAME, // = PROFILE_ENV
