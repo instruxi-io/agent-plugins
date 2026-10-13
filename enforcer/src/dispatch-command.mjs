@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { headers, allNodes, preflight } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
+import { strandedReport, strandedLines, workerLogMtime } from './dispatch/stranded.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS = { workers: 3, model: 'sonnet', salvage: 'on', triage: 'on', warm: 'off' };
@@ -156,7 +157,10 @@ export async function statusText(graph, env = process.env) {
   }
   const done = nodes.filter((n) => n.status === 'done');
   const open = nodes.filter((n) => !['done', 'cancelled'].includes(n.status));
-  const workers = open.filter((n) => n.status === 'running');
+  const strandedRep = strandedReport(open, { dispatcherRunning: Boolean(running), logMtime: (k) => workerLogMtime(join(dir, 'logs'), k) });
+  const strandedKeys = new Set(strandedRep.stranded.map((s) => s.key));
+  // a lapsed node is listed as stranded below, never as a worker: its timer counts from the claim, not from a heartbeat
+  const workers = open.filter((n) => n.status === 'running' && !strandedKeys.has(n.key));
   const landing = open.filter((n) => blockedKeys.has(n.key));
   const gates = open.filter((n) => ['gate', 'release'].includes(n.type));
   const review = open.filter((n) => n.status === 'verifying' || ['rejected', 'escalated'].includes(n.verdict?.state || n.verification?.state));
@@ -168,6 +172,8 @@ export async function statusText(graph, env = process.env) {
   const model = (n) => ({ mechanical: 'haiku', standard: 'sonnet', deep: 'opus' })[n.data?.tier] || DEFAULTS.model;
   const L = [];
   L.push(`dispatcher: ${running ? `running (pid ${pids.dispatcher})` : 'not running'}${ci.length && running ? '; blocked on CI' : ''}`);
+  const sl = strandedLines(strandedRep, graph, { dispatcherRunning: Boolean(running) });
+  for (const l of sl.lines) L.push(l);
   L.push(`workers (${workers.length}):`);
   for (const n of workers) L.push(`  ${n.key}  ${mins(n)} min  ${model(n)}`);
   if (!workers.length) L.push('  none running');
