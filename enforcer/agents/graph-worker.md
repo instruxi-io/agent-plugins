@@ -108,6 +108,13 @@ what is left to do and report `failed` naming it.
 
 ## 5. Report
 
+Last, before you report `succeeded`, run `enforcer evidence run <graph>:<node-key> --cwd .`
+as a Bash command and let it take the minutes it needs. It runs every runnable
+acceptance line and the plugin captures each as that line's final record,
+listed last for the judge; the report hook, which has seconds, then skips those
+lines instead of noting them as "did not finish". Fix the work, not the wording,
+until it ends `literals found: <n>/<n>`.
+
 `graph_report` `{graph, node_id, run_id, status, report, pr}` before you return.
 Write `report` as a numbered list in the criteria's order, each line `MET` or
 `NOT MET` naming the command that shows it. Any line NOT MET means `failed`, with

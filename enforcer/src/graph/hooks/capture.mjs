@@ -9,6 +9,9 @@ import { isGraphTool, markAttested, isObj } from './common.mjs';
 const EXCERPT_CLIP = 600,
   RAW_KEEP = 5 * 1024 * 1024;
 const DELIVERY_CMD = /gh\s+pr\s+(create|view)\b|land-pr\.sh/;
+// `enforcer evidence run` prints one JSON item per acceptance line it ran. Captured as one Bash record those items
+// would be a blob of escaped JSON the judge has to read through; expanded, each is that line's final record.
+const EVIDENCE_RUN_CMD = /(^|[\s;&|])(enforcer\s+evidence\s+run|evidence-run\.mjs\s+run)\b/;
 const EXIT_LINE = /^(?:Error: )?Exit code (\d+)\s*/i;
 const pyStr = (v) => (v === undefined || v === null ? '' : typeof v === 'string' ? v : JSON.stringify(v));
 
@@ -50,6 +53,32 @@ export function bashRecord(ti, resp) {
   return rec;
 }
 
+/** The final records in an `enforcer evidence run` stdout: `{kind:'command', cmd, exit, output, line}` per JSON item
+ *  with a `line_index`, and the lines that are not items (`literals found: k/n`, SKIPPED notes) as the summary. */
+export function evidenceRunRecords(stdout) {
+  const finals = [],
+    rest = [];
+  for (const l of String(stdout || '').split('\n')) {
+    let it = null;
+    if (l.startsWith('{'))
+      try {
+        it = JSON.parse(l);
+      } catch {}
+    if (isObj(it) && it.kind === 'command' && typeof it.cmd === 'string' && Number.isInteger(it.line_index) && it.line_index >= 0) {
+      const [c] = redact(it.cmd);
+      const [o] = redact(pyStr(it.output));
+      finals.push({
+        kind: 'command',
+        cmd: c.slice(0, OUTPUT_CLIP),
+        exit: Number.isInteger(it.exit) ? it.exit : null,
+        output: clipOutput(o),
+        line: it.line_index + 1,
+      });
+    } else if (l.trim()) rest.push(l);
+  }
+  return { finals, summary: rest.join('\n') };
+}
+
 export function fileRecord(name, ti0) {
   const ti = ti0 || {};
   const path = ti.file_path || ti.path || ti.notebook_path || '';
@@ -88,6 +117,14 @@ export async function captureEvidence(inp) {
     }
     let rec = null;
     if (captured) rec = name === 'Bash' ? bashRecord(inp.tool_input, resp) : fileRecord(name, inp.tool_input);
+    if (rec && name === 'Bash' && EVIDENCE_RUN_CMD.test(String((inp.tool_input || {}).command || ''))) {
+      const { finals, summary } = evidenceRunRecords(isObj(resp) ? resp.stdout : typeof resp === 'string' ? resp : '');
+      if (finals.length) {
+        for (const f of finals) appendEvidence(sid, { ...f, _run: rid });
+        const { raw: _raw, ...summaryRec } = /** @type {any} */ (rec);
+        rec = { ...summaryRec, output: clipOutput(redact(summary)[0]) };
+      }
+    }
     if (rec) {
       rec._run = rid;
       appendEvidence(sid, rec);

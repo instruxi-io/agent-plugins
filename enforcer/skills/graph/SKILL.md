@@ -146,7 +146,8 @@ well-written report with nothing behind it scores like no report at all.
   literal is kept in the output, Go tests get `-tags integration -run <Name> -v`, `<graph>` and `<test db>` are
   filled in, `cd dir &&` sets the directory, a suite that collides with a concurrent run is retried once, and PR
   and prose lines are skipped (you prove those by merging). It prints one JSON evidence item per command and ends
-  with `literals found: <k>/<n>`; because it runs through `Bash`, the plugin captures it as your evidence. Fix
+  with `literals found: <k>/<n>`; because it runs through `Bash`, the plugin captures each item as that line's
+  final record (`line`), listed last for the judge, and the report hook does not run that line again. Fix
   the work, not the wording, until every literal is found. The dispatcher's landing completion and
   `enforcer plan check` use the same code.
 - **Prove each line with a command that runs in your own session.** If you

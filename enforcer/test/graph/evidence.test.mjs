@@ -119,6 +119,32 @@ test('selection keeps failures first', () => {
   );
 });
 
+test('final records: newest per line, listed last, never cut by the cap', () => {
+  const recs = [];
+  for (let i = 0; i < 30; i++) recs.push(cmd('ls ' + i));
+  recs.splice(3, 0, cmd('go test ./...', 1, { line: 2 })); // an earlier, failing run of line 2
+  recs.splice(8, 0, cmd('bad', 2));
+  recs.push(cmd('go vet ./...', 0, { line: 1 }), cmd('go test ./...', 0, { line: 2 }));
+  const out = selectEvidence(recs);
+  assert.equal(out.length, 20);
+  assert.equal(out[0].cmd, 'bad', 'failures still first among the history');
+  assert.deepEqual(
+    out.slice(-2).map((r) => [r.cmd, r.line, r.exit]),
+    [
+      ['go vet ./...', 1, 0],
+      ['go test ./...', 2, 0],
+    ],
+    'the finals come last, in line order, the newest run of each line',
+  );
+  assert.equal(out.filter((r) => r.line === 2).length, 1, 'the older run of line 2 is superseded, not shown twice');
+  assert.deepEqual(selectEvidence([cmd('x', 0, { line: 1 })], 0), []);
+  assert.deepEqual(
+    selectEvidence([cmd('a'), cmd('b', 0, { line: 1 })], 1).map((r) => r.cmd),
+    ['b'],
+    'a final record wins the last slot',
+  );
+});
+
 test('merge: captured first, worker non-duplicates after', () => {
   const cap = [cmd('a'), cmd('b', 1)];
   const out = mergeEvidence(cap, [cmd('a'), { kind: 'note', text: 'x' }, cmd('c'), { kind: 'command' }]);

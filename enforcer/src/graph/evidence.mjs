@@ -179,6 +179,10 @@ export const prFooter = (runId) => `Enforcer-Run: ${runId}`;
 
 const failedCmd = (r) => r.kind === 'command' && r.exit !== 0 && r.exit !== null && r.exit !== undefined;
 
+/** A final record: the run of acceptance line `line` (1-based) made for the report, by `enforcer evidence run` or the
+ *  report hook. The judge reads these as the result; everything captured before them is how the work got there. */
+export const isFinal = (r) => !!r && r.kind === 'command' && Number.isInteger(r.line) && r.line > 0;
+
 function ekey(r) {
   if (r.kind === 'command') return JSON.stringify(['command', r.cmd ?? null, r.exit ?? null]);
   if (r.kind === 'artifact') return JSON.stringify(['artifact', r.url ?? null]);
@@ -187,6 +191,27 @@ function ekey(r) {
 }
 
 export function selectEvidence(records, cap = EVIDENCE_CAP) {
+  if (!(cap > 0)) return [];
+  // Final records come last, newest per line, and are never dropped for the cap: a worker that ran its acceptance
+  // lines twice (a fix in between) shows the judge the second run, after the captured history, not an older one
+  // buried in it. Before this (1.3.12) a hook-run acceptance record was the oldest item and the first the cap cut.
+  const byLine = new Map();
+  records.forEach((r, i) => {
+    if (isFinal(r)) byLine.set(r.line, i);
+  });
+  if (byLine.size) {
+    const finals = [...byLine.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, i]) => records[i])
+      .slice(-cap);
+    return [
+      ...selectEvidence(
+        records.filter((r) => !isFinal(r)),
+        cap - finals.length,
+      ),
+      ...finals,
+    ];
+  }
   if (records.length <= cap) {
     const failed = records.filter(failedCmd);
     return failed.length ? [...failed, ...records.filter((r) => !failedCmd(r))] : [...records];
