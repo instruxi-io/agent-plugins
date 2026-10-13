@@ -1,0 +1,1 @@
+Acceptance lines run for the report are final records: `enforcer evidence run` output is captured one record per line (`line`), listed last and never cut by the cap; the report hook skips a line that already has one instead of noting it as unfinished, and tells the worker to run the lines itself before reporting.

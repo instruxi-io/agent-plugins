@@ -173,7 +173,13 @@ test('report attaches the output of each acceptance command', async () => {
   appendEvidence(sid, { kind: 'command', cmd: 'echo hi', exit: 0, output: 'hi', _run: 'r1' });
   const out = await attachEvidence({ ...rep(sid), cwd }, {});
   const ev = ui(out).evidence;
-  assert.equal(ev[0].exit !== 0, true); // failing first
+  assert.equal(ev[0].cmd, 'echo hi', 'captured history first');
+  assert.deepEqual(
+    ev.filter((e) => e.line).map((e) => e.line),
+    [1, 2, 3],
+    'the acceptance runs are final records, last, in line order',
+  );
+  assert.equal(ev.find((e) => e.line === 3).exit !== 0, true, 'the failing line is shown as it failed');
   const ls = ev.find((e) => e.cmd === 'ls f.txt');
   assert.match(ls.output, /f\.txt/);
   assert.equal(ls.exit, 0);
@@ -201,6 +207,19 @@ test('acceptance lines past the time budget are noted, not run; cheap lines run 
   );
   assert.equal(ev.filter((e) => e.kind === 'note' && /did not finish/.test(e.text)).length, 1, 'one slow line ran, timed out, and was noted');
   assert.equal(ev.filter((e) => e.kind === 'note' && /time budget/.test(e.text)).length, 1, 'the other slow line was noted as unreached');
+});
+
+test('a line the worker already ran with evidence run is neither re-run nor noted', async () => {
+  const slow = 'node sleep.mjs prints nothing';
+  const { sid, cwd } = freshAcc([slow, 'ls f.txt prints the file']);
+  appendEvidence(sid, { kind: 'command', cmd: 'node sleep.mjs', exit: 0, output: '', line: 1, _run: 'r1' });
+  appendEvidence(sid, { kind: 'command', cmd: 'node sleep.mjs', exit: 0, output: '', line: 1, _run: 'r0' }); // another run's
+  const out = await attachEvidence({ ...rep(sid), cwd }, { acceptanceTimeoutMs: 300 });
+  const ev = ui(out).evidence;
+  assert.ok(!ev.some((e) => e.kind === 'note'), 'no "did not finish" note for the line the worker proved');
+  assert.equal(ev.filter((e) => e.line === 1).length, 1);
+  assert.equal(ev.at(-1).cmd, 'ls f.txt', 'the hook still ran the other line, and it is the last final record');
+  assert.equal(ev.at(-1).line, 2);
 });
 
 test('a write command in an acceptance line is skipped with a note', async () => {

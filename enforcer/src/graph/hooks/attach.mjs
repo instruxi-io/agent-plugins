@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { actorKey, stateBase } from '../state.mjs';
 import { loadRun } from '../run.mjs';
-import { loadEvidence, stripInternal, selectEvidence, mergeEvidence, EVIDENCE_CAP } from '../evidence.mjs';
+import { loadEvidence, stripInternal, selectEvidence, mergeEvidence, isFinal, EVIDENCE_CAP } from '../evidence.mjs';
 import { redact } from '../redact.mjs';
 import { OUTPUT_CLIP } from '../clip.mjs';
 import { apiFetch } from '../../../lib/api/client.mjs';
@@ -144,12 +144,17 @@ const ACCEPT_MIN_MS = 500;
 const FAST = /^\s*(ls|cat|grep|wc|head|tail|test|stat|git\s+(log|status|rev-parse|tag|diff)|gh\s+(pr|run)\s+(view|list|checks))\b/;
 const NOTE_REASONS = /not an allowed command shape/;
 
-/** Run the claimed node's acceptance lines in the worktree within a time budget: command records, a note per
- *  refused write, and a note per line the budget did not reach. Never throws. */
+/** Run the claimed node's acceptance lines in the worktree within a time budget: command records (each tagged
+ *  `line`, the 1-based acceptance line, so it is the line's final record), a note per refused write, and a note per
+ *  line the budget did not reach. A line that already has a final record under this run (the worker ran
+ *  `enforcer evidence run` before reporting; `deps.have`, 0-based) is neither run again nor noted: that run had
+ *  minutes, this hook has seconds, and the note "did not finish within the report hook" on a line the worker had
+ *  already proved cost three good runs their verdict on 2026-10-13. Never throws. */
 export function acceptanceRecords(inp, run, deps = {}) {
   try {
     const lines = Array.isArray(run && run.acceptance) ? run.acceptance.filter((l) => typeof l === 'string') : [];
     if (!lines.length || !inp.cwd || !existsSync(inp.cwd)) return [];
+    const have = deps.have instanceof Set ? deps.have : new Set();
     let cwd = inp.cwd;
     try {
       const g = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', timeout: 5000 });
@@ -163,6 +168,7 @@ export function acceptanceRecords(inp, run, deps = {}) {
     const items = [],
       notes = [];
     for (const i of order) {
+      if (have.has(i)) continue;
       const left = deadline - Date.now();
       if (left < ACCEPT_MIN_MS) {
         notes.push({ kind: 'note', text: `acceptance line ${i + 1} was not run (time budget of the report hook): ${lines[i].slice(0, 200)}` });
@@ -184,7 +190,7 @@ export function acceptanceRecords(inp, run, deps = {}) {
             kind: 'note',
             text: `acceptance line ${line_index + 1} did not finish within the report hook's ${Math.round(Math.min(lineMs, left) / 1000)} s; judge it from the worker's own captured run: ${lines[line_index].slice(0, 200)}`,
           });
-        else items.push(rec);
+        else items.push({ ...rec, line: line_index + 1 });
       }
       for (const s of r.skipped)
         if (NOTE_REASONS.test(s.reason))
@@ -307,7 +313,8 @@ export async function decide(inp, deps = {}) {
       additionalContext: 'enforcer-graph: ' + GATE_NOTE,
     };
   }
-  const acc = isReport && (inp.tool_input || {}).status === 'succeeded' ? acceptanceRecords(inp, run, deps) : [];
+  const have = new Set(records.filter(isFinal).map((r) => r.line - 1));
+  const acc = isReport && (inp.tool_input || {}).status === 'succeeded' ? acceptanceRecords(inp, run, { ...deps, have }) : [];
   if (!records.length && !acc.length)
     return usage && mode() !== 'context' ? { hookEventName: 'PreToolUse', updatedInput: withUsage(inp.tool_input, usage) } : null;
   let evidence = isRemember

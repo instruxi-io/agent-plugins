@@ -299,6 +299,20 @@ streams are captured anyway. An allowed line runs with a minimal environment
 (PATH, locale, the Go cache locations) and a temporary HOME that is removed
 afterwards, so no credential under `~/.config` is readable.
 
+**Final records.** A record made by running an acceptance line for the
+report carries `line`, the 1-based acceptance line. `enforcer evidence run`
+prints one item per line it ran, and the capture hook expands that Bash
+result into one final record per item (the summary `literals found: k/n`
+stays as the command's own record). The report hook tags the lines it runs
+the same way, and skips a line that already has a final record under the
+run. `selectEvidence` lists final records last, newest per line, and never
+drops one for the 20-item cap; everything captured before them is the
+history that led there. A worker whose suite needs minutes should therefore
+run `enforcer evidence run` itself before `graph_report`: the hook's budget is
+15 s in all, 8 s per line, and a line it cannot finish used to become a note,
+which left the judge only the worker's earlier, mixed runs (three good runs
+rejected on 2026-10-13 that way).
+
 Everything else is reported as `not run: not an allowed command shape` and
 the judge reads the worker's own captured output instead. The cases that must
 never run, and ten real acceptance lines that must still run, are in
