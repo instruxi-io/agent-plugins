@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.12
+
+This release keeps the dispatcher alive through a graph 404 and makes stranded nodes visible in `enforcer dispatch status`.
+
+- The dispatcher now retries a 404 for ten minutes (--api-grace) instead of exiting on the first one, and `enforcer dispatch status` names stranded nodes (lease lapsed, with how long), running nodes with no dispatcher, gates that hold a run and quiet workers apart from live workers (#273).
+
 ## 1.3.11
 
 This release makes `governor verify` report every broken receipt and how many still chain.

@@ -1,1 +1,0 @@
-The dispatcher now retries a 404 for ten minutes (--api-grace) instead of exiting on the first one, and `enforcer dispatch status` names stranded nodes (lease lapsed, with how long), running nodes with no dispatcher, gates that hold a run and quiet workers apart from live workers (#273).
