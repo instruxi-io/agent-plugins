@@ -157,6 +157,35 @@ export async function discover(base, fetchImpl = defaultFetch) {
   return r.json();
 }
 
+/**
+ * Whether the authorization server still knows a client this machine
+ * registered earlier. A refresh_token grant with a bogus token is the one
+ * unauthenticated call that tells an unknown client (401 invalid_client) from a
+ * known one (400 invalid_grant), and it has no side effect. Anything else —
+ * including a network failure — counts as known: the sign-in that follows
+ * reports the real problem.
+ */
+export async function clientKnown(meta, clientId, fetchImpl = defaultFetch) {
+  try {
+    const r = await fetchImpl(meta.token_endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: 'probe', client_id: clientId }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = await r.json().catch(() => ({}));
+    return j?.error !== 'invalid_client';
+  } catch {
+    return true;
+  }
+}
+
+/** The OAuth client this machine registered before, from either record in credentials.json. */
+export function savedClient(doc) {
+  const c = doc?.enforcer?.oauth_client || doc?.enforcer?.oauth;
+  return c?.client_id ? { client_id: c.client_id, issuer: c.issuer || null } : null;
+}
+
 export function pkce() {
   const verifier = b64url(randomBytes(48));
   return { verifier, challenge: b64url(createHash('sha256').update(verifier).digest()) };
@@ -177,7 +206,18 @@ function openBrowser(url) {
  * `resource` is the RFC 8707 audience the token is for; `onUrl` receives the
  * authorization URL (printed and opened by the CLI, captured by the tests).
  */
-export async function browserSignIn({ base, resource, resources, scope, preset, tenantCode, fetchImpl = defaultFetch, onUrl, timeoutMs = 5 * 60_000 }) {
+export async function browserSignIn({
+  base,
+  resource,
+  resources,
+  scope,
+  preset,
+  tenantCode,
+  client: previousClient,
+  fetchImpl = defaultFetch,
+  onUrl,
+  timeoutMs = 5 * 60_000,
+}) {
   // RFC 8707 lets one token name several resources. Asking for Enforcer's API
   // AND its MCP server is what makes this one sign-in serve both the governor
   // (which calls the API) and the MCP server (which serves tools): each server
@@ -223,20 +263,35 @@ export async function browserSignIn({ base, resource, resources, scope, preset, 
   const timer = setTimeout(() => rejectCode(new Error('timed out waiting for the browser sign-in')), timeoutMs);
 
   try {
-    const reg = await fetchImpl(meta.registration_endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_name: 'Enforcer (Claude Code)',
-        redirect_uris: [redirectUri],
-        grant_types: ['authorization_code', 'refresh_token'],
-        response_types: ['code'],
-        token_endpoint_auth_method: 'none',
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    const client = await reg.json();
-    if (!reg.ok || !client.client_id) throw new Error(`client registration failed (HTTP ${reg.status})`);
+    // One registered client per machine, reused across sign-ins. Consent is
+    // per account AND per client on the server, so a client registered afresh
+    // on every sign-in left every other workspace's account without consent
+    // for it — and the workspace switch refused all of them. The port of a
+    // loopback redirect may differ from the registered one (RFC 8252 §7.3),
+    // which is what lets one registration serve every later sign-in.
+    let client = null;
+    if (
+      previousClient?.client_id &&
+      (!previousClient.issuer || previousClient.issuer === meta.issuer) &&
+      (await clientKnown(meta, previousClient.client_id, fetchImpl))
+    ) {
+      client = { client_id: previousClient.client_id, reused: true };
+    } else {
+      const reg = await fetchImpl(meta.registration_endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: 'Enforcer (Claude Code)',
+          redirect_uris: [redirectUri],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      client = await reg.json();
+      if (!reg.ok || !client.client_id) throw new Error(`client registration failed (HTTP ${reg.status})`);
+    }
 
     const url = new URL(meta.authorization_endpoint);
     for (const [k, v] of Object.entries({
@@ -285,6 +340,7 @@ export async function browserSignIn({ base, resource, resources, scope, preset, 
       preset: scopeWasNamed ? 'custom' : preset || DEFAULT_PRESET,
       resources: wanted,
       client_id: client.client_id,
+      client_reused: Boolean(client.reused),
       token_endpoint: meta.token_endpoint,
       issuer: meta.issuer,
     };
@@ -522,6 +578,7 @@ async function main(rawArgv) {
       scope,
       preset,
       tenantCode: code,
+      client: savedClient(readCredentials()),
       onUrl: (url) => {
         out('Opening your browser to sign in to Enforcer. If it does not open, visit:');
         out(url);
@@ -535,7 +592,13 @@ async function main(rawArgv) {
     // account while this command reported the person who just signed in.
     const doc = readCredentials() || { enforcer: {} };
     const { api_key: _key, saved_at: _at, ...kept } = doc.enforcer;
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth } });
+    // The registered client outlives the sign-in: logout drops `oauth`, not this.
+    const { client_reused, ...signIn } = oauth;
+    const oauth_client =
+      client_reused && kept.oauth_client?.client_id === oauth.client_id
+        ? kept.oauth_client
+        : { client_id: oauth.client_id, issuer: oauth.issuer, registered_at: new Date().toISOString() };
+    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth: signIn, oauth_client } });
     const notice = await replacementNotice(previous, oauth, base);
     const me = await whoAmI(base).catch(() => null);
     out(me && !me.error ? `Signed in as ${who(me)}.` : 'Signed in.');
@@ -545,6 +608,11 @@ async function main(rawArgv) {
     out(`Preset: ${oauth.preset} (${granted.length} scopes)`);
     out(`Granted: ${oauth.scope || '(the server did not say)'}`);
     out('Every Enforcer plugin on this machine shares this sign-in.');
+    out(
+      client_reused
+        ? 'Same registered app as your earlier sign-ins here, so this workspace is now reachable with /enforcer:workspace switch from your others, and back.'
+        : 'Registered this machine as a new app with Enforcer; later sign-ins reuse it. A workspace you have not signed in to since needs one sign-in before /enforcer:workspace switch reaches it.',
+    );
     out(describe(await currentWorkspace().catch(() => ({ tenant: 'unknown' }))));
     out('Wrong workspace? /enforcer:workspace list, then /enforcer:workspace switch <name>.');
     for (const line of notice) out(line);
