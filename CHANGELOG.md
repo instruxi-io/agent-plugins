@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.3.15
+
+- Browser sign-in (`/enforcer:login`) no longer ends with `Sign-in failed: how is not defined`: a duplicated block of command branches from #268 is removed, so the real sign-in output (granted scopes, workspace, wrong-workspace hint, reconnect step) prints again.
+- `/enforcer:login` registers this machine with Enforcer once and reuses that registration on every later sign-in (kept in `credentials.json` as `oauth_client`, which `logout` leaves in place). Consent on the server is per account and per client, so a client registered afresh on every sign-in left every other workspace's account without consent for it, and `/enforcer:workspace switch` answered `consent_required` for all of them. Now one sign-in per workspace is enough, after which switching between them works in both directions (with enforcer-v3 #523, which clips the switch to the target workspace's consent instead of refusing). A saved client the server no longer knows, or one from another server, is registered again; the sign-in says which happened.
+
 ## 1.3.14
 
 - Dispatched workers get this plugin's `bin` first on PATH, so `enforcer` inside a worker is the dispatcher's own version rather than a stale harness shim; acceptance lines may run `pnpm [-C dir] [--filter pkg] test|lint|format:check|typecheck` (and the same after `run`), as npm already could.\n
