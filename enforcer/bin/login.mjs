@@ -528,6 +528,7 @@ async function main(rawArgv) {
         openBrowser(url);
       },
     });
+    // Read before the save: the notice revokes the sign-in this one replaces.
     const previous = readCredentials()?.enforcer?.oauth || null;
     // The sign-in REPLACES any saved API key. authHeaders prefers a key when
     // both exist, so keeping it would leave both tools acting as the key's
@@ -536,136 +537,6 @@ async function main(rawArgv) {
     const { api_key: _key, saved_at: _at, ...kept } = doc.enforcer;
     saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth } });
     const notice = await replacementNotice(previous, oauth, base);
-    const me = await whoAmI(base).catch(() => ({ error: 'unreachable' }));
-    const life = signInLifeLine(doc.enforcer?.oauth, Date.now());
-    const scopes = scopeLines(doc.enforcer?.oauth?.scope);
-    if (!me || me.error) {
-      out(`Signed in with ${how}, but Enforcer did not accept it (${me?.error || 'no credential'}). Run /enforcer:login again.`);
-      if (life) out(life);
-      for (const l of scopes) out(l);
-      return;
-    }
-    out(`Signed in to ${base} with ${how} as ${who(me)} (${me.role?.slug || 'unknown role'}, tenant ${me.tenant?.name || me.tenant?.id || '?'}).`);
-    if (life) out(life);
-    for (const l of scopes) out(l);
-    out(`Shared by every Enforcer plugin on this machine: ${SHARED_FILE()}`);
-    return;
-  }
-
-  if (cmd === 'scopes') {
-    const meta = await discover(base);
-    const offered = Array.isArray(meta.scopes_supported) ? meta.scopes_supported : [];
-    out(`${base} offers a sign-in these scopes (--for admin asks for all of them; the default preset is work):`);
-    for (const s of offered) out(`  ${s}`);
-    out('Presets (a scope is only requested when offered above):');
-    for (const [name, list] of Object.entries(PRESETS)) out(`  ${name}: ${list ? list.join(' ') : 'every scope offered'}`);
-    out('Ask for fewer with: /enforcer:login --scope "enforcer:read policy:self"');
-    return;
-  }
-
-  if (cmd === 'logout') {
-    const doc = readCredentials();
-    const remaining = [];
-    if (doc?.enforcer) {
-      const { api_key, oauth, ...rest } = doc.enforcer; // eslint-disable-line no-unused-vars
-      // Revoke the refresh token server-side when the server advertises an endpoint.
-      if (oauth?.refresh_token) {
-        try {
-          const meta = await discover(base);
-          if (meta.revocation_endpoint) {
-            const body = new URLSearchParams({ token: oauth.refresh_token, token_type_hint: 'refresh_token' });
-            if (oauth.client_id) body.set('client_id', oauth.client_id);
-            const r = await defaultFetch(meta.revocation_endpoint, { method: 'POST', body, signal: AbortSignal.timeout(10_000) });
-            out(
-              r.ok ? 'Revoked the refresh token on the server.' : `The server refused to revoke the refresh token (HTTP ${r.status}); it expires on its own.`,
-            );
-          } else out('This server advertises no revocation endpoint; the refresh token stays valid there until it expires.');
-        } catch (e) {
-          out(`Could not revoke the refresh token (${e.message}); it stays valid on the server until it expires.`);
-        }
-      }
-      saveCredentials({ ...doc, enforcer: rest });
-      if (api_key) out('The saved API key was removed here, but it still exists on the server until you revoke it there.');
-      out('Signed out: the saved credential in ' + SHARED_FILE() + ' is gone.');
-    } else out('No saved credential in ' + SHARED_FILE() + '.');
-    if (process.env.ENFORCER_API_KEY && process.env.ENFORCER_API_KEY.trim()) remaining.push('the ENFORCER_API_KEY environment variable (unset it)');
-    const legacy = legacyCredentialFile();
-    if (legacy) remaining.push(`the legacy credential file ${legacy} (delete it)`);
-    if (remaining.length) {
-      out('Still authenticating:');
-      for (const r of remaining) out('  - ' + r);
-    } else out('No Enforcer plugin here sends a credential now.');
-    return;
-  }
-
-  if (cmd === 'api-key') {
-    // The key is never an argument: an argument lands in the transcript and the process list.
-    const KEY = /^[a-z0-9]+_[A-Za-z0-9_-]{20,}$/;
-    if (arg && KEY.test(arg.trim())) {
-      out(
-        'Do not pass the key as an argument: it is now in this transcript. Revoke it, make a new one, and put it in a file: /enforcer:login api-key <file> (or "-" to read stdin, or set ENFORCER_API_KEY).',
-      );
-      process.exitCode = 2;
-      return;
-    }
-    let raw = process.env.ENFORCER_API_KEY || '';
-    if (arg === '-') raw = readFileSync(0, 'utf8');
-    else if (arg) {
-      if (!existsSync(arg)) {
-        out(`api-key: no such file: ${arg}`);
-        process.exitCode = 2;
-        return;
-      }
-      raw = readFileSync(arg, 'utf8');
-    }
-    const key = raw.trim();
-    if (!KEY.test(key)) {
-      out('Usage: /enforcer:login api-key <file holding the key> | api-key -  (key on stdin)  (or set ENFORCER_API_KEY)');
-      process.exitCode = 2;
-      return;
-    }
-    // Likewise a key replaces a browser sign-in: one credential, one identity.
-    const doc = readCredentials() || { enforcer: {} };
-    const { oauth: _oauth, ...kept } = doc.enforcer;
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, api_key: key, saved_at: new Date().toISOString() } });
-    const me = await whoAmI(base).catch(() => null);
-    out(
-      me && !me.error
-        ? `Saved. Signed in as ${who(me)}. Every Enforcer plugin on this machine now uses this key.`
-        : 'Saved, but Enforcer did not accept the key just now. Check it with /enforcer:login status.',
-    );
-    return;
-  }
-
-  if (cmd === 'browser') {
-    const resources = process.env.ENFORCER_RESOURCES ? process.env.ENFORCER_RESOURCES.split(/\s+/).filter(Boolean) : await resourcesFor(base);
-    const code = (arg || process.env.ENFORCER_TENANT_CODE || '').trim().toUpperCase() || undefined;
-    if (code && !isWorkspaceCode(code)) {
-      out(`"${code}" is not a workspace code. Usage: /enforcer:login [<WORKSPACE-CODE>]`);
-      process.exitCode = 2;
-      return;
-    }
-    // default = the last preset used, remembered in credentials.json
-    const last = readCredentials()?.enforcer?.oauth?.preset;
-    const preset = forPreset || (Object.hasOwn(PRESETS, last) ? last : DEFAULT_PRESET);
-    const oauth = await browserSignIn({
-      base,
-      resources,
-      scope,
-      preset,
-      tenantCode: code,
-      onUrl: (url) => {
-        out('Opening your browser to sign in to Enforcer. If it does not open, visit:');
-        out(url);
-        openBrowser(url);
-      },
-    });
-    // The sign-in REPLACES any saved API key. authHeaders prefers a key when
-    // both exist, so keeping it would leave both tools acting as the key's
-    // account while this command reported the person who just signed in.
-    const doc = readCredentials() || { enforcer: {} };
-    const { api_key: _key, saved_at: _at, ...kept } = doc.enforcer;
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth } });
     const me = await whoAmI(base).catch(() => null);
     out(me && !me.error ? `Signed in as ${who(me)}.` : 'Signed in.');
     const granted = String(oauth.scope || '')
