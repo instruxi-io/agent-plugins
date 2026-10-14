@@ -1,1 +1,0 @@
-Browser sign-in (`/enforcer:login`) no longer ends with `Sign-in failed: how is not defined`: a duplicated block of command branches from #268 is removed, so the real sign-in output (granted scopes, workspace, wrong-workspace hint, reconnect step) prints again.
