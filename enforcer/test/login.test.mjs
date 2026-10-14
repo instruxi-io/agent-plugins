@@ -13,8 +13,21 @@ process.env.HOME = home;
 process.env.ENFORCER_HOME = join(home, '.enforcer');
 process.env.GOVERNOR_HOME = join(home, '.g');
 
-const { browserSignIn, pkce, resourcesFor, requestedScope, chooseScope, extractScope, extractPreset, presetScope, PRESETS, parseLoginArgs, isWorkspaceCode } =
-  await import('../bin/login.mjs');
+const {
+  browserSignIn,
+  pkce,
+  resourcesFor,
+  requestedScope,
+  chooseScope,
+  extractScope,
+  extractPreset,
+  presetScope,
+  PRESETS,
+  parseLoginArgs,
+  isWorkspaceCode,
+  clientKnown,
+  savedClient,
+} = await import('../bin/login.mjs');
 let pass = 0;
 const ok = async (label, fn) => {
   await fn();
@@ -61,10 +74,17 @@ const as = createServer(async (req, res) => {
   if (u.pathname === '/register') {
     const b = JSON.parse(body);
     issued.redirect = b.redirect_uris[0];
+    issued.registrations = (issued.registrations || 0) + 1;
     return json(201, { client_id: 'mcp_test' });
   }
   if (u.pathname === '/token') {
     const p = new URLSearchParams(body);
+    issued.tokenClient = p.get('client_id');
+    // The one unauthenticated call that tells a known client from an unknown
+    // one: a refresh with a bogus token answers invalid_grant for a client the
+    // server knows, invalid_client for one it does not (what v3 does, 2026-10-14).
+    if (p.get('grant_type') === 'refresh_token')
+      return p.get('client_id') === 'mcp_test' ? json(400, { error: 'invalid_grant' }) : json(401, { error: 'invalid_client' });
     const good =
       p.get('code') === 'the-code' &&
       b64url(createHash('sha256').update(p.get('code_verifier')).digest()) === issued.challenge &&
@@ -153,6 +173,82 @@ await ok('signs in: register, authorize, loopback redirect, redeem with the veri
   assert.deepEqual([tok.access_token, tok.refresh_token, tok.client_id], ['at', 'rt', 'mcp_test']);
   assert.deepEqual(tok.resources, want);
   assert.ok(Date.parse(tok.expires_at) > Date.now());
+});
+
+const signInWith = (client) =>
+  browserSignIn({
+    base,
+    resources: ['https://api.example.test'],
+    client,
+    timeoutMs: 5000,
+    onUrl: async (url) => {
+      const a = new URL(url);
+      issued.challenge = a.searchParams.get('code_challenge');
+      issued.authorizeClient = a.searchParams.get('client_id');
+      // The fake accepts the loopback port of this sign-in against the one
+      // registered earlier, as RFC 8252 §7.3 has the real server do.
+      issued.redirect = a.searchParams.get('redirect_uri');
+      const cb = new URL(a.searchParams.get('redirect_uri'));
+      cb.searchParams.set('code', 'the-code');
+      cb.searchParams.set('state', a.searchParams.get('state'));
+      await fetch(cb);
+    },
+  });
+
+await ok('a client this machine registered before is reused: no new registration, same client_id end to end', async () => {
+  // Consent is per account AND per client on the server. A client registered
+  // afresh on every sign-in left every other workspace without consent for it,
+  // so /enforcer:workspace switch refused all of them.
+  const before = issued.registrations;
+  const tok = await signInWith({ client_id: 'mcp_test', issuer: base });
+  assert.equal(issued.registrations, before, 'no registration call');
+  assert.equal(issued.authorizeClient, 'mcp_test', 'the authorize URL names the saved client');
+  assert.equal(issued.tokenClient, 'mcp_test', 'the code is redeemed as that client');
+  assert.equal(tok.client_id, 'mcp_test');
+  assert.equal(tok.client_reused, true);
+  // The redirect port is whatever was free this time: RFC 8252 §7.3 lets the
+  // server accept it against the registered loopback URI.
+  assert.ok(/^http:\/\/127\.0\.0\.1:\d+\/callback$/.test(issued.redirect));
+});
+
+await ok('a saved client the server no longer knows, or one from another server, is registered again', async () => {
+  let before = issued.registrations;
+  let tok = await signInWith({ client_id: 'mcp_gone', issuer: base });
+  assert.equal(issued.registrations, before + 1, 'unknown client: registered afresh');
+  assert.equal(tok.client_id, 'mcp_test');
+  assert.equal(tok.client_reused, false);
+  before = issued.registrations;
+  tok = await signInWith({ client_id: 'mcp_test', issuer: 'https://other.example.test' });
+  assert.equal(issued.registrations, before + 1, 'another issuer: registered afresh');
+  assert.equal(tok.client_reused, false);
+  before = issued.registrations;
+  tok = await signInWith(null);
+  assert.equal(issued.registrations, before + 1, 'nothing saved: registered');
+  assert.equal(tok.client_reused, false);
+});
+
+await ok('clientKnown and savedClient', async () => {
+  const meta = { token_endpoint: base + '/token' };
+  assert.equal(await clientKnown(meta, 'mcp_test'), true);
+  assert.equal(await clientKnown(meta, 'mcp_gone'), false);
+  assert.equal(
+    await clientKnown({ token_endpoint: 'http://127.0.0.1:1/token' }, 'mcp_test'),
+    true,
+    'unreachable: assume known, the sign-in reports the real problem',
+  );
+  assert.equal(savedClient(null), null);
+  assert.equal(savedClient({ enforcer: {} }), null);
+  assert.deepEqual(
+    savedClient({ enforcer: { oauth: { client_id: 'a', issuer: 'i' } } }),
+    { client_id: 'a', issuer: 'i' },
+    'an older credential file: the sign-in itself names the client',
+  );
+  assert.deepEqual(
+    savedClient({ enforcer: { oauth_client: { client_id: 'b', issuer: 'j' }, oauth: { client_id: 'a', issuer: 'i' } } }),
+    { client_id: 'b', issuer: 'j' },
+    'the kept record wins',
+  );
+  assert.deepEqual(savedClient({ enforcer: { oauth_client: { client_id: 'b' } } }), { client_id: 'b', issuer: null });
 });
 
 await ok('a redirect with the wrong state is refused', async () => {
