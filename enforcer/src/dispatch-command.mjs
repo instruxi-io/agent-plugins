@@ -186,8 +186,14 @@ export async function statusText(graph, env = process.env) {
     for (const l of failedLines(n)) L.push(l);
   }
   if (!review.length) L.push('  none');
+  // Every item a person must answer carries the command that answers it, ready to paste after `!`.
+  else L.push(`  answer: ! graphwatch inbox ${graph}  (item ids), then ! graphwatch resolve ${graph} <item> approve|reject|override --note "<why>"`);
   L.push(`gates open (${gates.length}):`);
-  for (const n of gates) L.push(`  ${n.key}: ${n.title || ''}`);
+  for (const n of gates) {
+    L.push(`  ${n.key}: ${n.title || ''}`);
+    const options = Array.isArray(n.data?.options) && n.data.options.length ? n.data.options.join('|') : 'approve|reject';
+    L.push(`    answer: ! graphwatch decide ${graph} ${n.key} ${options} --note "<why>"`);
+  }
   if (!gates.length) L.push('  none');
   L.push(`last line: ${last(log) || '(dispatcher has not written anything yet)'}`);
   return L.join('\n') + '\n';

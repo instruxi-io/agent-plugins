@@ -27,6 +27,7 @@ export function needsYou(nodes, reviewItems = [], readyIds = new Set()) {
       kind: 'review',
       id: `review:${r.id ?? ref}`,
       ref: String(ref),
+      item: String(r.id ?? ref),
       why: one(r.reason || r.title || r.kind || r.state || 'a verdict needs a person'),
     });
   }
@@ -40,6 +41,7 @@ export function needsYou(nodes, reviewItems = [], readyIds = new Set()) {
         id: `gate:${n.key ?? n.id}${(n.epoch ?? n.data?.epoch) != null ? `:${n.epoch ?? n.data.epoch}` : ''}`,
         ref: String(n.key ?? n.id),
         why: one(n.data?.decision || n.title || 'a gate is ready to decide'),
+        options: Array.isArray(n.data?.options) && n.data.options.length ? n.data.options.map(String) : null,
       });
   }
   return out;
@@ -51,9 +53,19 @@ export function newItems(seen, current) {
   return current.filter((i) => !s.has(i.id));
 }
 
-/** The one line for an item. */
+/**
+ * The command a person runs to answer an item, ready to paste after `!` in Claude Code. A gate's decision must be
+ * one of its `data.options` when it declares them (the server refuses anything else); otherwise it is free text and
+ * approve|reject are offered. A review item takes approve|reject|override (override needs a note).
+ */
+export function answerCommand(item, graph = '<graph>') {
+  if (item.kind === 'gate') return `graphwatch decide ${graph} ${item.ref} ${(item.options || ['approve', 'reject']).join('|')} --note "<why>"`;
+  return `graphwatch resolve ${graph} ${item.item ?? item.ref} approve|reject|override --note "<why>"`;
+}
+
+/** The one line for an item: what needs a person, and the exact command that answers it. */
 export function attentionLine(item, graph = '<graph>') {
-  return `ATTENTION ${item.kind} ${item.ref}: ${item.why} (answer with: graphwatch attend ${graph}, or graph_review / graph_decide)`;
+  return `ATTENTION ${item.kind} ${item.ref}: ${item.why} (answer: ! ${answerCommand(item, graph)}; or all at once: ! graphwatch attend ${graph})`;
 }
 
 const seenPath = (stateDir) => join(stateDir, 'attention-seen.json');

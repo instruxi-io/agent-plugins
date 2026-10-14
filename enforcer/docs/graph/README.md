@@ -149,7 +149,7 @@ leave the report exactly as the model wrote it.
 
 ### Attended dispatch
 
-With `--attend` (or `ENFORCER_DISPATCH_ATTEND=1`) the dispatcher tells you when it needs you and waits for your answer. On every pass it collects the open review items and the gates that are active with every prerequisite done, prints one `ATTENTION <kind> <key>: <why> (answer with: graphwatch attend <graph>, or graph_review / graph_decide)` line per new item (once per item, even across a restart; the seen set lives in the state dir) and calls `notify-send` when it is installed. When nothing is runnable but something needs you it does not exit: it polls every 15 seconds, logs `waiting on you: N item(s)` at most every 10 minutes, and launches as soon as a node becomes runnable. `enforcer dispatch status` shows `needs you: N`. Without the flag nothing changes.
+With `--attend` (or `ENFORCER_DISPATCH_ATTEND=1`) the dispatcher tells you when it needs you and waits for your answer. On every pass it collects the open review items and the gates that are active with every prerequisite done, prints one `ATTENTION <kind> <key>: <why> (answer: ! graphwatch decide|resolve ...; or all at once: ! graphwatch attend <graph>)` line per new item, carrying the exact command that answers it (a gate's own `data.options` when it declares them) (once per item, even across a restart; the seen set lives in the state dir) and calls `notify-send` when it is installed. When nothing is runnable but something needs you it does not exit: it polls every 15 seconds, logs `waiting on you: N item(s)` at most every 10 minutes, and launches as soon as a node becomes runnable. `enforcer dispatch status` shows `needs you: N`. Without the flag nothing changes.
 
 ## The graph-worker agent
 
@@ -199,6 +199,8 @@ standalone server added with `claude mcp add`). Keep the one your session shows.
 ## Gates
 
 A `type: gate` node is decided by a person through `graph_decide` (or the portal), never claimed with `graph_next_work`. If you find yourself holding a gate, report it `cancelled` with a note and tell the person. The report hook attaches the note `this is a gate: decide it with graph_decide, do not report it` and runs no acceptance line for a gate.
+
+An agent that finds a gate ready, or any other item waiting on a person (an open review item, a node failed on a human decision), asks the person in the same turn: with `AskUserQuestion` when the session has it, else by giving the filled-in `! graphwatch decide <graph> <gate> <decision>` / `! graphwatch resolve <graph> <item> approve|reject|override` commands. See the skill's "When a person must answer" section.
 
 ## Hooks
 
