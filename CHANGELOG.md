@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.16
+
+- When a plan waits on a person (a ready gate, an open review item, a node failed on a human decision), the `enforcer:graph` skill and `/enforcer:dispatch` now ask in the same turn with `AskUserQuestion`, or give the filled-in `! graphwatch decide|resolve` command, instead of ending on a passive list; the dispatcher's `ATTENTION` line and `enforcer dispatch status` print the exact answering command per item.
+
 ## 1.3.15
 
 - Browser sign-in (`/enforcer:login`) no longer ends with `Sign-in failed: how is not defined`: a duplicated block of command branches from #268 is removed, so the real sign-in output (granted scopes, workspace, wrong-workspace hint, reconnect step) prints again.
