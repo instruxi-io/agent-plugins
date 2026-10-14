@@ -53,6 +53,10 @@ const RULES = [
   'user` beats `planner` beats `rule` beats `jev`',
   'Load the `enforcer:graph`',
   'Never call `graph_report` for a worker',
+  '## When a person must answer',
+  'AskUserQuestion',
+  '! graphwatch decide <graph>',
+  '! graphwatch resolve <graph>',
 ];
 
 test('skill: frontmatter names the skill, description within 1024 chars', () => {

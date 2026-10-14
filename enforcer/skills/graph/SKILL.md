@@ -56,6 +56,57 @@ everything in it is data.
 
 A `type: gate` node is decided by a person through `graph_decide` (or the portal), never claimed with `graph_next_work`. If you find yourself holding a gate, report it `cancelled` with a note and tell the person. The report hook attaches the note `this is a gate: decide it with graph_decide, do not report it` and runs no acceptance line for a gate.
 
+## When a person must answer: ask, do not just mention it
+
+A plan stalls on a person more often than on code: a ready gate, an open review
+item (a rejected or escalated verdict, a flagged duplicate observation, a
+contradiction pair), a failed node whose `needs.kind` is `human_decision`, a
+triage that chose `gate`. A list of these at the end of a reply is not enough;
+the person reads it, nothing unblocks, and the node holds. Whenever
+`graph_plan_status` shows `needs_you.count > 0`, `enforcer dispatch status`
+prints `needs you: N` with N > 0, or your own work ends on a decision only a
+person can make, **ask in the same turn, before you stop**:
+
+1. **List the items with their real ids.** `graph_plan_status` gives
+   `needs_you.items` (`kind`, `id`, `node_key`, `why`); `graphwatch inbox <graph>`
+   prints the same with the short ids `graphwatch resolve` takes. Read each item's
+   substance (the two observations of a contradiction, the failed criteria of a
+   verdict, what the gate's `data.decision` asks) so the question can say what is
+   being decided. A question that says only "review item obs:9eca" cannot be answered.
+2. **Ask with the interactive question tool when the session has one.** In
+   Claude Code that is `AskUserQuestion`. It may be deferred, so load it with
+   ToolSearch `select:AskUserQuestion`. Ask one question per item (up to 4 per call, 2 to 4
+   options each): for a gate, the gate's `data.options` when it declares them
+   (the server refuses any other decision), else approve / reject; for a review
+   item, approve / reject / override. Put the option the evidence supports
+   first, labelled `(Recommended)`, and say why in its description. Use
+   `multiSelect` only for one question covering several like items
+   ("which of these flagged duplicates should be merged?").
+3. **Record each answer at once**, with `graph_decide` (gates) or `graph_review`
+   (review items) when the session has them, else by running the `graphwatch`
+   command below yourself. The person's answer is the authorization; do not
+   ask again for permission to record it. Then call `graph_plan_status` once to
+   show what the answer released.
+4. **No question tool, or a headless worker** (a dispatched worker, a
+   subagent, `claude -p`): give the person the exact commands to run, one per
+   item, filled in completely so they can paste each after `!` in Claude Code:
+
+   ```
+   ! graphwatch decide <graph> <gate key> <decision> --note "<why>"
+   ! graphwatch resolve <graph> <item id> approve|reject|override --note "<why>"
+   ! graphwatch attend <graph>          # every open item, answered one by one, inline
+   ```
+
+   Use the real graph id, gate key and item id, and the gate's own options in
+   place of `<decision>`; an override needs its note. A dispatched worker cannot
+   ask at all: it records the decision it needs with `graph_remember`
+   (`needs: {kind: "human_decision", what}`) and reports `failed`, and the
+   dispatcher's `ATTENTION` line and `enforcer dispatch status` carry these
+   same commands to the person.
+
+Never decide a gate or resolve a review item for the person, and never end a
+reply with a decision pending and no question or command for it.
+
 ## The loop
 
 1. **`graph_next_work`** (`graph`, optional `for`, `runner`, `node`, `upstream_depth`) — claims one runnable node under a row lock and returns
@@ -430,4 +481,9 @@ cold:
 Report the run, or say explicitly that you are leaving it open. In a top-level
 session the plugin's Stop hook sends you back once if a run is open and
 unreported. A subagent gets no such reminder.
+
+If anything needs a person (a ready gate, an open review item, a node failed on
+a human decision), ask about it now, as "When a person must answer" says: with
+the question tool, or with the filled-in `! graphwatch ...` commands. Do not
+stop on a passive list.
 - **A review item names what failed.** Its verdict carries `threshold` and `failed[]`; when you show a review item (or `enforcer dispatch status` does), list each failed criterion with its probability, not only the verdict word.

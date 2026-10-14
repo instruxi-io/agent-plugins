@@ -69,7 +69,8 @@ await t('status prints workers, nodes, review items, gates and the last line', a
   assert.match(r.out, /^workers \(1\):\n  b  7 min  sonnet/m);
   assert.match(r.out, /^nodes: 1 done, 5 open, 1 landing blocked, 2 needs you/m);
   assert.match(r.out, /^review items \(1\):\n  r:/m);
-  assert.match(r.out, /^gates open \(1\):\n  g: Human smoke test/m);
+  assert.match(r.out, /^gates open \(1\):\n  g: Human smoke test\n    answer: ! graphwatch decide g1 g approve\|reject --note "<why>"/m);
+  assert.match(r.out, /^  answer: ! graphwatch inbox g1 .*graphwatch resolve g1 <item> approve\|reject\|override/m);
   assert.match(r.out, /^last line: dispatching g1 with 3 workers/m);
   assert.doesNotMatch(r.out, /failed/);
   console.log(r.out.trimEnd().replace(/^/gm, '    '));

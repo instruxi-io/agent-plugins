@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { needsYou, newItems, attentionLine, loadSeen, saveSeen } from '../src/dispatch/attention.mjs';
+import { needsYou, newItems, attentionLine, answerCommand, loadSeen, saveSeen } from '../src/dispatch/attention.mjs';
 import { Dispatcher, defaultArgs, parseDispatchArgs } from '../src/dispatch/run.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'attend-'));
@@ -71,7 +71,14 @@ test('attention rings once per item across restarts', () => {
 
 test('attention line format', () => {
   const [i] = needsYou([gate], [], new Set(['g1']));
-  assert.equal(attentionLine(i, 'G'), 'ATTENTION gate sign-off: Ship it? (answer with: graphwatch attend G, or graph_review / graph_decide)');
+  assert.equal(
+    attentionLine(i, 'G'),
+    'ATTENTION gate sign-off: Ship it? (answer: ! graphwatch decide G sign-off approve|reject --note "<why>"; or all at once: ! graphwatch attend G)',
+  );
+  const [opt] = needsYou([{ ...gate, data: { ...gate.data, options: ['ship', 'hold'] } }], [], new Set(['g1']));
+  assert.equal(answerCommand(opt, 'G'), 'graphwatch decide G sign-off ship|hold --note "<why>"', 'a gate with options offers exactly those');
+  const [rev] = needsYou([], [{ id: 'obs:9eca', node_key: 'n1', kind: 'observation_review' }]);
+  assert.equal(answerCommand(rev, 'G'), 'graphwatch resolve G obs:9eca approve|reject|override --note "<why>"', 'a review item is answered by its own id');
   assert.deepEqual(needsYou([gate], [], new Set()), [], 'a gate whose prerequisites are not done is not yet needed');
   assert.deepEqual(needsYou([{ ...gate, status: 'done' }], [], new Set(['g1'])), []);
 });
