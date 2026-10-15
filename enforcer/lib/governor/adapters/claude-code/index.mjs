@@ -44,4 +44,16 @@ export const ADAPTER_VERSION = (() => {
 // runs by hand.
 export const SHIPPER = fileURLToPath(new URL('../../bin/ship.mjs', import.meta.url));
 
+// Which harness is actually running these hooks. Grok Build and Codex run the
+// same hook scripts as Claude Code, so HARNESS_NAME (what the receipts say
+// decided) is not proof of it. Grok's shim sets ENFORCER_HARNESS; Claude Code
+// marks its environment CLAUDECODE=1. Codex sets neither yet, so it is ''
+// there: a session is announced only under a harness that is known, because
+// announcing a Codex session as claude-code would make it a contradiction.
+const RUNNING = { grok: 'grok-cli', codex: 'codex' };
+export function runningHarness(env = process.env) {
+  if (RUNNING[env.ENFORCER_HARNESS]) return RUNNING[env.ENFORCER_HARNESS];
+  return env.CLAUDECODE === '1' ? HARNESS_NAME : '';
+}
+
 export const governor = () => createGovernor({ harness: HARNESS_NAME, adapterVersion: ADAPTER_VERSION, cost, shipper: SHIPPER });

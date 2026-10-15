@@ -23,6 +23,13 @@
 // always was. It must never be able to delay a session by more than the
 // timeout, and never be able to loop.
 //
+// THE SAME REQUEST REGISTERS THE SESSION. With the harness and the full
+// session id it is also the session's announcement (enforcer-governance
+// migration 015): telemetry for a session announced at its start, under this
+// harness, is held to that harness, and reaches provenance level 2 where it
+// would otherwise stop at 1. A session with no project to name is still
+// announced. Older servers ignore the two fields.
+//
 // The server side is enforcer-governance POST /api/v1/governance/ingest/attributions
 // (migration 011). It takes tenant and account from the credential, holds the
 // attribution until telemetry or a receipt creates the session, and lets a
@@ -38,19 +45,48 @@ export const ATTRIBUTION_PATH = '/api/v1/governance/ingest/attributions';
 // daily; this runs on every start, so it gets less.
 export const ATTRIBUTION_TIMEOUT_MS = 1500;
 
+// A harness name the server accepts (provenance profile names). 'unknown' is
+// reserved there for rows no profile matched, so it never announces anything.
+const HARNESS_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
 /**
- * Tell the control plane which project a session works for. Never throws.
+ * Whether a session can be announced: a real harness name, a session id, and
+ * an agent id whose short form (after the first ':') starts that session id.
+ * The server refuses the WHOLE request otherwise, so a registration that could
+ * not stand is left off rather than costing the project with it.
  *
- * @param {{agent?: string, client?: string}} session  the agent id receipts use
- *   and the project clientFor() derived ('?name' when guessed).
- * @param {object} cfg  the effective config (shipOn, ingestUrl, baseUrl ...)
- * @returns {Promise<{sent: boolean, status?: number, client?: string, skipped?: string, detail?: string}>}
+ * @param {{agent?: string, harness?: string, session?: string}} [s]
+ * @returns {boolean}
  */
-export async function attributeSession({ agent, client } = {}, cfg = {}, { fetchImpl = hookFetch, now = Date.now, timeoutMs = ATTRIBUTION_TIMEOUT_MS } = {}) {
+export function registers({ agent, harness, session } = {}) {
+  if (!agent || !session || typeof session !== 'string' || session.length > 128) return false;
+  if (!HARNESS_NAME.test(harness || '') || harness === 'unknown') return false;
+  // A subagent's id is '<harness>:<session8>:<agent8>'; the session part is the second.
+  const parts = agent.split(':');
+  return parts.length < 2 || session.startsWith(parts[1]);
+}
+
+/**
+ * Tell the control plane which project a session works for, and announce the
+ * session under its harness. Never throws.
+ *
+ * @param {{agent?: string, client?: string, harness?: string, session?: string}} s
+ *   the agent id receipts use, the project clientFor() derived ('?name' when
+ *   guessed), the harness the session runs in, and its full session id.
+ * @param {object} cfg  the effective config (shipOn, ingestUrl, baseUrl ...)
+ * @returns {Promise<{sent: boolean, status?: number, client?: string, trust?: number, skipped?: string, detail?: string}>}
+ */
+export async function attributeSession(
+  { agent, client, harness, session } = {},
+  cfg = {},
+  { fetchImpl = hookFetch, now = Date.now, timeoutMs = ATTRIBUTION_TIMEOUT_MS } = {},
+) {
   // The same switch that stops receipts leaving the machine stops this: an
   // install told not to report does not report its projects either.
   if (cfg.shipOn === false) return { sent: false, skipped: 'shipping is switched off (shipOn)' };
-  if (!agent || !client || client === '?') return { sent: false, skipped: 'no session or no project' };
+  const named = Boolean(client) && client !== '?';
+  const announce = registers({ agent, harness, session });
+  if (!agent || (!named && !announce)) return { sent: false, skipped: 'no session or no project' };
   if (!credentialId() || typeof fetchImpl !== 'function') return { sent: false, skipped: 'not signed in to Enforcer' };
 
   try {
@@ -67,17 +103,19 @@ export async function attributeSession({ agent, client } = {}, cfg = {}, { fetch
     const res = await fetchImpl(url, {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent, client }),
+      body: JSON.stringify({ agent, ...(named ? { client } : {}), ...(announce ? { harness, session_id: session } : {}) }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status !== 200) return { sent: true, status: res.status };
-    let held;
+    let data;
     try {
-      held = (await res.json())?.data?.client;
+      data = (await res.json())?.data;
     } catch {
       /* the status is the answer */
     }
-    return { sent: true, status: 200, ...(typeof held === 'string' ? { client: held } : {}) };
+    const held = data?.client;
+    const trust = data?.registration?.trust;
+    return { sent: true, status: 200, ...(typeof held === 'string' && held ? { client: held } : {}), ...(Number.isInteger(trust) ? { trust } : {}) };
   } catch (e) {
     return {
       sent: false,

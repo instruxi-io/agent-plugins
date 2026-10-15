@@ -250,9 +250,13 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
      * Pick up the tenant's managed floor when the cached copy is stale, and
      * tell the control plane which project the session works for.
      *
-     * event: { agent?, cwd? } -- the agent id receipts use, and the working
-     * directory the project is derived from. Without an agent (an older
-     * caller), nothing is attributed and start() does what it always did.
+     * event: { agent?, cwd?, session?, harness? } -- the agent id receipts
+     * use, the working directory the project is derived from, and the full
+     * session id that announces the session (attribution.mjs). The session is
+     * announced under event.harness when the event names one -- '' when the
+     * adapter cannot tell which harness is running it, which announces
+     * nothing -- else under this governor's harness. Without an agent (an
+     * older caller), nothing is attributed and start() does what it always did.
      * Resolves to what the attribution did (attribution.mjs), for tests and
      * callers that care; nothing depends on it.
      */
@@ -279,7 +283,8 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
       if (!event.agent) return undefined;
       const eff = config();
       try {
-        return await attributeSession({ agent: event.agent, client: clientFor(event.cwd, eff.clients) }, eff);
+        const runs = 'harness' in event ? event.harness : harness;
+        return await attributeSession({ agent: event.agent, client: clientFor(event.cwd, eff.clients), harness: runs, session: event.session }, eff);
       } catch {
         return { sent: false, detail: 'attribution failed' };
       }
