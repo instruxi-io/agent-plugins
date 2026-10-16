@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.19
+
+- **Agent ids name the harness**: a session's agent id is `grok:<8>` under Grok Build and `codex:<8>` under Codex, not `claude:<8>` for every harness. Receipts, the SessionStart attribution and registration, local state and the status line all use the same id, and `/resume <8>` finds an agent under any of the prefixes. Release only after enforcer-governance migration 016 is deployed (instruxi-io/enforcer-governance#27).
+
 ## 1.3.18
 
 - Receipts and session registration now name the harness actually running: Grok Build sessions record `grok-cli` and Codex sessions `codex` (Codex loads its own `hooks/codex/hooks.json`, the Claude Code hooks plus `--harness codex`), where every receipt used to say `claude-code`. Codex sessions now register with the control plane. Codex will ask to re-trust the plugin's hooks once after this update.
