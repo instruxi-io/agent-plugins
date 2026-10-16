@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createGovernor } from '../../core/governor.mjs';
 import { read, harnessUsd, HARNESS, TRANSCRIPT } from './meter.mjs';
 import { readUsage } from './usage.mjs';
+import { HARNESS_NAME, runningHarness } from './harness.mjs';
 
 /**
  * Claude Code's spend: its transcript for the model and the tokens, and the
@@ -30,7 +31,7 @@ export const cost = {
 // The adapter's version is the plugin's: this adapter ships inside the plugin
 // and changes with it. Read once per hook process; a package.json that cannot
 // be read costs the receipts a label, never a decision.
-export const HARNESS_NAME = 'claude-code';
+export { HARNESS_NAME };
 export const ADAPTER_VERSION = (() => {
   try {
     return String(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version || '');
@@ -44,18 +45,8 @@ export const ADAPTER_VERSION = (() => {
 // runs by hand.
 export const SHIPPER = fileURLToPath(new URL('../../bin/ship.mjs', import.meta.url));
 
-// Which harness is actually running these hooks. Grok Build and Codex run the
-// same hook scripts as Claude Code, so HARNESS_NAME is not proof of it. Grok's
-// shim sets ENFORCER_HARNESS=grok; Codex's hooks file passes `--harness codex`,
-// which bin/enforcer turns into ENFORCER_HARNESS=codex; Claude Code marks its
-// environment CLAUDECODE=1. With none of them it is '': a session is announced
-// only under a harness that is known, because announcing a session under the
-// wrong one would make it a contradiction.
-const RUNNING = { grok: 'grok-cli', codex: 'codex' };
-export function runningHarness(env = process.env) {
-  if (RUNNING[env.ENFORCER_HARNESS]) return RUNNING[env.ENFORCER_HARNESS];
-  return env.CLAUDECODE === '1' ? HARNESS_NAME : '';
-}
+// Which harness is actually running these hooks: see harness.mjs.
+export { runningHarness };
 
 // What receipts record as the harness that decided: the running one, else
 // Claude Code, which is what every receipt said before harnesses were told

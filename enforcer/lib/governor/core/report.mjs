@@ -30,6 +30,9 @@ const envLine = () =>
         .join(', ') +
       '. These apply to this process and its children, not to the machine-wide config.'
     : '';
+// The harness prefixes an agent id can carry ('claude:0f3c9a1b', 'grok:...',
+// 'codex:...'), so `resume 0f3c9a1b` finds the agent under any of them.
+const ID_PREFIXES = ['claude', 'grok', 'codex'];
 const usd = (t, m) => '$' + dollarsForTokens(t, priceOf(m, cfg.model).in).toFixed(2);
 
 if (cmd === 'verify') {
@@ -176,12 +179,16 @@ if (cmd === 'resume') {
     const stopped = Object.entries(s.agents || {}).filter(([, a]) => a.status === 'grounded');
     if (!stopped.length) return { msg: 'No agent is stopped. Nothing to resume.' };
 
-    let ids = arg ? [arg, 'claude:' + arg].filter((id) => s.agents[id]) : stopped.map(([id]) => id);
+    let ids = arg ? [arg, ...ID_PREFIXES.map((p) => p + ':' + arg)].filter((id) => s.agents[id]) : stopped.map(([id]) => id);
     if (arg && !ids.length) return { msg: `No agent called ${arg}. Stopped right now: ${stopped.map(([id]) => id).join(', ')}` };
     // With no argument and several stopped, name them rather than guess: resuming
     // the wrong agent spends real money on work nobody asked to continue.
     if (!arg && ids.length > 1) {
-      return { msg: `${ids.length} agents are stopped. Name one:\n` + ids.map((id) => `  /enforcer-governor:resume ${id.replace(/^claude:/, '')}`).join('\n') };
+      return {
+        msg:
+          `${ids.length} agents are stopped. Name one:\n` +
+          ids.map((id) => `  /enforcer-governor:resume ${id.replace(/^(claude|grok|codex):/, '')}`).join('\n'),
+      };
     }
     const id = ids[0];
     const before = s.prevHash;

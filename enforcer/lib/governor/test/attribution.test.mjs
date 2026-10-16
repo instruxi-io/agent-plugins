@@ -255,6 +255,18 @@ await ok("the running harness: Grok's shim, Claude Code's marker, else unknown t
   assert.equal(runningHarness({}), '', 'Codex today: same hooks, no marker');
 });
 
+await ok('the agent id names the running harness: claude:, grok:, codex:, else claude:', async () => {
+  const { agentOf } = await import('../adapters/claude-code/events.mjs');
+  const sid = '0f3c9a1b-2222-4333-8444-555566667777';
+  assert.equal(agentOf({ session_id: sid }, { CLAUDECODE: '1' }), 'claude:0f3c9a1b');
+  assert.equal(agentOf({ session_id: sid }, { ENFORCER_HARNESS: 'grok' }), 'grok:0f3c9a1b');
+  assert.equal(agentOf({ session_id: sid }, { ENFORCER_HARNESS: 'codex' }), 'codex:0f3c9a1b');
+  assert.equal(agentOf({ session_id: sid }, {}), 'claude:0f3c9a1b', 'a harness we cannot tell keeps the old id');
+  assert.equal(agentOf({ session_id: sid, agent_id: 'ab12cd34ef' }, { ENFORCER_HARNESS: 'grok' }), 'grok:0f3c9a1b:ab12cd34');
+  assert.equal(agentOf({}, { ENFORCER_HARNESS: 'codex' }), 'codex', 'no session: the harness name');
+  assert.equal(agentOf({}, {}), 'claude-code');
+});
+
 // The hook itself: Claude Code's SessionStart JSON in, one attribution out,
 // and the process exits promptly with the usual empty answer.
 const hook = fileURLToPath(new URL('../hooks/session.mjs', import.meta.url));
@@ -288,7 +300,7 @@ await ok("SessionStart hook: sends the session's attribution once and answers as
   setConfig({});
 });
 
-await ok('SessionStart hook under Grok announces grok-cli; with no marker (Codex) it announces nothing', async () => {
+await ok('SessionStart hook under Grok announces grok-cli as grok:<session>; with no marker (Codex) it announces nothing', async () => {
   setConfig({ clients: { '/w/acme-api': 'acme' } });
   const ev = { hook_event_name: 'SessionStart', session_id: '0f3c9a1b-2222-4333-8444-555566667777', cwd: '/w/acme-api' };
   await runHook(ev, { ENFORCER_HARNESS: 'grok' });
@@ -296,7 +308,7 @@ await ok('SessionStart hook under Grok announces grok-cli; with no marker (Codex
   assert.deepEqual(
     posts.map((p) => p.body),
     [
-      { agent: 'claude:0f3c9a1b', client: 'acme', harness: 'grok-cli', session_id: ev.session_id },
+      { agent: 'grok:0f3c9a1b', client: 'acme', harness: 'grok-cli', session_id: ev.session_id },
       { agent: 'claude:0f3c9a1b', client: 'acme' },
     ],
   );

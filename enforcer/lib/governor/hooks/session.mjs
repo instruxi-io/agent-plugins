@@ -34,7 +34,7 @@ await guard(async () => {
   // to the control plane (core/attribution.mjs): one short, best-effort request
   // when signed in, so the session is filed under its project even if it never
   // makes a governed decision. Only with a real session id -- agentOf's
-  // 'claude-code' fallback names no one session.
+  // no-session fallback (the harness's name) names no one session.
   if (EVENT === 'SessionStart')
     await gov.session.start(ev.session_id ? { agent: event.agent, cwd: ev.cwd, session: ev.session_id, harness: runningHarness() } : {});
 
