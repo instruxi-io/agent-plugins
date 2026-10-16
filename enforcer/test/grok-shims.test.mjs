@@ -17,7 +17,8 @@ const fx = (n) => readFileSync(join(root, 'test/fixtures/grok', n), 'utf8');
 const home = mkdtempSync(join(tmpdir(), 'grok-shim-'));
 // Decisioning is off by default; the shims are tested against the checks, so turn them on.
 writeChecksOn(join(home, 'g'));
-const env = { ...process.env, HOME: home, ENFORCER_HOME: home, GOVERNOR_HOME: join(home, 'g') };
+const { CLAUDECODE: _cc, ...parentEnv } = process.env;
+const env = { ...parentEnv, HOME: home, ENFORCER_HOME: home, GOVERNOR_HOME: join(home, 'g') };
 const run = (args, input) => spawnSync(process.execPath, [join(root, 'hooks/grok/shim.mjs'), ...args], { input, encoding: 'utf8', env });
 let n = 0;
 const ok = (m) => {
@@ -55,6 +56,16 @@ const deny = JSON.parse(r.stdout).hookSpecificOutput;
 assert.equal(deny.permissionDecision, 'deny');
 assert.match(deny.permissionDecisionReason, /pipe_to_shell/);
 ok('PreToolUse pipe-to-shell: permissionDecision deny, code pipe_to_shell');
+{
+  // The decision record names Grok: the shim's ENFORCER_HARNESS=grok, not the
+  // Claude Code adapter's own name.
+  const recs = readFileSync(join(home, 'g', 'receipts.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l));
+  assert.deepEqual([...new Set(recs.map((x) => x.harness))], ['grok-cli']);
+}
+ok('the receipt says harness grok-cli');
 
 // graph hooks are no-ops without a graph context: exit 0, nothing printed
 for (const [f, args] of [
