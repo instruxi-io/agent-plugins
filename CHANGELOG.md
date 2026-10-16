@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.3.17
+
+- The governor's session start now also announces the session under the harness actually running it (Claude Code by `CLAUDECODE=1`, Grok by its shim's `ENFORCER_HARNESS`) with its full session id, so the control plane can hold that session's telemetry to that harness (enforcer-governance session registry, provenance level 2). Codex sets no marker yet and announces nothing; the project attribution is unchanged.
+- The repo is now `instruxi-io/agent-plugins` (was `claude-plugins`); install commands, plugin `repository` fields and the receipt schema `$id` use the new name. GitHub redirects the old one, so existing marketplaces keep updating, and the marketplace name stays `instruxi`.
+
 ## 1.3.16
 
 - When a plan waits on a person (a ready gate, an open review item, a node failed on a human decision), the `enforcer:graph` skill and `/enforcer:dispatch` now ask in the same turn with `AskUserQuestion`, or give the filled-in `! graphwatch decide|resolve` command, instead of ending on a passive list; the dispatcher's `ATTENTION` line and `enforcer dispatch status` print the exact answering command per item.
