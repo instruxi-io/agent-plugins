@@ -21,7 +21,7 @@ jobs:
           node -e 'JSON.parse(require("fs").readFileSync("settings.json"))'
 
       # This repo is not a marketplace: the governor is installed from the
-      # Instruxi catalog (instruxi-io/claude-plugins), which pins a tag here and
+      # Instruxi catalog (instruxi-io/agent-plugins), which pins a tag here and
       # checks that its entries resolve. What stays here is the manifest itself.
       - name: the plugin manifest is sound
         run: |

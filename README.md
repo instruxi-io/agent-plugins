@@ -1,7 +1,11 @@
-# Instruxi kit for Claude Code
+# Instruxi agent plugins
 
-One marketplace for the Instruxi plugins. Add it once, then install what you
-need.
+The Instruxi plugins for coding agents: Claude Code and Codex install them from
+this repo's marketplaces, and Grok Build installs `enforcer` by copying it into
+place (below). Add the marketplace once, then install what you need.
+
+This repo was `instruxi-io/claude-plugins` until 2026-10-15. GitHub redirects
+the old name, so marketplaces added under it keep updating.
 
 The Enforcer API documents itself through the MCP server: `enforcer_api_search`
 and `enforcer_api_describe` answer from the live spec, so there is no doc
@@ -27,7 +31,7 @@ plugin to drift out of date.
 ## Install
 
 ```sh
-claude plugin marketplace add instruxi-io/claude-plugins
+claude plugin marketplace add instruxi-io/agent-plugins
 claude plugin install enforcer@instruxi             # includes the graph worker hooks and the governor
 # enforcer-files is now part of enforcer; nothing more to install
 ```
@@ -40,7 +44,7 @@ The same `enforcer/` package installs in Codex through `.agents/plugins/marketpl
 commands resolve unchanged.
 
 ```sh
-codex plugin marketplace add instruxi-io/claude-plugins
+codex plugin marketplace add instruxi-io/agent-plugins
 codex plugin install enforcer@instruxi
 codex mcp login enforcer
 ```

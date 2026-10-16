@@ -8,7 +8,7 @@
     "url": "https://instruxi.io"
   },
   "homepage": "https://instruxi.io",
-  "repository": "https://github.com/instruxi-io/claude-plugins",
+  "repository": "https://github.com/instruxi-io/agent-plugins",
   "keywords": [
     "enforcer",
     "mcp",

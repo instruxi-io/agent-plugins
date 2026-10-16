@@ -12,7 +12,7 @@ Loop detection is not the governor's job: `jev-hooks` owns it.
 ## Install
 
 ```
-/plugin marketplace add instruxi-io/claude-plugins
+/plugin marketplace add instruxi-io/agent-plugins
 /plugin install enforcer@instruxi
 ```
 
