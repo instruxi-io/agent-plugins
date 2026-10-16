@@ -86,8 +86,10 @@ ok('hooks/codex/hooks.json is hooks/hooks.json with --harness codex on every com
     .map((l) => JSON.parse(l));
   assert.ok(recs.length > 0, 'a receipt was written');
   assert.deepEqual([...new Set(recs.map((x) => x.harness))], ['codex']);
+  // ...and the session is Codex's: its agent id carries the codex: prefix.
+  assert.deepEqual([...new Set(recs.map((x) => x.agent))], ['codex:019a-cod']);
 }
-ok('enforcer event --harness codex: the receipt says harness codex');
+ok('enforcer event --harness codex: the receipt says harness codex, agent codex:<session>');
 const mk = JSON.parse(readFileSync(join(root, '../.agents/plugins/marketplace.json'), 'utf8'));
 const me = mk.plugins.find((p) => p.name === 'enforcer');
 assert.deepEqual(me.source, { source: 'local', path: './enforcer' });

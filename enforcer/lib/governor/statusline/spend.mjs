@@ -19,13 +19,15 @@ import { readFileSync } from 'node:fs';
 import { loadState, loadConfig } from '../src/store.mjs';
 import { DEFAULTS, priceOf, dollarsForTokens } from '../src/policy.mjs';
 import { recordHarnessCost } from '../adapters/claude-code/meter.mjs';
+import { agentOf } from '../adapters/claude-code/events.mjs';
 
 let ev = {};
 try {
   ev = JSON.parse(readFileSync(0, 'utf8') || '{}');
 } catch {}
 const cfg = { ...DEFAULTS, ...loadConfig() };
-const id = ev.session_id ? 'claude:' + String(ev.session_id).slice(0, 8) : 'claude-code';
+// The same id the hooks keep this session's state under (agentOf).
+const id = agentOf({ session_id: ev.session_id });
 
 // Do this first and unconditionally. Even on a session the governor has never
 // judged, the figure is worth keeping: the first tool call of the next turn is
