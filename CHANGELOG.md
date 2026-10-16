@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.18
+
+- Receipts and session registration now name the harness actually running: Grok Build sessions record `grok-cli` and Codex sessions `codex` (Codex loads its own `hooks/codex/hooks.json`, the Claude Code hooks plus `--harness codex`), where every receipt used to say `claude-code`. Codex sessions now register with the control plane. Codex will ask to re-trust the plugin's hooks once after this update.
+
 ## 1.3.17
 
 - The governor's session start now also announces the session under the harness actually running it (Claude Code by `CLAUDECODE=1`, Grok by its shim's `ENFORCER_HARNESS`) with its full session id, so the control plane can hold that session's telemetry to that harness (enforcer-governance session registry, provenance level 2). Codex sets no marker yet and announces nothing; the project attribution is unchanged.
