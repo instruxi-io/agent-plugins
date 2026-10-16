@@ -21,6 +21,37 @@ state: ~/.config/enforcer/dispatch/<graph> (dispatcher.log, pids.json, STOP)
 other dispatcher flags pass through; see docs/graph/DISPATCHER.md
 `;
 
+// Flags that take a value, so the value is never mistaken for the graph id.
+// --agent is not handled here but passes through to the runner.
+const VALUE_FLAGS = ['--workers', '--model', '--repo-root', '--worker-rules', '--context', '--agent'];
+
+const flagValue = (argv, n) => {
+  const i = argv.indexOf(n);
+  return i >= 0 ? argv[i + 1] : undefined;
+};
+
+/** The graph id: the first bare argument that is not a flag's value. */
+export const graphArg = (argv) => argv.find((a, i) => !a.startsWith('-') && !VALUE_FLAGS.includes(argv[i - 1]));
+
+/**
+ * What preflight must judge with the same flags the runner will get: the
+ * identity check depends on --agent, --allow-browser-signin and --workers, and
+ * judging without them refused every long plan whatever was passed.
+ */
+export function preflightOptions(argv) {
+  const o = {};
+  const workerRules = flagValue(argv, '--worker-rules');
+  const repoRoot = flagValue(argv, '--repo-root');
+  const agent = flagValue(argv, '--agent');
+  const workers = Number(flagValue(argv, '--workers'));
+  if (workerRules) o.workerRules = workerRules;
+  if (repoRoot) o.repoRoot = repoRoot;
+  if (agent) o.agent = agent;
+  if (argv.includes('--allow-browser-signin')) o.allowBrowserSignin = true;
+  o.workers = Number.isInteger(workers) && workers > 0 ? workers : DEFAULTS.workers;
+  return o;
+}
+
 export const stateDir = (graph, env = process.env) => join(env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer'), 'dispatch', graph);
 const readJson = (p) => {
   try {
@@ -46,11 +77,8 @@ const tailLine = (p) => {
 };
 
 export async function start(argv, env = process.env) {
-  const graph = argv.find((a, i) => !a.startsWith('-') && !['--workers', '--model', '--repo-root', '--worker-rules', '--context'].includes(argv[i - 1]));
-  const flag = (n) => {
-    const i = argv.indexOf(n);
-    return i >= 0 ? argv[i + 1] : undefined;
-  };
+  const graph = graphArg(argv);
+  const flag = (n) => flagValue(argv, n);
   const repoRoot = flag('--repo-root');
   const workerRules = flag('--worker-rules');
   if (workerRules !== undefined && !['on', 'off'].includes(workerRules)) {
@@ -71,7 +99,7 @@ export async function start(argv, env = process.env) {
     const { main: runtime } = await import('./dispatch/run.mjs');
     return runtime(['--graph', graph, ...argv.filter((a) => a !== graph)], env);
   }
-  const res = await preflight({ graph, env, ...(workerRules ? { workerRules } : {}), ...(repoRoot ? { repoRoot } : {}) });
+  const res = await preflight({ graph, env, ...preflightOptions(argv) });
   for (const r of res) process.stdout.write(`${r.ok ? 'ok  ' : 'fail'}  ${r.name}: ${r.line}\n`);
   if (res.some((r) => !r.ok)) {
     process.stderr.write('enforcer dispatch: preflight failed, nothing started\n');
