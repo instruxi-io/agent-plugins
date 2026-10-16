@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.20
+
+- **`enforcer dispatch` honours `--allow-browser-signin` and `--agent` at preflight**: the preflight identity check never received either flag (or `--workers`), so every plan estimated over 2 h failed it whatever was passed, and `--agent <name>` placed before the graph id was taken for the graph. Both flags now reach preflight as they reach the dispatcher.
+
 ## 1.3.19
 
 - **Agent ids name the harness**: a session's agent id is `grok:<8>` under Grok Build and `codex:<8>` under Codex, not `claude:<8>` for every harness. Receipts, the SessionStart attribution and registration, local state and the status line all use the same id, and `/resume <8>` finds an agent under any of the prefixes. Release only after enforcer-governance migration 016 is deployed (instruxi-io/enforcer-governance#27).

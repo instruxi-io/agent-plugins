@@ -1,1 +1,0 @@
-- **`enforcer dispatch` honours `--allow-browser-signin` and `--agent` at preflight**: the preflight identity check never received either flag (or `--workers`), so every plan estimated over 2 h failed it whatever was passed, and `--agent <name>` placed before the graph id was taken for the graph. Both flags now reach preflight as they reach the dispatcher.
