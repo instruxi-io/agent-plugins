@@ -40,8 +40,11 @@ claude plugin install enforcer@instruxi             # includes the graph worker 
 
 The same `enforcer/` package installs in Codex through `.agents/plugins/marketplace.json`
 (`enforcer/plugin.json` carries the `extensions.com.openai` overlay: hooks at
-`./hooks/hooks.json`, display name). Codex also exports `CLAUDE_PLUGIN_ROOT`, so the hook
-commands resolve unchanged.
+`./hooks/codex/hooks.json`, display name). Codex exports `CLAUDE_PLUGIN_ROOT`, so the hook
+commands resolve unchanged. That hooks file is `hooks/hooks.json` with `--harness codex`
+on every command, which is how the governor knows it is running under Codex: receipts
+say `codex`, and the session registers as Codex. Codex asks you to re-trust a plugin's
+hooks when their definition changes, so expect that prompt once after updating.
 
 ```sh
 codex plugin marketplace add instruxi-io/agent-plugins

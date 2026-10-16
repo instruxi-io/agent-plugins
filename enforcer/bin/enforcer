@@ -53,6 +53,11 @@ if (area === 'doctor') {
 
 if (area === 'event') {
   const graphOnly = rest.includes('--graph-only');
+  // `--harness codex`: Codex runs the same events through its own hooks file
+  // (hooks/codex/hooks.json), and this is how the governor learns it is under
+  // Codex: Codex sets no marker of its own. Grok's shim sets the same variable.
+  const h = rest[rest.indexOf('--harness') + 1];
+  if (rest.includes('--harness') && ['claude', 'codex', 'grok'].includes(h)) process.env.ENFORCER_HARNESS = h;
   const code = await runEvent(sub, { graphOnly });
   await new Promise((done) => process.stdout.write('', done)); // drain a piped stdout before exiting (macOS cut replies at 8192 bytes)
   process.exit(code);

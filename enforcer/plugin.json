@@ -17,7 +17,7 @@
   ],
   "extensions": {
     "com.openai": {
-      "hooks": "./hooks/hooks.json",
+      "hooks": "./hooks/codex/hooks.json",
       "interface": {
         "displayName": "Enforcer",
         "shortDescription": "Enforcer for your agent: MCP connection, sign-in, files, graph worker and governor.",
