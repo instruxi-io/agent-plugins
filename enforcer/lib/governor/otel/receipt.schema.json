@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/instruxi-io/claude-plugins/enforcer/lib/governor/otel/receipt.schema.json",
+  "$id": "https://github.com/instruxi-io/agent-plugins/enforcer/lib/governor/otel/receipt.schema.json",
   "title": "Governor receipt line",
   "description": "One line of receipts.jsonl exactly as the governor writes it (core/verdict.mjs entry(), core/governor.mjs session summary, core/store.mjs writeReceipt). Lines are append-only. Unknown extra keys are allowed so a newer governor does not break an older reader. Receipts never contain prompts, tool input or command text.",
   "type": "object",

@@ -1,4 +1,4 @@
-# WORKER_BRIEF: claude-plugins / the graph worker in `enforcer/`
+# WORKER_BRIEF: agent-plugins / the graph worker in `enforcer/`
 
 Read this and the repo CLAUDE.md (if the repo has one) first, then only the files your node names.
 Scope: the graph worker inside the `enforcer` plugin (skill, hooks, agent, dispatcher, tests). It is not a separate plugin: `enforcer-graph` is an empty deprecated alias in `aliases/`, and there is no plugin dependency.

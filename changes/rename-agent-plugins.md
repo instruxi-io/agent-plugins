@@ -1,0 +1,1 @@
+- The repo is now `instruxi-io/agent-plugins` (was `claude-plugins`); install commands, plugin `repository` fields and the receipt schema `$id` use the new name. GitHub redirects the old one, so existing marketplaces keep updating, and the marketplace name stays `instruxi`.

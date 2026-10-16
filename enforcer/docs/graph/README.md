@@ -17,7 +17,7 @@ separate plugin and no plugin dependency. Installing `enforcer` installs the
 skill, the agent and the hooks:
 
 ```bash
-claude plugin marketplace add instruxi-io/claude-plugins
+claude plugin marketplace add instruxi-io/agent-plugins
 claude plugin install enforcer@instruxi
 ```
 
@@ -68,7 +68,7 @@ claude mcp add --transport http enforcer-graph https://api.instruxi.dev/mcp \
 Portable skill install (any harness that reads SKILL.md):
 
 ```bash
-npx skills add instruxi-io/claude-plugins --skill graph
+npx skills add instruxi-io/agent-plugins --skill graph
 ```
 
 ## Configure
