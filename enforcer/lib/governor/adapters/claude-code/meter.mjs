@@ -25,6 +25,9 @@ import { join } from 'node:path';
 import { DIR, FILE_MODE } from '../../core/store.mjs';
 import { priceOf } from '../../core/policy.mjs';
 import { readUsage } from './usage.mjs';
+import { runningHarness } from './harness.mjs';
+import { readGrokUsage } from '../grok/usage.mjs';
+import { readCodexUsage } from '../codex/usage.mjs';
 
 export const HARNESS = 'harness';
 export const TRANSCRIPT = 'transcript';
@@ -70,12 +73,20 @@ export function harnessUsd(sessionId) {
  * What this session has cost, in the unit the budget is denominated in.
  * @returns {{tokens:number, usd:number|null, model:string, task:string, source:string}}
  */
-export function read(sessionId, transcriptPath, cfg = {}) {
+// Grok Build and Codex run these same hooks, but their transcript_path points
+// at their OWN log format, which the Claude Code reader finds nothing in: it
+// read $0 from a real Grok session, so a spend limit never tripped there. Each
+// harness's log gets its own reader.
+const READERS = { 'grok-cli': readGrokUsage, codex: readCodexUsage };
+export const usageReader = (harness = runningHarness()) => READERS[harness] || readUsage;
+
+export function read(sessionId, transcriptPath, cfg = {}, harness = runningHarness()) {
   // The transcript pass is not optional even when the harness figure exists:
   // it is where the model and the last prompt come from, and both are needed
   // to price the budget and to say what the agent is working on.
-  const t = readUsage(sessionId, transcriptPath);
-  const usd = harnessUsd(sessionId);
+  const { usd: own, ...t } = usageReader(harness)(sessionId, transcriptPath);
+  // Grok writes its own price into its log; the status line is Claude Code's.
+  const usd = typeof own === 'number' ? own : harnessUsd(sessionId);
   if (usd === null) return { ...t, usd: null, source: TRANSCRIPT };
 
   // Budgets are effective tokens, so convert at the model that is answering
