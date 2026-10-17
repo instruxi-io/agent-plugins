@@ -1,1 +1,0 @@
-Spend limits now work under Grok Build and Codex: the governor reads each harness's own session log (Grok's per-turn costUsdTicks, Codex's cumulative token_count priced at the turn's model) instead of the Claude Code reader, which found $0 there.

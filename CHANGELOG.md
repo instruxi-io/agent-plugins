@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.22
+
+- Spend limits now work under Grok Build and Codex: the governor reads each harness's own session log (Grok's per-turn costUsdTicks, Codex's cumulative token_count priced at the turn's model) instead of the Claude Code reader, which found $0 there.
+
 ## 1.3.21
 
 - Acceptance lines now run in two shapes graph workers write all the time, so the judge sees their output instead of a "not run" note: `grep -m N` (also `-mN`, `--max-count=N`), and a count threshold `test $(grep -c <literal> <one path>) -ge N` / `test $(wc -l|-c <one path>) -le N` (`wc -c < <path>` too). Still no shell: the inner command must be a single `grep -c` or `wc` on one path in the checkout, runs as argv, and the plugin does the comparison, printing `count 14 -ge 10: true` as evidence.
