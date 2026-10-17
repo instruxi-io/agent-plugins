@@ -286,8 +286,9 @@ caller uses:
 | go test | `go [-C <dir>] test <./pkg/...> [-v -race -short -cover -failfast -json -count -p -run -tags -timeout]` |
 | go vet | `go [-C <dir>] vet <./pkg/...>` |
 | ls, cat, head, tail, wc, test | a few named flags and relative paths |
-| grep | `grep [-cnilEFwvxrRhHqo] <literal> <relative path>...` |
-| git grep | `git grep [-nciElwvFIhq] <literal> [--] [relative path]...` |
+| count threshold | `test $(<count>) -ge\|-gt\|-le\|-lt\|-eq\|-ne <integer>`, where `<count>` is `grep -c [flags] <literal> <one path>` or `wc -l\|-c\|-w\|-m <one path>` (`wc -c < <path>` too) |
+| grep | `grep [-cnilEFwvxrRhHqo] [-m N] <literal> <relative path>...` |
+| git grep | `git grep [-nciElwvFIhq] [-m N] <literal> [--] [relative path]...` |
 | git merge-base | `git merge-base --is-ancestor <sha> <ref>` |
 | gh pr view | `gh pr view <n> [-R <owner/repo>] [--json <fields>]` |
 
@@ -297,7 +298,12 @@ parentheses, braces, newline, double quote, backslash) may appear outside a
 token wholly in single quotes (a single-quoted token is a literal, such as a
 grep pattern or a `-run` regex), every path must resolve inside the checkout
 (symlinks followed), and `cd` is never allowed: a line names its directory
-with `npm --prefix` or `go -C`. A trailing `2>&1` is dropped, since both
+with `npm --prefix` or `go -C`. The count threshold is the one place `$(…)`
+is accepted, and it is still not a shell: the inner command must be a single
+`grep -c` or `wc` on one path inside the checkout (no `;`, pipe, nested
+`$(…)` or parenthesis), it runs as argv like any other line, and the plugin
+compares the number it prints, so the evidence shows the count and the
+comparison (`count 14 -ge 10: true`). A trailing `2>&1` is dropped, since both
 streams are captured anyway. An allowed line runs with a minimal environment
 (PATH, locale, the Go cache locations) and a temporary HOME that is removed
 afterwards, so no credential under `~/.config` is readable.
