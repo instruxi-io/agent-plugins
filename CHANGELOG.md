@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.21
+
+- Acceptance lines now run in two shapes graph workers write all the time, so the judge sees their output instead of a "not run" note: `grep -m N` (also `-mN`, `--max-count=N`), and a count threshold `test $(grep -c <literal> <one path>) -ge N` / `test $(wc -l|-c <one path>) -le N` (`wc -c < <path>` too). Still no shell: the inner command must be a single `grep -c` or `wc` on one path in the checkout, runs as argv, and the plugin does the comparison, printing `count 14 -ge 10: true` as evidence.
+
 ## 1.3.20
 
 - **`enforcer dispatch` honours `--allow-browser-signin` and `--agent` at preflight**: the preflight identity check never received either flag (or `--workers`), so every plan estimated over 2 h failed it whatever was passed, and `--agent <name>` placed before the graph id was taken for the graph. Both flags now reach preflight as they reach the dispatcher.
