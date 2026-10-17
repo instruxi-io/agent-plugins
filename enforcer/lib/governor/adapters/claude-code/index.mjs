@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createGovernor } from '../../core/governor.mjs';
-import { read, harnessUsd, HARNESS, TRANSCRIPT } from './meter.mjs';
+import { read, harnessUsd, usageReader, HARNESS, TRANSCRIPT } from './meter.mjs';
 import { readUsage } from './usage.mjs';
 import { HARNESS_NAME, runningHarness } from './harness.mjs';
 
@@ -22,8 +22,8 @@ export const cost = {
       ? { ...readUsage('agent-' + event.subagent.id, event.subagent.transcript), usd: null, source: TRANSCRIPT }
       : read(event.session, event.transcript, cfg),
   total: (event) => {
-    const { tokens, model } = readUsage(event.session, event.transcript);
-    const usd = harnessUsd(event.session);
+    const { tokens, model, usd: own } = usageReader()(event.session, event.transcript);
+    const usd = typeof own === 'number' ? own : harnessUsd(event.session);
     return { tokens, model, usd, source: usd === null ? TRANSCRIPT : HARNESS };
   },
 };
