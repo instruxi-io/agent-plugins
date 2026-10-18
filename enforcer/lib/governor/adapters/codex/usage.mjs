@@ -17,10 +17,12 @@
 // reasoning tokens are part of output_tokens (protocol.rs non_cached_input).
 // Codex logs no dollar figure, so spend is priced here from the table, each
 // increase at the model the latest turn_context named.
+
+import { emptyUsage } from '../../core/cost.mjs';
 import { priceOf } from '../../core/policy.mjs';
 import { count, readForward, taskLine } from '../tail.mjs';
 
-const fresh = () => ({ usd: 0, model: '', task: '', last: { input: 0, cached: 0, output: 0 } });
+const fresh = () => ({ usd: 0, model: '', task: '', last: { input: 0, cached: 0, output: 0 }, usage: emptyUsage() });
 
 function fold(cur, m) {
   const p = m?.payload;
@@ -49,20 +51,25 @@ function fold(cur, m) {
   const dOut = now.output - cur.last.output;
   const price = priceOf(cur.model);
   cur.usd += ((dIn - dCached) * price.in + dCached * (price.cin ?? price.in * 0.1) + dOut * price.out) / 1e6;
+  // Codex's input includes the cached part, and its output the reasoning.
+  cur.usage.input += dIn - dCached;
+  cur.usage.cache_read += dCached;
+  cur.usage.output += dOut;
   cur.last = now;
 }
 
 /**
- * @returns {{tokens:number, usd:null, model:string, task:string}}
+ * @returns {{tokens:number, usd:null, model:string, task:string, usage:object}}
  *   `usd` is always null: the figure is table arithmetic, not Codex's own, so
  *   it is reported the way the Claude Code transcript reading is, as tokens.
  */
 export function readCodexUsage(sessionId, transcriptPath) {
-  const out = { tokens: 0, usd: null, model: '', task: '' };
+  const out = { tokens: 0, usd: null, model: '', task: '', usage: emptyUsage() };
   const cur = readForward(`codex-${sessionId || 'default'}`, transcriptPath, fresh, fold);
   if (!cur) return out;
   out.model = cur.model;
   out.task = taskLine(cur.task);
+  out.usage = { ...cur.usage };
   out.tokens = Math.round((cur.usd * 1e6) / priceOf(cur.model).in);
   return out;
 }

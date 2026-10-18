@@ -29,7 +29,7 @@ import { withLock, loadState, saveState, loadConfig, writeReceipt, commit } from
 import { effective, refresh, stale } from './managed.mjs';
 import { kick, SHIPPER } from './kick.mjs';
 import { brief as briefFor, markTold } from './brief.mjs';
-import { costUsd } from './cost.mjs';
+import { costUsd, receiptUsage } from './cost.mjs';
 import { signedInOperator, refreshIdentity, identityStale } from './identity.mjs';
 const attributeSession = async (...a) => (await import('./attribution.mjs')).attributeSession(...a);
 import { shadow } from './shadow.mjs';
@@ -298,12 +298,13 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
       withLock(() => {
         const state = loadState();
         const agent = event.agent;
-        const { tokens, model, usd: harnessFigure, source } = cost.total(event);
+        const { tokens, model, usd: harnessFigure, source, usage } = cost.total(event);
         const a = state.agents[agent];
         if (!a && !tokens) return;
         const usd = harnessFigure ?? dollarsForTokens(tokens, priceOf(model).in);
         // ONE number, two readers: the sentence and the field a machine sums.
         const c = costUsd(usd);
+        const counts = receiptUsage(usage);
         const entry = {
           ts: new Date().toISOString(),
           agent,
@@ -319,6 +320,9 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
           // ...and these after it, for the same reason.
           ...(harness ? { harness } : {}),
           ...(adapterVersion ? { adapter_version: adapterVersion } : {}),
+          // The token counts the cost was priced from, as measured: the
+          // session's usage without our price table. Last, for the hash.
+          ...(counts ? { usage: counts } : {}),
         };
         const hash = createHash('sha256')
           .update(state.prevHash + JSON.stringify(entry))

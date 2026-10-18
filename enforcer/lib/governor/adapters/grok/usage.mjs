@@ -14,12 +14,14 @@
 //
 // The limit: usage lands when a turn COMPLETES. A hook mid-turn sees every
 // finished turn's spend but not the one in flight.
+
+import { emptyUsage } from '../../core/cost.mjs';
 import { priceOf } from '../../core/policy.mjs';
 import { count, readForward, taskLine } from '../tail.mjs';
 
 export const TICKS_PER_USD = 1e10;
 
-const fresh = () => ({ usd: 0, turns: 0, model: '', task: '', prompt: null });
+const fresh = () => ({ usd: 0, turns: 0, model: '', task: '', prompt: null, usage: emptyUsage() });
 
 // A turn without Grok's own figure (an older or newer build that drops the
 // field) is priced from its tokens at the table's rate for its model, so it is
@@ -55,19 +57,32 @@ function fold(cur, m, seen) {
   const ticks = u.usage.costUsdTicks;
   cur.usd += typeof ticks === 'number' && Number.isFinite(ticks) && ticks >= 0 ? ticks / TICKS_PER_USD : priced(u.usage, cur.model);
   cur.turns++;
+  // inputTokens is the whole prompt (totalTokens = inputTokens + outputTokens),
+  // cached reads and writes included; the receipt's input is neither. Its
+  // outputTokens already holds the reasoning (a 1.0.46 turn: 27 out, 26 of
+  // them reasoning), which is why `reasoning` is never added to a total.
+  const input = count(u.usage.inputTokens);
+  const cached = Math.min(count(u.usage.cachedReadTokens), input);
+  const written = Math.min(count(u.usage.cacheCreationTokens), input - cached);
+  cur.usage.input += input - cached - written;
+  cur.usage.cache_read += cached;
+  cur.usage.cache_write += written;
+  cur.usage.output += count(u.usage.outputTokens);
+  cur.usage.reasoning += count(u.usage.reasoningTokens);
 }
 
 /**
- * @returns {{tokens:number, usd:number|null, model:string, task:string}}
+ * @returns {{tokens:number, usd:number|null, model:string, task:string, usage:object}}
  *   `usd` is Grok's own figure, null until a turn has completed; `tokens` is
  *   that figure in effective input tokens at the model answering now.
  */
 export function readGrokUsage(sessionId, transcriptPath) {
-  const out = { tokens: 0, usd: null, model: '', task: '' };
+  const out = { tokens: 0, usd: null, model: '', task: '', usage: emptyUsage() };
   const cur = readForward(`grok-${sessionId || 'default'}`, transcriptPath, fresh, fold);
   if (!cur) return out;
   out.model = cur.model;
   out.task = taskLine(cur.task);
+  out.usage = { ...cur.usage };
   if (!cur.turns) return out;
   out.usd = cur.usd;
   out.tokens = Math.round((cur.usd * 1e6) / priceOf(cur.model).in);

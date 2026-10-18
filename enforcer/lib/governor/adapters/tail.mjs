@@ -27,9 +27,13 @@ export function readForward(key, path, fresh, fold) {
   if (!path) return null;
   const cf = cursorFile(key);
   let cur = { ...fresh(), path: '', offset: 0, seen: [] };
+  let saved = null;
   try {
-    cur = { ...cur, ...JSON.parse(readFileSync(cf, 'utf8')) };
+    saved = JSON.parse(readFileSync(cf, 'utf8'));
   } catch {}
+  // A cursor saved by an older reader lacks a running total this one keeps:
+  // its offset is past lines whose share it never counted, so it is no cursor.
+  if (saved && Object.keys(fresh()).every((k) => k in saved)) cur = { ...cur, ...saved };
 
   let size = 0;
   try {
