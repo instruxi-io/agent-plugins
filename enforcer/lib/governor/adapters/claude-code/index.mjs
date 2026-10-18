@@ -22,9 +22,9 @@ export const cost = {
       ? { ...readUsage('agent-' + event.subagent.id, event.subagent.transcript), usd: null, source: TRANSCRIPT }
       : read(event.session, event.transcript, cfg),
   total: (event) => {
-    const { tokens, model, usd: own } = usageReader()(event.session, event.transcript);
+    const { tokens, model, usd: own, usage } = usageReader()(event.session, event.transcript);
     const usd = typeof own === 'number' ? own : harnessUsd(event.session);
-    return { tokens, model, usd, source: usd === null ? TRANSCRIPT : HARNESS };
+    return { tokens, model, usd, usage, source: usd === null ? TRANSCRIPT : HARNESS };
   },
 };
 

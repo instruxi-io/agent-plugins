@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, statSync, openSync, readSync, closeSync } 
 import { join } from 'node:path';
 import { DIR, FILE_MODE } from '../../core/store.mjs';
 import { priceOf } from '../../core/policy.mjs';
+import { emptyUsage } from '../../core/cost.mjs';
 
 const cursorFile = (id) => join(DIR, `cursor-${String(id).replace(/[^\w-]/g, '')}.json`);
 
@@ -23,11 +24,11 @@ const SEEN_MAX = 400;
 const SERVER_TOOL_EFF = 2000;
 
 export function readUsage(sessionId, transcriptPath) {
-  const out = { tokens: 0, model: '', task: '' };
+  const out = { tokens: 0, model: '', task: '', usage: emptyUsage() };
   if (!transcriptPath) return out;
 
   const cf = cursorFile(sessionId || 'default');
-  let cur = { path: '', offset: 0, usd: 0, seen: [], model: '', task: '' };
+  let cur = { path: '', offset: 0, usd: 0, seen: [], model: '', task: '', usage: null };
   try {
     cur = { ...cur, ...JSON.parse(readFileSync(cf, 'utf8')) };
   } catch {}
@@ -41,9 +42,10 @@ export function readUsage(sessionId, transcriptPath) {
 
   // A different transcript, or one that shrank (compaction rewrites it), means
   // the cursor describes a file that no longer exists. Start over rather than
-  // read from a meaningless offset.
-  if (cur.path !== transcriptPath || size < cur.offset) {
-    cur = { path: transcriptPath, offset: 0, usd: 0, seen: [], model: '', task: '' };
+  // read from a meaningless offset. So does a cursor an older reader saved,
+  // with no token counts: its offset is past lines whose counts it never kept.
+  if (cur.path !== transcriptPath || size < cur.offset || !cur.usage) {
+    cur = { path: transcriptPath, offset: 0, usd: 0, seen: [], model: '', task: '', usage: emptyUsage() };
   }
 
   if (size > cur.offset) {
@@ -102,6 +104,11 @@ export function readUsage(sessionId, transcriptPath) {
       const calls = (st.web_search_requests || 0) + (st.web_fetch_requests || 0);
       const eff = (u.input_tokens || 0) + 5 * (u.output_tokens || 0) + write + 0.1 * (u.cache_read_input_tokens || 0) + calls * SERVER_TOOL_EFF;
       cur.usd += (eff * priceOf(m?.message?.model || cur.model).in) / 1e6;
+      // The counts as measured, unweighted: what the receipt reports.
+      cur.usage.input += u.input_tokens || 0;
+      cur.usage.output += u.output_tokens || 0;
+      cur.usage.cache_read += u.cache_read_input_tokens || 0;
+      cur.usage.cache_write += h1 || m5 ? h1 + m5 : u.cache_creation_input_tokens || 0;
     }
     cur.seen = [...seen].slice(-SEEN_MAX);
     try {
@@ -114,5 +121,6 @@ export function readUsage(sessionId, transcriptPath) {
   out.model = cur.model;
   out.task = (cur.task || '').replace(/\s+/g, ' ').trim().slice(0, 140);
   out.tokens = Math.round((cur.usd * 1e6) / priceOf(cur.model).in);
+  out.usage = { ...cur.usage };
   return out;
 }

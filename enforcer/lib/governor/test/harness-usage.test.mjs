@@ -25,6 +25,8 @@ const { cost, governor } = await import('../adapters/claude-code/index.mjs');
 const { toolEvent } = await import('../adapters/claude-code/events.mjs');
 const { priceOf } = await import('../core/policy.mjs');
 const { DENY, ALLOW } = await import('../core/index.mjs');
+const { emptyUsage, receiptUsage, USAGE_KEYS } = await import('../core/cost.mjs');
+const { agentOf } = await import('../adapters/claude-code/events.mjs');
 
 const FIX = fileURLToPath(new URL('./fixtures/harness-usage/', import.meta.url));
 const GROK = join(FIX, 'grok-updates.jsonl');
@@ -190,7 +192,7 @@ await ok('grok: garbage lines and other updates are skipped', () => {
 
 await ok('grok: no log, or one that does not exist, reads as nothing rather than throwing', () => {
   for (const p of [null, undefined, '', join(home, 'missing.jsonl')]) {
-    assert.deepEqual(readGrokUsage(sid('g'), p), { tokens: 0, usd: null, model: '', task: '' }, String(p));
+    assert.deepEqual(readGrokUsage(sid('g'), p), { tokens: 0, usd: null, model: '', task: '', usage: emptyUsage() }, String(p));
   }
 });
 
@@ -269,7 +271,7 @@ await ok('codex: other line types, garbage and missing fields are skipped', () =
 });
 
 await ok('codex: transcript_path is null when the thread store is not local, and that reads as nothing', () => {
-  assert.deepEqual(readCodexUsage(sid('c'), null), { tokens: 0, usd: null, model: '', task: '' });
+  assert.deepEqual(readCodexUsage(sid('c'), null), { tokens: 0, usd: null, model: '', task: '', usage: emptyUsage() });
 });
 
 // ── Choosing the reader ───────────────────────────────────────────────────────
@@ -378,6 +380,156 @@ await ok('the receipt records the dollars the harness’s own reader saw', () =>
   assert.ok(grok, 'a grok-cli receipt metered by the harness');
   assert.ok(Math.abs(grok.spent_usd - GROK_USD) < 0.0001, `spent_usd ${grok.spent_usd}`);
   assert.ok(existsSync(join(home, 'receipts.jsonl')));
+});
+
+// ── Token counts: what the summary receipt reports ─────────────────────────────
+
+const usage = (o) => ({ ...emptyUsage(), ...o });
+
+await ok('receipt usage: whole counts, zero and nonsense keys dropped, nothing at all when empty', () => {
+  assert.deepEqual(receiptUsage({ input: 10.4, output: 0, cache_read: -3, cache_write: Number.NaN, reasoning: '7' }), { input: 10 });
+  assert.deepEqual(receiptUsage({ input: 1, output: 2, cache_read: 3, cache_write: 4, reasoning: 5 }), {
+    input: 1,
+    output: 2,
+    cache_read: 3,
+    cache_write: 4,
+    reasoning: 5,
+  });
+  assert.deepEqual(
+    Object.keys(receiptUsage({ reasoning: 1, input: 1, output: 1 })),
+    ['input', 'output', 'reasoning'],
+    'sent in USAGE_KEYS order, so the hash is stable',
+  );
+  assert.equal(receiptUsage(emptyUsage()), undefined);
+  assert.equal(receiptUsage(null), undefined);
+  assert.equal(receiptUsage('lots'), undefined);
+  assert.equal(receiptUsage({ input: 1e12 }), undefined, 'an absurd count is not sent');
+  assert.deepEqual(USAGE_KEYS, ['input', 'output', 'cache_read', 'cache_write', 'reasoning']);
+});
+
+// The fixture's two distinct turns (the third line repeats the first's eventId):
+// input 19514 incl. 2304 cached, then 20554 incl. 1664 cached; output 27 and
+// 402, of which 26 and 384 reasoning.
+await ok('grok: counts each distinct turn once, input without the cached reads', () => {
+  assert.deepEqual(readGrokUsage(sid('g'), GROK).usage, usage({ input: 17210 + 18890, output: 27 + 402, cache_read: 2304 + 1664, reasoning: 26 + 384 }));
+});
+
+await ok('grok: cache writes are taken out of the input, and nothing goes below zero', () => {
+  const f = join(home, `g-${++n}.jsonl`);
+  writeFileSync(
+    f,
+    grokTurn('w1', { inputTokens: 100, cachedReadTokens: 30, cacheCreationTokens: 50, outputTokens: 9, costUsdTicks: 1 }) +
+      grokTurn('w2', { inputTokens: 10, cachedReadTokens: 8, cacheCreationTokens: 99, outputTokens: 1, costUsdTicks: 1 }),
+  );
+  assert.deepEqual(readGrokUsage(sid('g'), f).usage, usage({ input: 20, cache_read: 38, cache_write: 52, output: 10 }));
+});
+
+// The fixture's increases: non-cached input 2200 + 500 + 2000, cached 3000 +
+// 6400 + 6000, output 410 + 490 + 400; the info:null line counts nothing.
+await ok('codex: counts the increases of the running total, input without the cached part', () => {
+  assert.deepEqual(readCodexUsage(sid('c'), CODEX).usage, usage({ input: 4700, cache_read: 15400, output: 1300 }));
+});
+
+await ok('codex: a total that went down is a new baseline, not negative usage', () => {
+  const f = join(home, `c-${++n}.jsonl`);
+  writeFileSync(f, codexTotal(1000, 0, 100) + codexTotal(10, 0, 1) + codexTotal(60, 0, 5));
+  assert.deepEqual(readCodexUsage(sid('c'), f).usage, usage({ input: 1050, output: 104 }));
+});
+
+const claudeMsg = (id, u, model = 'claude-sonnet-5') => JSON.stringify({ type: 'assistant', message: { id, model, usage: u } }) + '\n';
+
+await ok('claude code: counts each message once, cache writes from the TTL split or the flat field', () => {
+  const f = join(home, `t-${++n}.jsonl`);
+  writeFileSync(
+    f,
+    claudeMsg('m1', {
+      input_tokens: 5,
+      output_tokens: 40,
+      cache_read_input_tokens: 1000,
+      cache_creation: { ephemeral_1h_input_tokens: 200, ephemeral_5m_input_tokens: 30 },
+    }) +
+      claudeMsg('m1', {
+        input_tokens: 5,
+        output_tokens: 40,
+        cache_read_input_tokens: 1000,
+        cache_creation: { ephemeral_1h_input_tokens: 200, ephemeral_5m_input_tokens: 30 },
+      }) +
+      claudeMsg('m2', { input_tokens: 3, output_tokens: 7, cache_read_input_tokens: 500, cache_creation_input_tokens: 70 }),
+  );
+  assert.deepEqual(readUsage(sid('t'), f).usage, usage({ input: 8, output: 47, cache_read: 1500, cache_write: 300 }));
+});
+
+await ok('claude code: a cursor saved before counts were kept is read again from the top', () => {
+  const s = sid('t');
+  const f = join(home, `t-${++n}.jsonl`);
+  writeFileSync(f, claudeMsg('a', { input_tokens: 11, output_tokens: 22 }));
+  // What 1.3.22 left behind: an offset at the end of the log, and no counts.
+  writeFileSync(
+    join(home, `cursor-${s}.json`),
+    JSON.stringify({ path: f, offset: readFileSync(f).length, usd: 1, seen: ['a'], model: 'claude-sonnet-5', task: '' }),
+  );
+  const r = readUsage(s, f);
+  assert.deepEqual(r.usage, usage({ input: 11, output: 22 }));
+  near(r.tokens, Math.round(((11 + 5 * 22) * priceOf('claude-sonnet-5').in) / priceOf('claude-sonnet-5').in), 'tokens recomputed, not the stale usd');
+});
+
+await ok('grok and codex: a cursor saved before counts were kept is read again from the top', () => {
+  const g = sid('g');
+  writeFileSync(
+    join(home, `cursor-grok-${g}.json`),
+    JSON.stringify({ usd: 99, turns: 2, model: 'x', task: '', prompt: null, path: GROK, offset: readFileSync(GROK).length, seen: [] }),
+  );
+  const gr = readGrokUsage(g, GROK);
+  near(gr.usd, GROK_USD, 'grok usd recounted');
+  assert.equal(gr.usage.input, 36100);
+  const c = sid('c');
+  writeFileSync(
+    join(home, `cursor-codex-${c}.json`),
+    JSON.stringify({ usd: 99, model: 'x', task: '', last: { input: 0, cached: 0, output: 0 }, path: CODEX, offset: readFileSync(CODEX).length, seen: [] }),
+  );
+  assert.equal(readCodexUsage(c, CODEX).usage.cache_read, 15400);
+});
+
+await ok('the session-end total carries the running harness’s counts', () => {
+  process.env.ENFORCER_HARNESS = 'grok';
+  assert.equal(cost.total({ session: sid('t'), transcript: GROK }).usage.output, 429);
+  process.env.ENFORCER_HARNESS = 'codex';
+  assert.equal(cost.total({ session: sid('t'), transcript: CODEX }).usage.output, 1300);
+  delete process.env.ENFORCER_HARNESS;
+});
+
+const lastSummary = () =>
+  readFileSync(join(home, 'receipts.jsonl'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((l) => JSON.parse(l))
+    .filter((r) => r.verdict === 'summary')
+    .at(-1);
+
+await ok('the summary receipt carries the token counts, last, beside the dollars', async () => {
+  process.env.ENFORCER_HARNESS = 'grok';
+  const session = sid('end');
+  await governor().before(grokCall(session, GROK));
+  await governor().session.end({ agent: agentOf({ session_id: session }), session, transcript: GROK });
+  delete process.env.ENFORCER_HARNESS;
+  const r = lastSummary();
+  assert.ok(r, 'a summary receipt');
+  assert.deepEqual(r.usage, { input: 36100, output: 429, cache_read: 3968, reasoning: 410 });
+  const keys = Object.keys(r).filter((k) => k !== 'hash' && k !== 'prevHash');
+  assert.equal(keys.at(-1), 'usage', 'appended after every existing field, so their hash positions hold');
+  near(r.cost_usd, Math.round(GROK_USD * 1e6) / 1e6, 'cost_usd unchanged');
+});
+
+await ok('a session that used no tokens sends no usage field, not a fabricated zero', async () => {
+  const session = sid('end');
+  const t = join(home, `t-${++n}.jsonl`);
+  writeFileSync(t, '');
+  await governor().before(
+    toolEvent({ session_id: session, transcript_path: t, tool_name: 'Read', tool_input: { file_path: '/w/b.ts' }, cwd: '/w', hook_event_name: 'PreToolUse' }),
+  );
+  await governor().session.end({ agent: agentOf({ session_id: session }), session, transcript: t });
+  const r = lastSummary();
+  assert.ok(r && !('usage' in r), JSON.stringify(r));
 });
 
 console.log(`\n  ${pass} passed`);
