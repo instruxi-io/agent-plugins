@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.24
+
+- Claude Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 are priced at Anthropic's published rates, each with its own cache-read rate (0.05x input on the 5.5 family, 0.025x on 5.1), and Haiku 5.5 at its higher rates for any request whose prompt is over 100,000 tokens. Unlisted, Haiku 5.5 had been metered as Opus 5 (50x high) and Fable 5.1 as Opus 5 (2x low). The Claude Code transcript reader now prices each message at its model's own rates instead of one weighting for every Claude model; a cursor kept by an older reader is read again once. Verified against Claude Code's own figure for a Haiku 5.5 session ($0.0042030).
+
 ## 1.3.23
 
 - Summary receipts now carry the session's token counts as measured (`usage`: input, output, cache_read, cache_write, and Grok's reasoning), beside the dollar figure. Dollars are counts times a price table that can be wrong (an unlisted model such as Haiku 5.5 is priced as Opus); the counts let governance read the session without trusting it. The Claude Code, Grok and Codex readers all keep them; a cursor saved by 1.3.22 is read again from the top once so its counts are complete.
