@@ -11,7 +11,7 @@
       "description": "Connects your agent to your Enforcer workspace as an Agent Plugins 1.0 package (root plugin.json, mcp.json, skills) with a Claude Code fallback: the enforcer MCP server, one sign-in (/enforcer:login), /enforcer:setup, workspace switching. Includes the graph worker and the governor.",
       "category": "platform",
       "source": "./enforcer",
-      "version": "1.3.22"
+      "version": "1.3.23"
     },
     {
       "name": "enforcer-governor",
