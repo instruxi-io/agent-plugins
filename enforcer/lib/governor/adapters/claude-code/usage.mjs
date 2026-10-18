@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { DIR, FILE_MODE } from '../../core/store.mjs';
-import { priceOf } from '../../core/policy.mjs';
+import { priceOf, rateFor } from '../../core/policy.mjs';
 import { emptyUsage } from '../../core/cost.mjs';
 
 const cursorFile = (id) => join(DIR, `cursor-${String(id).replace(/[^\w-]/g, '')}.json`);
@@ -19,16 +19,18 @@ const cursorFile = (id) => join(DIR, `cursor-${String(id).replace(/[^\w-]/g, '')
 // set would grow with the session, which is the thing this file exists to stop.
 const SEEN_MAX = 400;
 
-// A web search or fetch is billed per request (~$10 per 1000). Expressed as
-// effective input-tokens so it can join the same sum: $0.01 at $5/MTok input.
-const SERVER_TOOL_EFF = 2000;
+// A web search or fetch is billed per request, $10 per 1000, whatever model
+// asked for it.
+const SERVER_TOOL_USD = 0.01;
+
+const CURSOR_V = 3;
 
 export function readUsage(sessionId, transcriptPath) {
   const out = { tokens: 0, model: '', task: '', usage: emptyUsage() };
   if (!transcriptPath) return out;
 
   const cf = cursorFile(sessionId || 'default');
-  let cur = { path: '', offset: 0, usd: 0, seen: [], model: '', task: '', usage: null };
+  let cur = { v: 0, path: '', offset: 0, usd: 0, seen: [], model: '', task: '', usage: null };
   try {
     cur = { ...cur, ...JSON.parse(readFileSync(cf, 'utf8')) };
   } catch {}
@@ -42,10 +44,12 @@ export function readUsage(sessionId, transcriptPath) {
 
   // A different transcript, or one that shrank (compaction rewrites it), means
   // the cursor describes a file that no longer exists. Start over rather than
-  // read from a meaningless offset. So does a cursor an older reader saved,
-  // with no token counts: its offset is past lines whose counts it never kept.
-  if (cur.path !== transcriptPath || size < cur.offset || !cur.usage) {
-    cur = { path: transcriptPath, offset: 0, usd: 0, seen: [], model: '', task: '', usage: emptyUsage() };
+  // read from a meaningless offset. So does a cursor an older reader saved:
+  // CURSOR_V names what a cursor's totals mean (2: token counts kept, 3: each
+  // model's own cache-read rate), and an older one's totals were kept by
+  // rules this reader no longer follows.
+  if (cur.path !== transcriptPath || size < cur.offset || cur.v !== CURSOR_V || !cur.usage) {
+    cur = { v: CURSOR_V, path: transcriptPath, offset: 0, usd: 0, seen: [], model: '', task: '', usage: emptyUsage() };
   }
 
   if (size > cur.offset) {
@@ -96,19 +100,25 @@ export function readUsage(sessionId, transcriptPath) {
       const cc = u.cache_creation || {};
       const h1 = cc.ephemeral_1h_input_tokens || 0;
       const m5 = cc.ephemeral_5m_input_tokens || 0;
-      const write = h1 || m5 ? 2 * h1 + 1.25 * m5 : 1.25 * (u.cache_creation_input_tokens || 0);
+      const flat = u.cache_creation_input_tokens || 0;
+      const written = h1 || m5 ? h1 + m5 : flat;
+      const read = u.cache_read_input_tokens || 0;
+      // Output and cache reads at the model's own rates, not a weight shared by
+      // every Claude model: the 5.5 family reads cache at 0.05x input, not
+      // 0.1x, and a session is mostly cache reads. Haiku 5.5's rate also
+      // depends on how long THIS request's prompt was.
+      const r = rateFor(m?.message?.model || cur.model, (u.input_tokens || 0) + read + written);
+      const write = h1 || m5 ? 2 * h1 + 1.25 * m5 : 1.25 * flat;
       // Server tools bill per request, not per token, and never entered v2's
-      // sum at all. Priced against input rate so the weighting stays in one
-      // unit; the figure is small but it is not zero on a research-heavy run.
+      // sum at all; the figure is small but it is not zero on a research-heavy run.
       const st = u.server_tool_use || {};
       const calls = (st.web_search_requests || 0) + (st.web_fetch_requests || 0);
-      const eff = (u.input_tokens || 0) + 5 * (u.output_tokens || 0) + write + 0.1 * (u.cache_read_input_tokens || 0) + calls * SERVER_TOOL_EFF;
-      cur.usd += (eff * priceOf(m?.message?.model || cur.model).in) / 1e6;
+      cur.usd += ((u.input_tokens || 0) * r.in + (u.output_tokens || 0) * r.out + write * r.in + read * r.cin) / 1e6 + calls * SERVER_TOOL_USD;
       // The counts as measured, unweighted: what the receipt reports.
       cur.usage.input += u.input_tokens || 0;
       cur.usage.output += u.output_tokens || 0;
-      cur.usage.cache_read += u.cache_read_input_tokens || 0;
-      cur.usage.cache_write += h1 || m5 ? h1 + m5 : u.cache_creation_input_tokens || 0;
+      cur.usage.cache_read += read;
+      cur.usage.cache_write += written;
     }
     cur.seen = [...seen].slice(-SEEN_MAX);
     try {

@@ -27,8 +27,19 @@ export const MODELS = {
   'grok-4.5': { p: 'xai', label: 'Grok 4.5', in: 2, out: 6, cin: 0.3 },
   'grok-4.3': { p: 'xai', label: 'Grok 4.3', in: 1.25, out: 2.5, cin: 0.2 },
   'grok-build-0.1': { p: 'xai', label: 'Grok Build', in: 1, out: 2, cin: 0.2 },
-  // ── Anthropic ──  cache read 0.1x input, 5-minute cache write 1.25x
+  // ── Anthropic ──  cache read 0.1x input unless `cin` says otherwise, cache
+  // writes 1.25x (5-minute) and 2x (1-hour) input on every model.
+  // Anthropic's pricing page (docs: about-claude/pricing), read 2026-10-18. The 5.5
+  // family reads cache at 0.05x input and the 5.1 family at 0.025x. Haiku 5.5
+  // is priced by prompt length: a request whose prompt (input, cache reads and
+  // cache writes together) is over 100,000 tokens pays `long`, the whole
+  // request, cache hits included. Unlisted, Haiku 5.5 fell back to Opus 5 and
+  // was metered 50x high; Fable 5.1 fell to Opus 5 too, 2x LOW, the unsafe way.
+  'claude-fable-5-1': { p: 'anthropic', label: 'Fable 5.1', in: 10, out: 50, cin: 0.25 },
+  'claude-mythos-5-1': { p: 'anthropic', label: 'Mythos 5.1', in: 10, out: 50, cin: 0.25 },
   'claude-fable-5': { p: 'anthropic', label: 'Fable 5', in: 10, out: 50 },
+  'claude-mythos-5': { p: 'anthropic', label: 'Mythos 5', in: 10, out: 50 },
+  'claude-opus-5-5': { p: 'anthropic', label: 'Opus 5.5', in: 4, out: 20, cin: 0.2 },
   'claude-opus-5': { p: 'anthropic', label: 'Opus 5', in: 5, out: 25 },
   'claude-opus-4-8': { p: 'anthropic', label: 'Opus 4.8', in: 5, out: 25 },
   'claude-opus-4-7': { p: 'anthropic', label: 'Opus 4.7', in: 5, out: 25 },
@@ -37,8 +48,17 @@ export const MODELS = {
   // increase for 2026-09-01. Anthropic have since confirmed the $2/$10
   // introductory rate is the standard rate and the increase will not happen,
   // so every Sonnet 5 figure we showed was 1.5x the real cost.
+  'claude-sonnet-5-5': { p: 'anthropic', label: 'Sonnet 5.5', in: 2, out: 10, cin: 0.1 },
   'claude-sonnet-5': { p: 'anthropic', label: 'Sonnet 5', in: 2, out: 10 },
   'claude-sonnet-4-6': { p: 'anthropic', label: 'Sonnet 4.6', in: 3, out: 15 },
+  'claude-haiku-5-5': {
+    p: 'anthropic',
+    label: 'Haiku 5.5',
+    in: 0.1,
+    out: 0.5,
+    cin: 0.01,
+    long: { above: 100_000, in: 0.5, out: 2.5, cin: 0.05 },
+  },
   'claude-haiku-4-5': { p: 'anthropic', label: 'Haiku 4.5', in: 1, out: 5 },
   // ── OpenAI ──  cached input priced explicitly, no separate cache-write charge
   'gpt-5.6-sol': { p: 'openai', label: 'GPT-5.6 Sol', in: 5, out: 30, cin: 0.5 },
@@ -115,6 +135,18 @@ export function priceOf(model = '', fallback = DEFAULT_MODEL) {
   if (/(qwen|qwq)/.test(m)) return { key: 'qwen3.7-max', ...MODELS['qwen3.7-max'] };
   if (m.includes('claude')) return { key: DEFAULT_MODEL, ...MODELS[DEFAULT_MODEL] };
   return { key: fallback, ...(MODELS[fallback] || MODELS[DEFAULT_MODEL]) };
+}
+
+/**
+ * The rates one request pays: the model's, or its `long` tier when the
+ * request's prompt (input plus cache reads and writes) is over the tier's
+ * threshold. Only Haiku 5.5 has one today. `cin` is filled in (0.1x input when
+ * the table does not say), so a caller never has to know the default.
+ */
+export function rateFor(model, prompt = 0) {
+  const m = priceOf(model);
+  const r = m.long && prompt > m.long.above ? m.long : m;
+  return { key: m.key, p: m.p, in: r.in, out: r.out, cin: r.cin ?? r.in * 0.1 };
 }
 
 // Cost weights relative to input=1, for turning raw usage into effective tokens.
