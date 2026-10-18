@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.23
+
+- Summary receipts now carry the session's token counts as measured (`usage`: input, output, cache_read, cache_write, and Grok's reasoning), beside the dollar figure. Dollars are counts times a price table that can be wrong (an unlisted model such as Haiku 5.5 is priced as Opus); the counts let governance read the session without trusting it. The Claude Code, Grok and Codex readers all keep them; a cursor saved by 1.3.22 is read again from the top once so its counts are complete.
+
 ## 1.3.22
 
 - Spend limits now work under Grok Build and Codex: the governor reads each harness's own session log (Grok's per-turn costUsdTicks, Codex's cumulative token_count priced at the turn's model) instead of the Claude Code reader, which found $0 there.
