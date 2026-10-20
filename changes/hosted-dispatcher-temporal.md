@@ -1,0 +1,1 @@
+- Docs: `docs/HOSTED_DISPATCHER_TEMPORAL.md` proposes running the hosted dispatcher's loop and lease as Temporal workflows (one per graph, one per launch, durable attempts and holds, sandbox reattach after a worker restart), building on HOSTED_DISPATCHER.md. A design for review; nothing is implemented.
