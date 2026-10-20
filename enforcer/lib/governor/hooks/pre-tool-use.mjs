@@ -4,6 +4,7 @@
 // Fails closed: a throw denies (headless) or asks; bad stdin asks.
 import { input, emit, pass, guardPre } from './lib.mjs';
 import { decide } from '../lib/decide.mjs';
+import { headlessFrom } from '../core/worker.mjs';
 
 const EVENT = 'PreToolUse';
 await guardPre(EVENT, async () => {
@@ -11,8 +12,7 @@ await guardPre(EVENT, async () => {
   if (ev.badStdin || typeof ev.tool_name !== 'string')
     emit(EVENT, {
       permissionDecision: 'ask',
-      permissionDecisionReason:
-        'enforcer-governor:governor_error unreadable or empty hook input\nThe governor could not read this tool call, so it asks you to confirm it.',
+      permissionDecisionReason: 'Enforcer could not read what the AI is about to do, so it asks you to check it yourself. Let it go ahead?',
     });
   const r = await decide(ev);
   try {
@@ -24,7 +24,9 @@ await guardPre(EVENT, async () => {
       EVENT,
       {
         permissionDecision: r.decision,
-        permissionDecisionReason: r.reason,
+        // A person reads the reason in the Allow dialog: plain words only. With
+        // nobody there, the dispatcher parses the machine line, so it leads.
+        permissionDecisionReason: headlessFrom(process.env) ? r.line + '\n' + r.reason : r.reason,
         ...(r.updatedInput ? { updatedInput: r.updatedInput } : {}),
       },
       top,

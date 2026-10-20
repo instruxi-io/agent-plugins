@@ -37,7 +37,9 @@ r = run('governor-pre-tool-use.mjs', fx('pre-tool-use-deny.json'));
 assert.equal(r.status, 0, r.stderr);
 const deny = JSON.parse(r.stdout).hookSpecificOutput;
 assert.equal(deny.permissionDecision, 'deny');
-assert.match(deny.permissionDecisionReason, /pipe_to_shell/);
+// The code is for programs (stderr, the receipt); the person reads plain words.
+assert.match(r.stderr, /"code":"pipe_to_shell"/);
+assert.doesNotMatch(deny.permissionDecisionReason, /pipe_to_shell|[{}]/);
 ok('PreToolUse deny: permissionDecision deny, code pipe_to_shell');
 
 for (const [f, shims] of [

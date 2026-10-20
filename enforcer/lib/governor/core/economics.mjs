@@ -77,7 +77,7 @@ export function ingest(state, ev, cfg, now) {
 /** A human stop latches; spend stops do not, so raising a limit frees an agent. */
 function latched(state, a, ev, cfg) {
   if (a.status === 'grounded' && a.groundedBy === 'human') {
-    return Verdict.deny('you stopped this agent. Resume it with /enforcer-governor:resume', { ...of, source: OPERATOR });
+    return Verdict.deny('you stopped it earlier, so it may not take any more actions', { ...of, source: OPERATOR });
   }
   if (a.status === 'grounded') {
     a.status = 'active';
@@ -93,9 +93,9 @@ function declined(state, a, ev, cfg, now) {
     if (a.status === 'paused') a.status = 'active';
   }
   if (a.pendingAsk) {
-    return Verdict.deny(`you did not approve this: ${a.pendingAsk.reason}. Resume it with /enforcer-governor:resume`, { ...of, source: OPERATOR });
+    return Verdict.deny(`it was paused because ${a.pendingAsk.reason}, and you did not say yes`, { ...of, source: OPERATOR });
   }
-  if (a.status === 'paused') return Verdict.deny('this agent is paused. Resume it with /enforcer-governor:resume', { ...of, source: OPERATOR });
+  if (a.status === 'paused') return Verdict.deny('it is paused', { ...of, source: OPERATOR });
   return null;
 }
 
@@ -104,12 +104,13 @@ function periodCaps(state, a, ev, cfg) {
   if (!isOn(cfg.budgetOn) || !state.periods) return null;
   const caps = { day: cfg.dailyLimit, week: cfg.weeklyLimit, month: cfg.monthlyLimit };
   const word = { day: 'today', week: 'this week', month: 'this month' };
+  const per = { day: 'daily', week: 'weekly', month: 'monthly' };
   for (const [name] of PERIODS) {
     const cap = caps[name],
       spent = state.periods[/** @type {any} */ (name)].usd;
     if (cap > 0 && spent >= cap) {
       ground(a, name);
-      return Verdict.deny(`your agents have spent $${spent.toFixed(2)} ${word[name]}, which is your $${cap} limit`, of);
+      return Verdict.deny(`your AI agents have spent $${spent.toFixed(2)} ${word[name]}, which reaches your $${Number(cap).toFixed(2)} ${per[name]} limit`, of);
     }
   }
   return null;
@@ -122,14 +123,14 @@ function burn(state, a, ev, cfg, now) {
     all = burnRate(state, now);
   const hit =
     cfg.burnLimit > 0 && mine >= cfg.burnLimit
-      ? ['this agent is spending', mine, cfg.burnLimit]
+      ? ['it is spending', mine, cfg.burnLimit]
       : cfg.fleetBurnLimit > 0 && all >= cfg.fleetBurnLimit
-        ? ['your agents together are spending', all, cfg.fleetBurnLimit]
+        ? ['your AI agents together are spending', all, cfg.fleetBurnLimit]
         : null;
   if (!hit) return null;
   a.burnFlagged = true;
   pause(a);
-  return asking(a, `${hit[0]} $${hit[1].toFixed(2)} a minute, over your $${hit[2]} a minute mark`, now);
+  return asking(a, `${hit[0]} $${hit[1].toFixed(2)} a minute, more than your limit of $${Number(hit[2]).toFixed(2)} a minute`, now);
 }
 
 /** Flagged once per burst, so a genuine twenty-agent job asks one question, not twenty. */
@@ -139,7 +140,7 @@ function fanout(state, a, ev, cfg, now) {
   if (spawned < cfg.fanoutLimit) return null;
   state.fanoutFlagged = true;
   pause(a);
-  return asking(a, `${spawned} new agents started in the last minute, and you asked to be told past ${cfg.fanoutLimit}`, now);
+  return asking(a, `${spawned} new AI agents started in the last minute, and you asked to be told when ${cfg.fanoutLimit} or more start in a minute`, now);
 }
 
 /** A rate-limited call fails cheaply; the retry does not. */
@@ -149,7 +150,7 @@ function retryStorm(state, a, ev, cfg, now) {
   if (recent < cfg.retryLimit) return null;
   a.retryFlagged = true;
   pause(a);
-  return asking(a, `it hit ${recent} errors in a minute and kept going, which is a retry loop, not progress`, now);
+  return asking(a, `it hit ${recent} errors in one minute and kept retrying, which looks like it is stuck rather than making progress`, now);
 }
 
 function clientCap(state, a, ev, cfg) {
@@ -158,13 +159,13 @@ function clientCap(state, a, ev, cfg) {
   const spent = state.clients.month.by[a.client] || 0;
   if (!(cap > 0) || spent < cap) return null;
   ground(a, 'client');
-  return Verdict.deny(`work for ${a.client} has cost $${spent.toFixed(2)} this month, which is its $${cap} limit`, of);
+  return Verdict.deny(`work for ${a.client} has cost $${spent.toFixed(2)} this month, which reaches its $${Number(cap).toFixed(2)} monthly limit`, of);
 }
 
 function hardLimit(state, a, ev, cfg) {
   if (!isOn(cfg.budgetOn) || a.tokens < a.budget) return null;
   ground(a, 'limit');
-  return Verdict.deny('it reached your spend limit', of);
+  return Verdict.deny('it reached its spending limit', of);
 }
 
 function softLimit(state, a, ev, cfg, now) {
@@ -172,10 +173,10 @@ function softLimit(state, a, ev, cfg, now) {
   a.escalated = true;
   if (cfg.softAction === 'escalate') {
     pause(a);
-    return asking(a, `it has used ${Math.round(a.soft * 100)}% of your spend limit`, now);
+    return asking(a, `it has used ${Math.round(a.soft * 100)}% of its spending limit`, now);
   }
   ground(a, 'soft');
-  return Verdict.deny('it passed the warn-me mark, and you set that to stop it', of);
+  return Verdict.deny(`it passed ${Math.round(a.soft * 100)}% of its spending limit, and you chose to stop it at that point`, of);
 }
 
 const CHECKS = [latched, declined, periodCaps, burn, fanout, retryStorm, clientCap, hardLimit, softLimit];

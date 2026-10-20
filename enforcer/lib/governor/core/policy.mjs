@@ -320,8 +320,8 @@ export function modelAdvice(model, shape) {
     ratio: +(cheaper ? me.in / to.in : to.in / me.in).toFixed(1),
     cheaper,
     why: cheaper
-      ? `this looks like mechanical work, and ${me.label} costs ${+(me.in / to.in).toFixed(1)}x ${to.label}`
-      : `this looks like reasoning work, and ${me.label} is a lighter model than ${to.label}`,
+      ? `this looks like routine work, and ${me.label} costs ${+(me.in / to.in).toFixed(1)} times as much as ${to.label}`
+      : `this looks like work that needs careful thinking, and ${me.label} is a lighter model than ${to.label}`,
   };
 }
 
@@ -605,7 +605,7 @@ export function decide(state, ev, config = {}) {
   // file with no reason recorded is treated as re-derivable, so upgrading
   // unsticks anyone already stuck.
   if (a.status === 'grounded' && a.groundedBy === 'human') {
-    return record(state, a, 'deny', 'you stopped this agent. Resume it with /enforcer-governor:resume', a.tokens);
+    return record(state, a, 'deny', 'you stopped it earlier. To let it carry on, type /enforcer:governor resume', a.tokens);
   }
   if (a.status === 'grounded') {
     a.status = 'active';

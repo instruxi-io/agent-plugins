@@ -63,6 +63,6 @@ test('governor config lists loop settings under retired', () => {
     const at = out.indexOf('retired setting(s)');
     assert.ok(at >= 0, out);
     const tail = out.slice(at);
-    for (const k of LOOP) assert.match(tail, new RegExp(`${k} .*jev-hooks owns loop detection`));
+    for (const k of LOOP) assert.match(tail, new RegExp(`${k}:? .*jev-hooks owns loop detection`));
   });
 });

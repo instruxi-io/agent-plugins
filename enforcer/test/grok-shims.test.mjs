@@ -54,7 +54,9 @@ r = run(['governor-pre-tool-use.mjs'], JSON.stringify(denyEv));
 assert.equal(r.status, 0, r.stderr);
 const deny = JSON.parse(r.stdout).hookSpecificOutput;
 assert.equal(deny.permissionDecision, 'deny');
-assert.match(deny.permissionDecisionReason, /pipe_to_shell/);
+// The code is for programs (stderr, the receipt); the person reads plain words.
+assert.match(r.stderr, /"code":"pipe_to_shell"/);
+assert.doesNotMatch(deny.permissionDecisionReason, /pipe_to_shell|[{}]/);
 ok('PreToolUse pipe-to-shell: permissionDecision deny, code pipe_to_shell');
 {
   // The decision record names Grok: the shim's ENFORCER_HARNESS=grok, not the

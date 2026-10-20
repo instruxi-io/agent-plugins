@@ -122,9 +122,15 @@ export async function guardPre(event, fn) {
     try {
       process.stderr.write(`enforcer-governor: governor_error: ${msg}\n`);
     } catch {}
+    const decision = await failDecision();
     emit(event, {
-      permissionDecision: await failDecision(),
-      permissionDecisionReason: `enforcer-governor:governor_error ${msg}\nThe governor failed while checking this action, so it is not allowed to proceed unchecked.`,
+      permissionDecision: decision,
+      // An ask is read by a person: plain words. A deny goes to an unattended
+      // session, whose parent parses the code on the first line.
+      permissionDecisionReason:
+        decision === 'ask'
+          ? 'Enforcer hit a problem while checking this action, so it asks you to check it yourself. Let it go ahead?'
+          : `enforcer-governor:governor_error ${msg}\nThe governor failed while checking this action, so it is not allowed to proceed unchecked.`,
     });
   }
 }
