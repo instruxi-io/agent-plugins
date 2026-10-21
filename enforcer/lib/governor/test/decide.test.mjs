@@ -1,7 +1,8 @@
 // `governor decide` and the shim. Golden files in test/fixtures/decide are the
-// verbatim output of the pre-2.10 hook (hooks/pre-tool-use.mjs at 2.9.0) for
-// these events; the shim must reproduce it byte for byte, and the CLI must
-// print the decision record that output carries.
+// verbatim output of the hook for these events in a session with a person
+// present (regenerated 21 Oct 2026, when the reason became plain words with no
+// machine line); the shim must reproduce it byte for byte, and the CLI must
+// print the decision the hook made.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -41,7 +42,7 @@ for (const f of readdirSync(fx).filter((n) => n.endsWith('.event.json'))) {
   const name = f.replace('.event.json', '');
   const ev = JSON.parse(readFileSync(join(fx, f), 'utf8'));
   const golden = readFileSync(join(fx, name + '.out'), 'utf8');
-  ok(`${name}: shim output is byte-identical to the 2.9.0 hook`, () => {
+  ok(`${name}: shim output is byte-identical to the golden file`, () => {
     assert.equal(run('hooks/pre-tool-use.mjs', [], ev).stdout, golden);
   });
   ok(`${name}: bin/governor decide prints the record the hook carried`, () => {
@@ -49,9 +50,10 @@ for (const f of readdirSync(fx).filter((n) => n.endsWith('.event.json'))) {
     assert.equal(r.status, 0, r.stderr);
     const rec = JSON.parse(r.stdout);
     assert.deepEqual(Object.keys(rec).slice(0, 5), ['decision', 'code', 'rule', 'tool', 'summary']);
-    const reason = JSON.parse(golden).hookSpecificOutput.permissionDecisionReason;
-    if (reason) assert.deepEqual(rec, JSON.parse(reason.split('\n')[0].slice('enforcer-governor:decision '.length)));
-    else assert.equal(rec.decision, 'allow');
+    const hook = JSON.parse(golden).hookSpecificOutput;
+    assert.equal(rec.decision, hook.permissionDecision ?? 'allow');
+    // A person reads this reason: plain words, never the machine record.
+    if (hook.permissionDecisionReason) assert.doesNotMatch(hook.permissionDecisionReason, /enforcer-governor:|[{}]/);
   });
 }
 

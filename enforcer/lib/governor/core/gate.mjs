@@ -46,10 +46,10 @@ export function compose(cap, central) {
   if (!cap || !central) return cap;
   const base = { rule: cap.rule, ruleId: cap.ruleId, checked: [...cap.checked, POLICY], policy: central.opinion };
   if (central.opinion === 'deny') {
-    return Verdict.deny(central.reason || 'refused by the tenant policy', { ...base, source: POLICY, code: 'tenant_policy' });
+    return Verdict.deny(central.reason || "your organisation's rules do not allow it", { ...base, source: POLICY, code: 'tenant_policy' });
   }
   if (central.opinion === 'ask' && cap.action !== 'deny') {
-    return Verdict.ask(central.reason || 'the tenant policy asks for confirmation', { ...base, source: POLICY, code: 'tenant_policy' });
+    return Verdict.ask(central.reason || "your organisation's rules ask a person to confirm it", { ...base, source: POLICY, code: 'tenant_policy' });
   }
   if (central.opinion === 'allow' && cap.action === 'ask') {
     return null; // the tenant waived the confirmation; economics still runs
@@ -142,7 +142,7 @@ export function gate(ev, cfg = {}, deps = {}) {
   // the honest answer is "allowed, and I did not look at the money" — recorded
   // as such via checked[], not buried in a sentence a reader has to parse.
   if (!held.ok) {
-    return Verdict.allow('Enforcer could not read its own state, so spend was not checked. Nothing is blocked.', {
+    return Verdict.allow('Enforcer could not read its own records, so it did not check spending for this action. Nothing was blocked.', {
       source: ECONOMICS,
       checked: [CAPABILITY],
       policy: waived ? 'allow' : null,

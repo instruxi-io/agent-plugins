@@ -21,7 +21,7 @@ import { graphContextLive, native, runEvent, EVENT_NAMES } from '../src/event.mj
 const here = (p) => fileURLToPath(new URL(p, import.meta.url));
 const [area, sub, ...rest] = process.argv.slice(2);
 
-const GOV = ['decide', 'status', 'config', 'limit', 'verify', 'set', 'enable', 'disable', 'telemetry', 'report'];
+const GOV = ['decide', 'status', 'config', 'limit', 'verify', 'set', 'enable', 'disable', 'telemetry', 'report', 'resume'];
 const CHECKS = { rules: 'rulesOn', budget: 'budgetOn', policy: 'policyOn' };
 // event -> graph handlers (src/graph/hooks), run in order
 const HOOKS = {

@@ -181,7 +181,7 @@ Every decision the governor makes, including "no objection", is one JSON record:
 
 `graph_decide` (decide a graph node, the capability of `graph_review`'s approve) is classified as a write by the rule `enforcer.graph_decide`: it asks a person, and a headless worker is denied. It reports as `custom_rule`.
 
-The record is written three places: as the `decision` field, last, on the hash-chained receipt in `~/.config/enforcer/governor/receipts.jsonl`; as one line on the PreToolUse hook's stderr, prefixed `enforcer-governor:decision `; and as the **first line** of the permission reason whenever the hook allows, denies or asks. A parent process (the graph dispatcher, a CI wrapper) parses that line instead of grepping the sentence under it.
+The record is written three places: as the `decision` field, last, on the hash-chained receipt in `~/.config/enforcer/governor/receipts.jsonl`; as one line on the PreToolUse hook's stderr, prefixed `enforcer-governor:decision `; and, in a session nobody is watching (headless), as the **first line** of the permission reason whenever the hook allows, denies or asks. With a person present the reason is only the plain sentence, so the Allow dialog never shows JSON. A parent process (the graph dispatcher, a CI wrapper) parses that line instead of grepping the sentence under it.
 
 | Code | Meaning |
 |---|---|

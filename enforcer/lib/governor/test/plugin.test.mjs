@@ -66,7 +66,7 @@ const run = (home, ev) => runFull(home, ev).hookSpecificOutput;
   const push = runFull(home, { session_id: 'r1', tool_name: 'Bash', tool_input: { command: 'git push -f origin main' }, cwd: '/tmp' });
   assert(push.hookSpecificOutput.permissionDecision === 'ask', `a rewrite must ask, got ${push.hookSpecificOutput.permissionDecision}`);
   assert(/--force-with-lease/.test(push.hookSpecificOutput.updatedInput?.command || ''), 'a rewrite must carry the rewritten command');
-  assert(/rewrote/.test(push.systemMessage || ''), 'a rewrite must say so at the top level');
+  assert(/changed this command/.test(push.systemMessage || ''), 'a rewrite must say so at the top level');
   console.log('capability rules fire regardless of where in the command they sit ok');
 }
 
@@ -195,7 +195,7 @@ const run = (home, ev) => runFull(home, ev).hookSpecificOutput;
   // not check, because silence would read as "checked and fine".
   const fine = runFull(home, { session_id: 'b1', tool_name: 'Bash', tool_input: { command: 'ls -la' }, cwd: '/tmp' });
   assert(fine.hookSpecificOutput.permissionDecision === undefined, 'ordinary work must not be blocked by the governor being blind');
-  assert(/could not read its own state/.test(fine.systemMessage || ''), 'an unchecked allow must say it was unchecked');
+  assert(/could not read its own records/.test(fine.systemMessage || ''), 'an unchecked allow must say it was unchecked');
   console.log('capability rules hold even when the state is unreadable ok');
 }
 
@@ -219,7 +219,7 @@ const run = (home, ev) => runFull(home, ev).hookSpecificOutput;
   assert(lines.length === 3, `the blind refusal must still be recorded, got ${lines.length} lines`);
   assert(lines[2].hash === undefined, 'a blind receipt must carry no hash, so the chain is not forged');
   assert(lines[2].chained === false, 'a blind receipt must say it is unchained');
-  assert(lines[2].rule === 'run a script downloaded from the internet', 'a blind receipt must name the rule that decided');
+  assert(lines[2].rule === 'download a script from the internet and run it straight away (curl | sh)', 'a blind receipt must name the rule that decided');
 
   const { verify } = await import('../src/store.mjs');
   const v = verify(join(home, 'receipts.jsonl'));

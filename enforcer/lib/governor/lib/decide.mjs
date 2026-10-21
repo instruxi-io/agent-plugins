@@ -7,11 +7,17 @@
 //
 // Answer: { decision: 'allow'|'deny'|'ask'|null, reason, updatedInput?, notice?, record, line }
 //   decision null = no objection (the harness's own flow decides); `notice` is
-//   a message for the person, `reason` already begins with the machine line.
+//   a message for the person. `reason` is the plain sentence a person reads;
+//   `line` is the machine record. The shim puts `line` first only where no
+//   person reads the reason (a headless session), so nobody is shown JSON.
 import { toolEvent } from '../adapters/claude-code/events.mjs';
 import { priceOf } from '../src/policy.mjs';
 import { governor } from '../adapters/claude-code/index.mjs';
 import { decisionRecord, decisionLine } from '../core/codes.mjs';
+
+const up = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+const SAVED = 'A record of this decision was saved.';
+const GOV = '/enforcer:governor';
 
 export async function decide(ev) {
   const event = toolEvent(ev);
@@ -20,40 +26,45 @@ export async function decide(ev) {
     budget = spend.budget;
   const record = decisionRecord(verdict, { tool: event.name, run_id: event.runId });
   const line = decisionLine(record);
-  const answer = (decision, reason, extra = {}) => ({ decision, reason: line + '\n' + reason, record, line, ...extra });
+  const answer = (decision, reason, extra = {}) => ({ decision, reason, record, line, ...extra });
 
   const perM = priceOf(spend.model || '').in;
   const usd = (t) => '$' + ((t / 1e6) * perM).toFixed(2);
-  const of = budget ? `${usd(spent)} of its ${usd(budget)} limit` : `${usd(spent)} so far`;
+  const used = budget ? `So far this AI has used ${usd(spent)} of its ${usd(budget)} spending limit.` : `So far this AI has used ${usd(spent)}.`;
 
-  // A tenant decision quotes the tenant, as written.
+  // A decision by the organisation's policy quotes the policy, as written.
   if (verdict.action === 'deny' && verdict.source === 'policy')
     return answer(
       'deny',
-      `Your organisation's Enforcer policy refused this action: ${verdict.reason}. The agent is not stopped and can carry on with something else.`,
+      `Your organisation's Enforcer policy blocked this action: ${verdict.reason}. Nothing was run. The AI can carry on with other work. ${SAVED}`,
     );
   if (verdict.action === 'ask' && verdict.source === 'policy')
-    return answer('ask', `Your organisation's Enforcer policy wants you to confirm this action: ${verdict.reason}. Allow it this once?`);
+    return answer('ask', `Your organisation's Enforcer policy asks you to confirm this action: ${verdict.reason}. Let it go ahead this once?`);
 
-  // On a subscription the dollar figures are API-equivalent, not billed.
+  // On a subscription the dollar figures are an estimate at standard prices, not a bill.
   const onPlan = event.billing === 'plan';
-  const money = onPlan ? ' (API-equivalent usage: your subscription is not billed these amounts)' : '';
-  const turnOff = onPlan ? ' or turn spend limits off with /enforcer-governor:set budgetOn false' : '';
+  const money = onPlan ? ' This is an estimate of what the work would cost; your subscription is not charged extra.' : '';
+  const turnOff = onPlan ? ` To stop using spending limits on your subscription, type ${GOV} set budgetOn false.` : '';
+  const resume = `To let it carry on, type ${GOV} resume.`;
 
-  if (verdict.action === 'deny')
+  if (verdict.action === 'deny') {
+    if (!verdict.stopsAgent)
+      return answer('deny', `Enforcer blocked this action: ${verdict.reason}. Nothing was run. The AI can carry on with other work. ${SAVED}`);
+    // Stopped by a person, or by a "no" to an earlier question: the way out is resume.
+    if (record.code === 'agent_stopped' || record.code === 'ask_declined')
+      return answer('deny', `Enforcer is holding the AI: ${verdict.reason}. ${resume} ${SAVED}`);
     return answer(
       'deny',
-      verdict.stopsAgent
-        ? `Enforcer stopped this agent: ${verdict.reason}. It has spent ${of}${money}. Raise the limit with /enforcer-governor:limit${turnOff}.`
-        : `Enforcer refused this action: it is ${verdict.reason}. The agent is not stopped and can carry on with something else.`,
+      `Enforcer stopped the AI because ${verdict.reason}. ${used}${money} To let it carry on, type ${GOV} limit followed by a higher dollar amount, for example ${GOV} limit 40.${turnOff} ${SAVED}`,
     );
+  }
 
   if (verdict.action === 'ask')
     return answer(
       'ask',
       verdict.isCapability
-        ? `Enforcer wants you to confirm: this action ${verdict.reason}. Allow it this once?`
-        : `Enforcer is checking with you: ${verdict.reason}. It has spent ${of}. Allow it to keep going?`,
+        ? `Enforcer wants to check with you first. This action ${verdict.reason}. Let it go ahead this once?`
+        : `Enforcer paused the AI to check with you: ${verdict.reason}. ${used}${money} If you say no, the AI stays paused until you type ${GOV} resume. Let it keep going?`,
     );
 
   // An affirmative grant: only the graph-worker rules allow.
@@ -61,15 +72,21 @@ export async function decide(ev) {
 
   // A rewrite is put to the person as an ask carrying the rewritten input.
   if (verdict.action === 'rewrite')
-    return answer('ask', `Enforcer rewrote this command — ${verdict.reason}. Run the rewritten form?`, {
+    return answer('ask', `Enforcer changed this command to make it safer. ${up(verdict.reason)}. Run the safer version?`, {
       updatedInput: verdict.input,
-      notice: `Enforcer rewrote this command — ${verdict.reason}.`,
+      notice: `Enforcer changed this command to make it safer. ${up(verdict.reason)}.`,
     });
 
   // Advice never changes the decision.
-  if (verdict.advice) return { decision: null, notice: `Enforcer: ${verdict.advice.why} (${of}). Consider /model ${verdict.advice.suggest}.`, record, line };
+  if (verdict.advice)
+    return {
+      decision: null,
+      notice: `Enforcer tip: ${verdict.advice.why}. To switch, type /model ${verdict.advice.suggest}. This is only a suggestion; nothing was blocked. ${used}${money}`,
+      record,
+      line,
+    };
 
   // The one silent pass that speaks is the blind one.
-  if (!verdict.checked.includes('economics')) return { decision: null, notice: `Enforcer: ${verdict.reason}`, record, line };
+  if (!verdict.checked.includes('economics')) return { decision: null, notice: verdict.reason, record, line };
   return { decision: null, record, line };
 }

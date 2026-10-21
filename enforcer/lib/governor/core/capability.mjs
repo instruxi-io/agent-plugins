@@ -45,7 +45,7 @@ export const DEFAULT_RULES = [
   {
     id: 'shell.pipe_to_shell',
     authz: 'write',
-    name: 'run a script downloaded from the internet',
+    name: 'download a script from the internet and run it straight away (curl | sh)',
     tool: 'shell',
     action: 'deny',
     // Judged on the stripped, tokenised pipeline (sudo/env/nohup/... removed),
@@ -74,7 +74,7 @@ export const DEFAULT_RULES = [
   {
     id: 'governor.settings',
     authz: 'write',
-    name: 'edit plugin or governor settings',
+    name: "change Enforcer's own settings",
     tool: 'shell',
     action: 'deny',
     match: '(?:(?:^|[\\s;&|(])' + PS_WRITE + '\\b|[^0-9&<]>{1,2}(?!&))[^;&\\n]*?(?:^|[\\s"\'=/\\\\])(?:' + SETTINGS_ANY + ')',
@@ -89,7 +89,7 @@ export const DEFAULT_RULES = [
   {
     id: 'governor.home',
     authz: 'write',
-    name: "change the governor's own directory",
+    name: "move, delete or change access to Enforcer's own folder",
     tool: 'shell',
     action: 'ask',
     match:
@@ -104,7 +104,7 @@ export const DEFAULT_RULES = [
   {
     id: 'git.force_push',
     authz: 'write',
-    name: 'force-push without a lease',
+    name: 'overwrite work other people saved online (git force-push)',
     tool: 'shell',
     action: 'rewrite',
     // Judged per segment (never across `&&`), anchored at the segment's `git`,
@@ -118,13 +118,13 @@ export const DEFAULT_RULES = [
       '(?<=\\spush\\s(?:.*\\s)?)(?:--force|-([a-zA-Z]*)f([a-zA-Z]*))(?=\\s|$)',
       (m, a, b) => ((a || '') + (b || '') ? `-${a || ''}${b || ''} ` : '') + '--force-with-lease',
     ],
-    why: 'a lease refuses the push if someone else has pushed since your last fetch',
+    why: 'a plain force-push can overwrite work other people saved online, so Enforcer added a safety check (--force-with-lease) that stops the push if anyone else has pushed since you last fetched',
   },
 
   {
     id: 'fs.delete_tree',
     authz: 'write',
-    name: 'delete a whole tree',
+    name: 'permanently delete a folder and everything in it (rm -rf)',
     tool: 'shell',
     action: 'ask',
     // Any spelling of recursive + force, split across flags or not:
@@ -135,7 +135,14 @@ export const DEFAULT_RULES = [
       // order, abbreviated or not.
       '|(?:^|[\\s;&|(])(?:remove-item|ri|del|erase|rd|rmdir|rm)\\s+(?=(?:[^;&|\\n]*\\s)?-r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?(?=[\\s:]|$))(?=(?:[^;&|\\n]*\\s)?-f(?:o(?:r(?:ce?)?)?)?(?=[\\s:]|$))',
   },
-  { id: 'git.rewrite_history', authz: 'write', name: 'rewrite git history', tool: 'shell', action: 'ask', match: 'reset\\s+--hard|filter-branch' },
+  {
+    id: 'git.rewrite_history',
+    authz: 'write',
+    name: "erase recent changes or rewrite the project's history (git reset --hard or filter-branch)",
+    tool: 'shell',
+    action: 'ask',
+    match: 'reset\\s+--hard|filter-branch',
+  },
   // Credentials: a shell command that READS OR WRITES a credentials file (the
   // path is an operand of a reading/writing verb or a redirection), or an
   // edit/write whose TARGET is one. Not a mention: until 1.0.3 this rule
@@ -146,7 +153,7 @@ export const DEFAULT_RULES = [
   {
     id: 'secrets.access',
     authz: 'read',
-    name: 'read or write credentials',
+    name: 'read or change a file that holds passwords or keys (such as .env or ~/.ssh)',
     tool: 'shell',
     field: 'command',
     action: 'ask',
@@ -156,7 +163,7 @@ export const DEFAULT_RULES = [
   {
     id: 'secrets.edit',
     authz: 'write',
-    name: 'read or write credentials',
+    name: 'read or change a file that holds passwords or keys (such as .env or ~/.ssh)',
     tool: '',
     field: 'path',
     action: 'ask',
@@ -172,7 +179,7 @@ export const DEFAULT_RULES = [
     authz: 'write',
     headless: 'deny',
     graphExempt: true,
-    name: 'write through the Enforcer API',
+    name: 'change data in your Enforcer workspace',
     tool: '',
     action: 'ask',
     match: '^mcp__[\\w-]*__enforcer_api_write:',
@@ -181,7 +188,7 @@ export const DEFAULT_RULES = [
     id: 'enforcer.credential',
     authz: 'write',
     headless: 'deny',
-    name: 'issue, rotate or revoke an agent credential',
+    name: 'create, replace or cancel a login key for an AI agent',
     tool: '',
     action: 'ask',
     match: '^mcp__[\\w-]*__agent_credential_(?:issue|rotate|revoke)\\w*:',
@@ -192,7 +199,7 @@ export const DEFAULT_RULES = [
     id: 'enforcer.graph_decide',
     authz: 'write',
     headless: 'deny',
-    name: 'decide a graph node',
+    name: 'approve or reject a step in an Enforcer work plan',
     tool: '',
     action: 'ask',
     match: '^mcp__[\\w-]*__graph_decide:',
@@ -200,7 +207,7 @@ export const DEFAULT_RULES = [
   {
     id: 'deploy.publish',
     authz: 'write',
-    name: 'publish or deploy',
+    name: 'publish or put something live for other people to use (npm publish, vercel --prod, kubectl apply, terraform apply)',
     tool: 'shell',
     action: 'ask',
     match: 'npm\\s+publish|vercel\\s+.*--prod|kubectl\\s+(apply|delete)|terraform\\s+apply',
@@ -615,16 +622,16 @@ export function evaluate(rules, ev) {
     // Refuse the ACTION, do not stop the agent. A capability check says "not
     // that", never "you are finished" — stopping here once meant a single
     // blocked command silently turned every later verdict into "agent stopped".
-    return Verdict.deny(`not allowed to ${hit.name}`, of);
+    return Verdict.deny(`the AI is not allowed to ${hit.name}`, of);
   }
 
   if (hit.action === 'rewrite') {
     const input = rewriteInput(hit, ev, found.segs);
-    if (input) return Verdict.rewrite(input, `${hit.name} — ${hit.why}`, of);
+    if (input) return Verdict.rewrite(input, hit.why || `it would ${hit.name}`, of);
     return Verdict.ask(`would ${hit.name}`, of); // could not make it safer; ask instead
   }
 
-  if (hit.headless === 'deny' && ev.worker?.headless) return Verdict.deny(`not allowed to ${hit.name} headless`, of);
+  if (hit.headless === 'deny' && ev.worker?.headless) return Verdict.deny(`the AI is not allowed to ${hit.name} when nobody is there to approve it`, of);
 
   // Deliberately does not latch anything: every separate dangerous action
   // deserves its own answer, not one blanket approval for the session.
