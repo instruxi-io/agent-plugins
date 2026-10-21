@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.25
+
+- The governor speaks plain English to people: allow, ask and block reasons describe the effect in everyday words (technical term in brackets), give money as amount, limit and period, and say what to do next. With a person present the Allow dialog shows only that sentence; headless sessions keep the machine line first, and stderr and receipts carry it as before. Messages name commands that exist in this plugin (`/enforcer:governor resume`, `/enforcer:governor limit 40`), and `resume` is now an `enforcer governor` subcommand.
+- The governor README now covers Codex and Grok Build: install pointers (Grok marked experimental, Codex not yet run live), harness-specific spend readers, `codex`/`grok-cli` in receipts, summary-receipt token counts, and session registration (provenance levels 2–3). Docs only.
+- Docs: `docs/HOSTED_DISPATCHER_TEMPORAL.md` proposes running the hosted dispatcher's loop and lease as Temporal workflows (one per graph, one per launch, durable attempts and holds, sandbox reattach after a worker restart), building on HOSTED_DISPATCHER.md. A design for review; nothing is implemented.
+
 ## 1.3.24
 
 - Claude Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 are priced at Anthropic's published rates, each with its own cache-read rate (0.05x input on the 5.5 family, 0.025x on 5.1), and Haiku 5.5 at its higher rates for any request whose prompt is over 100,000 tokens. Unlisted, Haiku 5.5 had been metered as Opus 5 (50x high) and Fable 5.1 as Opus 5 (2x low). The Claude Code transcript reader now prices each message at its model's own rates instead of one weighting for every Claude model; a cursor kept by an older reader is read again once. Verified against Claude Code's own figure for a Haiku 5.5 session ($0.0042030).

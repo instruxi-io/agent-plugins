@@ -1,1 +1,0 @@
-- The governor README now covers Codex and Grok Build: install pointers (Grok marked experimental, Codex not yet run live), harness-specific spend readers, `codex`/`grok-cli` in receipts, summary-receipt token counts, and session registration (provenance levels 2–3). Docs only.
