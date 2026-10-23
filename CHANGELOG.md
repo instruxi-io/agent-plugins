@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.26
+
+- The governor's `deploy.publish` and `git.rewrite_history` rules now match only when the deploy or reset is the command itself. Unanchored, they fired on any mention of the words: on one machine every one of the 35 shadow hits in a fortnight was a `grep "terraform apply"` over docs or a log, with no deploy among them. `terraform -chdir=<dir> apply` and `git -C <dir> reset --hard` still match.
+
 ## 1.3.25
 
 - The governor speaks plain English to people: allow, ask and block reasons describe the effect in everyday words (technical term in brackets), give money as amount, limit and period, and say what to do next. With a person present the Allow dialog shows only that sentence; headless sessions keep the machine line first, and stderr and receipts carry it as before. Messages name commands that exist in this plugin (`/enforcer:governor resume`, `/enforcer:governor limit 40`), and `resume` is now an `enforcer governor` subcommand.
