@@ -141,7 +141,10 @@ export const DEFAULT_RULES = [
     name: "erase recent changes or rewrite the project's history (git reset --hard or filter-branch)",
     tool: 'shell',
     action: 'ask',
-    match: 'reset\\s+--hard|filter-branch',
+    // Anchored at the command (wrappers are already stripped, `-C dir` and
+    // other options may sit before the verb), so a mention is not a rewrite:
+    // `grep -n "reset --hard" README.md` is a search, not a reset.
+    match: '^git\\s+(?:(?:-[Cc]\\s+\\S+|-\\S+)\\s+)*(?:reset\\s+--hard|filter-branch)',
   },
   // Credentials: a shell command that READS OR WRITES a credentials file (the
   // path is an operand of a reading/writing verb or a redirection), or an
@@ -210,7 +213,12 @@ export const DEFAULT_RULES = [
     name: 'publish or put something live for other people to use (npm publish, vercel --prod, kubectl apply, terraform apply)',
     tool: 'shell',
     action: 'ask',
-    match: 'npm\\s+publish|vercel\\s+.*--prod|kubectl\\s+(apply|delete)|terraform\\s+apply',
+    // Anchored at the command. Unanchored, the words matched anywhere in a
+    // segment, and on one machine every one of the 35 shadow hits in a
+    // fortnight (2026-10-23) was a `grep "terraform apply"` over docs or
+    // workflows, a `tail | grep` of a roll log, or a Makefile search - no
+    // deploy among them. A deploy starts its own command.
+    match: '^(?:npm\\s+publish|vercel\\s+.*--prod|kubectl\\s+(?:apply|delete)|terraform\\s+(?:-chdir=\\S+\\s+)?apply)',
   },
 ];
 

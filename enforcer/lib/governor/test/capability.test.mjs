@@ -97,6 +97,33 @@ ok('rewrite touches only the push segment', () => {
   assert.ok(s.includes('echo -f && git push --force-with-lease origin x'), s);
 });
 
+// deploy and history rewrite: anchored at the command, so a MENTION in a grep
+// pattern, a commit message or a log search is not a deploy (2026-10-23: all 35
+// shadow hits on one machine were `grep "terraform apply"` and the like).
+for (const c of [
+  'terraform apply',
+  'cd infra && terraform -chdir=prod apply -auto-approve',
+  'sudo kubectl apply -f x.yaml',
+  'npm publish',
+  'FOO=1 vercel deploy --prod',
+])
+  expect(c, 'deploy.publish');
+for (const c of [
+  'grep -rn "terraform apply" docs/',
+  'git commit -m "run kubectl apply later"',
+  'echo npm publish',
+  'tail -3 /tmp/roll.log | grep -c "terraform apply"',
+])
+  ok(`${c}  ->  not a deploy`, () => assert.notEqual(rule(c), 'deploy.publish'));
+for (const c of [
+  'git reset --hard origin/main',
+  'git -C /w fetch -q && git -C /w reset --hard origin/main',
+  'git filter-branch -f --msg-filter cat HEAD~3..HEAD',
+])
+  expect(c, 'git.rewrite_history');
+for (const c of ['grep -n "reset --hard" README.md', 'git log --grep "filter-branch"'])
+  ok(`${c}  ->  not a history rewrite`, () => assert.notEqual(rule(c), 'git.rewrite_history'));
+
 // credentials
 for (const c of [
   'grep SECRET .npmrc',
