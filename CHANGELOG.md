@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.3.27
+
+- The enforcer plugin's locked MCP tool list now matches the connector on production (enforcer-v3-mcp 2d60cef). It adds the GVNR tools `table_state`, `check_work`, `hand_over`, `log_decision`, `end_shift`, `fill_scorecard`, `suggest_recipe_change` and `decide_recipe_suggestion`, and six live tools the old list was missing (`graph_decide`, `graph_overview`, `graph_recall`, `plan_link`, `start_plan`, `update_task`). The version check no longer reports them as unknown.
+
 ## 1.3.26
 
 - The governor's `deploy.publish` and `git.rewrite_history` rules now match only when the deploy or reset is the command itself. Unanchored, they fired on any mention of the words: on one machine every one of the 35 shadow hits in a fortnight was a `grep "terraform apply"` over docs or a log, with no deploy among them. `terraform -chdir=<dir> apply` and `git -C <dir> reset --hard` still match.
