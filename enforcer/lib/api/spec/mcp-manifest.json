@@ -90,6 +90,14 @@
       ]
     },
     {
+      "name": "change_budget",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "check_work",
       "effect": "write",
       "always_confirm": false,

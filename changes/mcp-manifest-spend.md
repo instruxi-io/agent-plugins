@@ -1,0 +1,1 @@
+- The locked MCP tool list now matches the connector on production (enforcer-v3-mcp 0da9572): adds `change_budget` (write, gvnr profile), the GVNR spend-limit tool.
