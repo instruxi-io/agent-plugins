@@ -90,6 +90,30 @@
       ]
     },
     {
+      "name": "check_work",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "decide_recipe_suggestion",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "end_shift",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "enforcer_api_describe",
       "effect": "read",
       "always_confirm": false,
@@ -202,6 +226,14 @@
       ]
     },
     {
+      "name": "fill_scorecard",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "finish_task",
       "effect": "write",
       "always_confirm": false,
@@ -264,6 +296,15 @@
       ]
     },
     {
+      "name": "graph_decide",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "graph",
+        "workflow"
+      ]
+    },
+    {
       "name": "graph_epochs",
       "effect": "read",
       "always_confirm": false,
@@ -318,6 +359,14 @@
       ]
     },
     {
+      "name": "graph_overview",
+      "effect": "read",
+      "always_confirm": false,
+      "profiles": [
+        "workflow"
+      ]
+    },
+    {
       "name": "graph_plan_status",
       "effect": "read",
       "always_confirm": false,
@@ -328,6 +377,15 @@
     },
     {
       "name": "graph_query",
+      "effect": "read",
+      "always_confirm": false,
+      "profiles": [
+        "graph",
+        "workflow"
+      ]
+    },
+    {
+      "name": "graph_recall",
       "effect": "read",
       "always_confirm": false,
       "profiles": [
@@ -398,6 +456,14 @@
       ]
     },
     {
+      "name": "hand_over",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "invite_link",
       "effect": "write",
       "always_confirm": false,
@@ -414,8 +480,48 @@
       ]
     },
     {
+      "name": "log_decision",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "plan_link",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "set_my_name",
       "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "start_plan",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "suggest_recipe_change",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "table_state",
+      "effect": "read",
       "always_confirm": false,
       "profiles": [
         "gvnr"
@@ -432,6 +538,14 @@
     {
       "name": "team_brief",
       "effect": "read",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "update_task",
+      "effect": "write",
       "always_confirm": false,
       "profiles": [
         "gvnr"
