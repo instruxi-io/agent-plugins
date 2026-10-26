@@ -77,7 +77,17 @@ if (area === 'hook' && HOOKS[sub]) {
 }
 
 if (area === 'dispatch') {
-  const { main: preflight } = await import('../src/preflight.mjs');
+  const { main: preflight, handoffRoot } = await import('../src/preflight.mjs');
+  // Started through the Grok/Codex shim: run the installed Claude Code plugin's dispatcher, whose root workers can load.
+  const to = process.env.ENFORCER_DISPATCH_HANDOFF ? null : handoffRoot();
+  if (to) {
+    process.stderr.write(`enforcer: dispatching from the Claude Code plugin at ${to} (this copy, ${here('..')}, is a runtime copy workers cannot load)\n`);
+    const r = spawnSync(process.execPath, [join(to, 'bin', 'enforcer'), 'dispatch', ...[sub, ...rest].filter((x) => x !== undefined)], {
+      stdio: 'inherit',
+      env: { ...process.env, ENFORCER_DISPATCH_HANDOFF: '1' },
+    });
+    process.exit(r.status ?? 1);
+  }
   if (sub === 'preflight') process.exit(await preflight(rest));
   const { main: dispatchMain } = await import('../src/dispatch-command.mjs');
   process.exit(await dispatchMain([sub, ...rest].filter((x) => x !== undefined)));
