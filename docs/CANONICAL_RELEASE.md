@@ -65,7 +65,7 @@ enforcer/
   harness/codex/mcp.json   Codex MCP snippet (the hooks overlay is `extensions.com.openai` in plugin.json, wired to hooks/hooks.json)
   harness/grok/            hooks/enforcer.json template, config.toml.snippet ([mcp_servers.enforcer]), agents/, fixtures/
   hooks/grok/              Grok shims
-  bin/enforcer             node CLI: login, workspace, files, headers, governor, event, dispatch, plan, harness install|uninstall <codex|grok> (Claude installs from the marketplace)
+  bin/enforcer             node CLI: login, workspace, files, headers, governor, event, dispatch, plan, harness uninstall <codex|grok> (every harness installs from its native plugin manager)
   bin/land-pr.sh
   lib/governor/            the decision core (moved from enforcer-governor with history)
   src/graph/               the graph worker hooks (Node)
@@ -123,7 +123,7 @@ docs/CANONICAL_RELEASE.md  this file
 | `files-fold-in` | claude-plugins | enforcer-files skill + bins into `enforcer`; alias | package-layout |
 | `state-relocation` | claude-plugins | every `~/.claude` path → `~/.config/enforcer/…` with first-run migration | governor-fold-in, graph-fold-in |
 | `hook-adapter-codex` | claude-plugins | `extensions.com.openai` overlay, hooks wiring, `.agents/plugins/marketplace.json`; shim tests on Codex stdin fixtures | governor-fold-in, graph-fold-in |
-| `hook-adapter-grok` | claude-plugins | `harness/grok` hooks + config + agents; `enforcer harness install grok`; shim tests on Grok fixtures (grok 1.0.41 is installed on the owner's machine) | governor-fold-in, graph-fold-in |
+| `hook-adapter-grok` | claude-plugins | `harness/grok` hooks + config + agents; native `grok plugin install enforcer --trust`; shim tests on Grok fixtures (grok 1.0.41 is installed on the owner's machine) | governor-fold-in, graph-fold-in |
 | `dispatcher-harness-switch` | claude-plugins | `--harness`; launchers + parsers + fixtures for codex/grok | graph-fold-in |
 | `jev-hooks-quality-only` | jev-hooks | depend on `enforcer`; delete bash/edit allow-deny; governor detection = `ENFORCER_GOVERNOR` env only; 1.0.0 | governor-fold-in |
 | `release-1.0` | claude-plugins | version 1.0.0 everywhere, CHANGELOG, deprecated aliases, tag, `claude plugin validate` | state-relocation, hook-adapter-codex, hook-adapter-grok, dispatcher-harness-switch, files-fold-in, mcp-oauth-no-shim, jev-hooks-quality-only |
@@ -165,3 +165,12 @@ shims, and `bin/enforcer event session-start`) announces it with `ENFORCER_GOVER
 (jev-hooks etc.) must read `ENFORCER_GOVERNOR`, never the plugin-cache directory: when the
 deprecated `enforcer-governor` cache vanished, jev-hooks 0.27 saw no governor, gated work
 itself and denied every headless worker.
+
+## Install
+
+Native commands only; no copier and no PATH shim:
+
+- Claude: `claude plugin marketplace add instruxi-io/agent-plugins && claude plugin install enforcer@instruxi`
+- Grok: `grok plugin marketplace add instruxi-io/agent-plugins && grok plugin install enforcer --trust`
+- Codex: `codex plugin marketplace add instruxi-io/agent-plugins && codex plugin add enforcer@instruxi`
+- CLI: `npm i -g @instruxi/enforcer`
