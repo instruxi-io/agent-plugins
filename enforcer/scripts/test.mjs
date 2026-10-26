@@ -63,7 +63,9 @@ for (const [name, { cmd, args, cwd }] of SUITES) {
   }
   const t = Date.now();
   // glob arguments for node --test are expanded by node itself (>= 21); older nodes get the shell's expansion
-  const r = spawnSync(cmd, args, { cwd: cwd || ROOT, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, timeout: TIMEOUT_MS });
+  // ENFORCER_DISPATCH_NOTIFY=0 here as well as in the preload: the suites that run bare must not ring the desktop either
+  const env = { ...process.env, ENFORCER_DISPATCH_NOTIFY: '0' };
+  const r = spawnSync(cmd, args, { cwd: cwd || ROOT, env, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, timeout: TIMEOUT_MS });
   const timedOut = r.error && r.error.code === 'ETIMEDOUT';
   const out = (r.stdout || '') + (r.stderr || '') + (r.error ? `\n${timedOut ? `suite timed out after ${TIMEOUT_MS}ms` : r.error.message}` : '');
   const q = r.status === 0 ? null : quarantined(name);
