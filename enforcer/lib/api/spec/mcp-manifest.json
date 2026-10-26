@@ -488,6 +488,14 @@
       ]
     },
     {
+      "name": "keep_document_version",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "log_decision",
       "effect": "write",
       "always_confirm": false,
@@ -497,6 +505,14 @@
     },
     {
       "name": "plan_link",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "send_by_email",
       "effect": "write",
       "always_confirm": false,
       "profiles": [
@@ -553,6 +569,14 @@
     },
     {
       "name": "update_task",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
+      "name": "used_document",
       "effect": "write",
       "always_confirm": false,
       "profiles": [
