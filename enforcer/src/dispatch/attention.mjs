@@ -84,8 +84,13 @@ export function saveSeen(stateDir, seen) {
   writeFileSync(seenPath(stateDir), JSON.stringify([...seen]));
 }
 
-/** notify-send with a short title when the binary exists; never throws, never fails the dispatcher. */
+/**
+ * notify-send with a short title when the binary exists; never throws, never fails the dispatcher.
+ * ENFORCER_DISPATCH_NOTIFY=0 turns it off: the log line stays, the desktop stays quiet. The test preload sets it, so a
+ * suite that drives --attend or the 404 exit never reaches the developer's desktop.
+ */
 export function notify(title, body = '') {
+  if (process.env.ENFORCER_DISPATCH_NOTIFY === '0') return;
   try {
     spawnSync('notify-send', [title, body], { stdio: 'ignore', timeout: 5000 });
   } catch {

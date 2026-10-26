@@ -1,10 +1,10 @@
 // `node --test test/dispatch-attend.test.mjs`: attended dispatch (--attend) against a fake API.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { needsYou, newItems, attentionLine, answerCommand, loadSeen, saveSeen } from '../src/dispatch/attention.mjs';
+import { needsYou, newItems, attentionLine, answerCommand, loadSeen, saveSeen, notify } from '../src/dispatch/attention.mjs';
 import { Dispatcher, defaultArgs, parseDispatchArgs } from '../src/dispatch/run.mjs';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'attend-'));
@@ -117,4 +117,26 @@ test('dispatch status prints needs you', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../src/dispatch-command.mjs', import.meta.url), 'utf8');
   assert.match(src, /needs you: \$\{needsYou\.length\}/);
+});
+
+test('notify: ENFORCER_DISPATCH_NOTIFY=0 keeps notify-send from running; unset, it runs', { skip: process.platform === 'win32' }, () => {
+  // a fake notify-send first on PATH records that it ran
+  const bin = tmp();
+  const ran = join(bin, 'ran');
+  writeFileSync(join(bin, 'notify-send'), `#!/bin/sh\ntouch '${ran}'\n`);
+  chmodSync(join(bin, 'notify-send'), 0o755);
+  const saved = { PATH: process.env.PATH, flag: process.env.ENFORCER_DISPATCH_NOTIFY };
+  try {
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    process.env.ENFORCER_DISPATCH_NOTIFY = '0';
+    notify('Enforcer: test', 'off');
+    assert.equal(existsSync(ran), false, 'notify-send ran with ENFORCER_DISPATCH_NOTIFY=0');
+    delete process.env.ENFORCER_DISPATCH_NOTIFY; // the control: without the flag the same call does ring
+    notify('Enforcer: test', 'on');
+    assert.equal(existsSync(ran), true, 'notify-send did not run without the flag');
+  } finally {
+    process.env.PATH = saved.PATH;
+    if (saved.flag === undefined) delete process.env.ENFORCER_DISPATCH_NOTIFY;
+    else process.env.ENFORCER_DISPATCH_NOTIFY = saved.flag;
+  }
 });
