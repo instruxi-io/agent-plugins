@@ -184,10 +184,10 @@ function push(args, ctx) {
   if (toDefault)
     return headless
       ? verdict('deny', 'git.push_default_branch', 'push_default_branch', `a headless worker may not push to ${dst}`)
-      : verdict('ask', 'git.push_default_branch', 'push_default_branch', `this pushes straight to ${dst}`);
+      : verdict('ask', 'git.push_default_branch', 'push_default_branch', `would upload your changes straight to the shared ${dst} branch (git push)`);
   if (!isGraph(dst))
     return headless ? verdict('deny', 'graph.push', 'push_needs_approval_surface', 'only `git push -u origin graph/<key>` may run with nobody to ask') : null;
-  if (!headless) return verdict('ask', 'graph.push', 'graph_push_confirm', `this pushes ${dst}`);
+  if (!headless) return verdict('ask', 'graph.push', 'graph_push_confirm', `would upload the branch ${dst} to the shared online copy (git push)`);
   if (other || extra.length)
     return verdict('deny', 'graph.push', 'push_needs_approval_surface', 'only `git push -u origin graph/<key>` may run with nobody to ask');
   if (!isGraph(branch)) return verdict('deny', 'graph.push', 'outside_worktree', 'the working directory is not a worktree on a graph/<key> branch');
@@ -203,7 +203,7 @@ function prCreate(args, ctx) {
   const head = h || branch;
   if (!isGraph(branch) && !isGraph(h))
     return headless ? verdict('deny', 'graph.pr_create', 'outside_worktree', 'the working directory is not a worktree on a graph/<key> branch') : null;
-  if (!headless) return verdict('ask', 'graph.pr_create', 'graph_pr_confirm', `this opens a pull request from ${head}`);
+  if (!headless) return verdict('ask', 'graph.pr_create', 'graph_pr_confirm', `would open a request to merge the branch ${head} (a pull request)`);
   if (!isGraph(branch)) return verdict('deny', 'graph.pr_create', 'outside_worktree', 'the working directory is not a worktree on a graph/<key> branch');
   if (head !== branch) return verdict('deny', 'graph.pr_create', 'branch_mismatch', `the worktree has ${branch} checked out, not ${head}`);
   return verdict('allow', 'graph.pr_create', 'graph_pr_allowed', `headless worker opening a pull request from ${branch}`);
@@ -212,7 +212,8 @@ function prCreate(args, ctx) {
 function land(ctx) {
   const { headless, branch } = ctx;
   if (!isGraph(branch)) return headless ? verdict('deny', 'graph.land', 'outside_worktree', 'land-pr.sh runs from a worktree on a graph/<key> branch') : null;
-  if (!headless) return verdict('ask', 'graph.land', 'graph_land_confirm', `this merges the pull request from ${branch} when it is green`);
+  if (!headless)
+    return verdict('ask', 'graph.land', 'graph_land_confirm', `would merge the branch ${branch} into the main project once its automatic checks pass`);
   return verdict('allow', 'graph.land', 'graph_land_allowed', `headless worker landing ${branch}`);
 }
 
@@ -237,7 +238,7 @@ function settings(ev, ctx, cmd) {
   if (!hit) return null;
   return ctx.headless
     ? verdict('deny', 'governor.settings', 'settings_write', 'a headless worker may not change plugin or governor settings')
-    : verdict('ask', 'governor.settings', 'settings_write', 'this changes plugin or governor settings');
+    : verdict('ask', 'governor.settings', 'settings_write', "would change Enforcer's own settings");
 }
 
 // The headless-worker deny profile. Node text is untrusted, so a worker that was talked into it still

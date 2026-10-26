@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+## 1.3.29
+
+- The locked MCP tool list now matches the connector on production (enforcer-v3-mcp a9fa0c5, 0.10.15): adds `keep_document_version`, `send_by_email` and `used_document` (write, gvnr profile), the GVNR documents and act-by-email tools.
+- The test suites no longer put real desktop notifications on the developer's screen: the dispatcher's `notify-send` now honours `ENFORCER_DISPATCH_NOTIFY=0`, which the test preload and runner set. Users can set it too, to keep the `ATTENTION` log lines without desktop pop-ups.
+
+## 1.3.28
+
+- The locked MCP tool list now matches the connector on production (enforcer-v3-mcp 0da9572): adds `change_budget` (write, gvnr profile), the GVNR spend-limit tool.
+
+## 1.3.27
+
+- The enforcer plugin's locked MCP tool list now matches the connector on production (enforcer-v3-mcp 2d60cef). It adds the GVNR tools `table_state`, `check_work`, `hand_over`, `log_decision`, `end_shift`, `fill_scorecard`, `suggest_recipe_change` and `decide_recipe_suggestion`, and six live tools the old list was missing (`graph_decide`, `graph_overview`, `graph_recall`, `plan_link`, `start_plan`, `update_task`). The version check no longer reports them as unknown.
+
+## 1.3.26
+
+- The governor's `deploy.publish` and `git.rewrite_history` rules now match only when the deploy or reset is the command itself. Unanchored, they fired on any mention of the words: on one machine every one of the 35 shadow hits in a fortnight was a `grep "terraform apply"` over docs or a log, with no deploy among them. `terraform -chdir=<dir> apply` and `git -C <dir> reset --hard` still match.
+
+## 1.3.25
+
+- The governor speaks plain English to people: allow, ask and block reasons describe the effect in everyday words (technical term in brackets), give money as amount, limit and period, and say what to do next. With a person present the Allow dialog shows only that sentence; headless sessions keep the machine line first, and stderr and receipts carry it as before. Messages name commands that exist in this plugin (`/enforcer:governor resume`, `/enforcer:governor limit 40`), and `resume` is now an `enforcer governor` subcommand.
+- The governor README now covers Codex and Grok Build: install pointers (Grok marked experimental, Codex not yet run live), harness-specific spend readers, `codex`/`grok-cli` in receipts, summary-receipt token counts, and session registration (provenance levels 2–3). Docs only.
+- Docs: `docs/HOSTED_DISPATCHER_TEMPORAL.md` proposes running the hosted dispatcher's loop and lease as Temporal workflows (one per graph, one per launch, durable attempts and holds, sandbox reattach after a worker restart), building on HOSTED_DISPATCHER.md. A design for review; nothing is implemented.
+
+## 1.3.24
+
+- Claude Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 are priced at Anthropic's published rates, each with its own cache-read rate (0.05x input on the 5.5 family, 0.025x on 5.1), and Haiku 5.5 at its higher rates for any request whose prompt is over 100,000 tokens. Unlisted, Haiku 5.5 had been metered as Opus 5 (50x high) and Fable 5.1 as Opus 5 (2x low). The Claude Code transcript reader now prices each message at its model's own rates instead of one weighting for every Claude model; a cursor kept by an older reader is read again once. Verified against Claude Code's own figure for a Haiku 5.5 session ($0.0042030).
+
+## 1.3.23
+
+- Summary receipts now carry the session's token counts as measured (`usage`: input, output, cache_read, cache_write, and Grok's reasoning), beside the dollar figure. Dollars are counts times a price table that can be wrong (an unlisted model such as Haiku 5.5 is priced as Opus); the counts let governance read the session without trusting it. The Claude Code, Grok and Codex readers all keep them; a cursor saved by 1.3.22 is read again from the top once so its counts are complete.
+
+## 1.3.22
+
+- Spend limits now work under Grok Build and Codex: the governor reads each harness's own session log (Grok's per-turn costUsdTicks, Codex's cumulative token_count priced at the turn's model) instead of the Claude Code reader, which found $0 there.
+
+## 1.3.21
+
+- Acceptance lines now run in two shapes graph workers write all the time, so the judge sees their output instead of a "not run" note: `grep -m N` (also `-mN`, `--max-count=N`), and a count threshold `test $(grep -c <literal> <one path>) -ge N` / `test $(wc -l|-c <one path>) -le N` (`wc -c < <path>` too). Still no shell: the inner command must be a single `grep -c` or `wc` on one path in the checkout, runs as argv, and the plugin does the comparison, printing `count 14 -ge 10: true` as evidence.
+
+## 1.3.20
+
+- **`enforcer dispatch` honours `--allow-browser-signin` and `--agent` at preflight**: the preflight identity check never received either flag (or `--workers`), so every plan estimated over 2 h failed it whatever was passed, and `--agent <name>` placed before the graph id was taken for the graph. Both flags now reach preflight as they reach the dispatcher.
+
+## 1.3.19
+
+- **Agent ids name the harness**: a session's agent id is `grok:<8>` under Grok Build and `codex:<8>` under Codex, not `claude:<8>` for every harness. Receipts, the SessionStart attribution and registration, local state and the status line all use the same id, and `/resume <8>` finds an agent under any of the prefixes. Release only after enforcer-governance migration 016 is deployed (instruxi-io/enforcer-governance#27).
+
+## 1.3.18
+
+- Receipts and session registration now name the harness actually running: Grok Build sessions record `grok-cli` and Codex sessions `codex` (Codex loads its own `hooks/codex/hooks.json`, the Claude Code hooks plus `--harness codex`), where every receipt used to say `claude-code`. Codex sessions now register with the control plane. Codex will ask to re-trust the plugin's hooks once after this update.
+
+## 1.3.17
+
+- The governor's session start now also announces the session under the harness actually running it (Claude Code by `CLAUDECODE=1`, Grok by its shim's `ENFORCER_HARNESS`) with its full session id, so the control plane can hold that session's telemetry to that harness (enforcer-governance session registry, provenance level 2). Codex sets no marker yet and announces nothing; the project attribution is unchanged.
+- The repo is now `instruxi-io/agent-plugins` (was `claude-plugins`); install commands, plugin `repository` fields and the receipt schema `$id` use the new name. GitHub redirects the old one, so existing marketplaces keep updating, and the marketplace name stays `instruxi`.
+
 ## 1.3.16
 
 - When a plan waits on a person (a ready gate, an open review item, a node failed on a human decision), the `enforcer:graph` skill and `/enforcer:dispatch` now ask in the same turn with `AskUserQuestion`, or give the filled-in `! graphwatch decide|resolve` command, instead of ending on a passive list; the dispatcher's `ATTENTION` line and `enforcer dispatch status` print the exact answering command per item.

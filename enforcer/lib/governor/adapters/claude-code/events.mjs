@@ -15,6 +15,7 @@
 import { join, dirname } from 'node:path';
 import { workerContext, runIdOf } from './worktree.mjs';
 import { SHELL, EDIT, WRITE, READ, WEB, MCP, OTHER } from '../../core/tools.mjs';
+import { HARNESS_NAME, agentPrefix, runningHarness } from './harness.mjs';
 
 // ── the tool map ────────────────────────────────────────────────────────────
 // Claude Code's tool -> the core's kind, and the core's field -> Claude's key.
@@ -93,8 +94,12 @@ const idPart = (v) =>
   String(v)
     .replace(/[^\w-]/g, '')
     .slice(0, 8);
-export const agentOf = (ev) => {
-  const base = ev.session_id ? 'claude:' + String(ev.session_id).slice(0, 8) : 'claude-code';
+//
+// The session's id names the harness running it -- 'claude:0f3c9a1b',
+// 'grok:0f3c9a1b', 'codex:0f3c9a1b' -- so a Grok or Codex session is not
+// filed as a Claude one. Without a session id it is the harness's own name.
+export const agentOf = (ev, env = process.env) => {
+  const base = ev.session_id ? agentPrefix(env) + ':' + String(ev.session_id).slice(0, 8) : runningHarness(env) || HARNESS_NAME;
   return ev.agent_id && idPart(ev.agent_id) ? base + ':' + idPart(ev.agent_id) : base;
 };
 

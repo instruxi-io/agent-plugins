@@ -1,6 +1,7 @@
 # Hosted dispatcher: design
 
 **Status:** proposal, to be reviewed as a gate before any build. Nothing here is implemented.
+**Follow-up:** [HOSTED_DISPATCHER_TEMPORAL.md](HOSTED_DISPATCHER_TEMPORAL.md) proposes running the dispatcher's loop and lease (sections 7 and 8 below) as Temporal workflows, keeping sections 3 to 6.
 **Scope:** a dispatcher that runs as a service for one tenant, with no operator machine behind it. Today's dispatcher (`enforcer dispatch`, `src/dispatch/*.mjs`, flags in [graph/DISPATCHER.md](graph/DISPATCHER.md)) is a process on a person's workstation that keeps N headless workers busy, each in a local git worktree, under that person's sign-in, `gh` login and filesystem.
 
 ## 1. Goals and non-goals

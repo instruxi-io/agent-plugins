@@ -165,7 +165,7 @@ export async function shipOnce(cfg = {}, { fetchImpl = hookFetch, now = Date.now
     }
     const why =
       res.status === 401 || res.status === 403
-        ? "Enforcer did not accept this machine's credential; run /enforcer-governor:login"
+        ? "Enforcer did not accept this machine's credential; type /enforcer:login to sign in again"
         : `control plane answered HTTP ${res.status}`;
     markFailure(why);
     return { error: why };

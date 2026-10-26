@@ -29,7 +29,7 @@ import { withLock, loadState, saveState, loadConfig, writeReceipt, commit } from
 import { effective, refresh, stale } from './managed.mjs';
 import { kick, SHIPPER } from './kick.mjs';
 import { brief as briefFor, markTold } from './brief.mjs';
-import { costUsd } from './cost.mjs';
+import { costUsd, receiptUsage } from './cost.mjs';
 import { signedInOperator, refreshIdentity, identityStale } from './identity.mjs';
 const attributeSession = async (...a) => (await import('./attribution.mjs')).attributeSession(...a);
 import { shadow } from './shadow.mjs';
@@ -250,9 +250,13 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
      * Pick up the tenant's managed floor when the cached copy is stale, and
      * tell the control plane which project the session works for.
      *
-     * event: { agent?, cwd? } -- the agent id receipts use, and the working
-     * directory the project is derived from. Without an agent (an older
-     * caller), nothing is attributed and start() does what it always did.
+     * event: { agent?, cwd?, session?, harness? } -- the agent id receipts
+     * use, the working directory the project is derived from, and the full
+     * session id that announces the session (attribution.mjs). The session is
+     * announced under event.harness when the event names one -- '' when the
+     * adapter cannot tell which harness is running it, which announces
+     * nothing -- else under this governor's harness. Without an agent (an
+     * older caller), nothing is attributed and start() does what it always did.
      * Resolves to what the attribution did (attribution.mjs), for tests and
      * callers that care; nothing depends on it.
      */
@@ -279,7 +283,8 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
       if (!event.agent) return undefined;
       const eff = config();
       try {
-        return await attributeSession({ agent: event.agent, client: clientFor(event.cwd, eff.clients) }, eff);
+        const runs = 'harness' in event ? event.harness : harness;
+        return await attributeSession({ agent: event.agent, client: clientFor(event.cwd, eff.clients), harness: runs, session: event.session }, eff);
       } catch {
         return { sent: false, detail: 'attribution failed' };
       }
@@ -293,12 +298,13 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
       withLock(() => {
         const state = loadState();
         const agent = event.agent;
-        const { tokens, model, usd: harnessFigure, source } = cost.total(event);
+        const { tokens, model, usd: harnessFigure, source, usage } = cost.total(event);
         const a = state.agents[agent];
         if (!a && !tokens) return;
         const usd = harnessFigure ?? dollarsForTokens(tokens, priceOf(model).in);
         // ONE number, two readers: the sentence and the field a machine sums.
         const c = costUsd(usd);
+        const counts = receiptUsage(usage);
         const entry = {
           ts: new Date().toISOString(),
           agent,
@@ -314,6 +320,9 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
           // ...and these after it, for the same reason.
           ...(harness ? { harness } : {}),
           ...(adapterVersion ? { adapter_version: adapterVersion } : {}),
+          // The token counts the cost was priced from, as measured: the
+          // session's usage without our price table. Last, for the hash.
+          ...(counts ? { usage: counts } : {}),
         };
         const hash = createHash('sha256')
           .update(state.prevHash + JSON.stringify(entry))

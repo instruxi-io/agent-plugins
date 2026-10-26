@@ -17,7 +17,7 @@ separate plugin and no plugin dependency. Installing `enforcer` installs the
 skill, the agent and the hooks:
 
 ```bash
-claude plugin marketplace add instruxi-io/claude-plugins
+claude plugin marketplace add instruxi-io/agent-plugins
 claude plugin install enforcer@instruxi
 ```
 
@@ -68,7 +68,7 @@ claude mcp add --transport http enforcer-graph https://api.instruxi.dev/mcp \
 Portable skill install (any harness that reads SKILL.md):
 
 ```bash
-npx skills add instruxi-io/claude-plugins --skill graph
+npx skills add instruxi-io/agent-plugins --skill graph
 ```
 
 ## Configure
@@ -149,7 +149,7 @@ leave the report exactly as the model wrote it.
 
 ### Attended dispatch
 
-With `--attend` (or `ENFORCER_DISPATCH_ATTEND=1`) the dispatcher tells you when it needs you and waits for your answer. On every pass it collects the open review items and the gates that are active with every prerequisite done, prints one `ATTENTION <kind> <key>: <why> (answer: ! graphwatch decide|resolve ...; or all at once: ! graphwatch attend <graph>)` line per new item, carrying the exact command that answers it (a gate's own `data.options` when it declares them) (once per item, even across a restart; the seen set lives in the state dir) and calls `notify-send` when it is installed. When nothing is runnable but something needs you it does not exit: it polls every 15 seconds, logs `waiting on you: N item(s)` at most every 10 minutes, and launches as soon as a node becomes runnable. `enforcer dispatch status` shows `needs you: N`. Without the flag nothing changes.
+With `--attend` (or `ENFORCER_DISPATCH_ATTEND=1`) the dispatcher tells you when it needs you and waits for your answer. On every pass it collects the open review items and the gates that are active with every prerequisite done, prints one `ATTENTION <kind> <key>: <why> (answer: ! graphwatch decide|resolve ...; or all at once: ! graphwatch attend <graph>)` line per new item, carrying the exact command that answers it (a gate's own `data.options` when it declares them) (once per item, even across a restart; the seen set lives in the state dir) and calls `notify-send` when it is installed (`ENFORCER_DISPATCH_NOTIFY=0` turns the desktop notification off and keeps the log line). When nothing is runnable but something needs you it does not exit: it polls every 15 seconds, logs `waiting on you: N item(s)` at most every 10 minutes, and launches as soon as a node becomes runnable. `enforcer dispatch status` shows `needs you: N`. Without the flag nothing changes.
 
 ## The graph-worker agent
 
@@ -286,8 +286,9 @@ caller uses:
 | go test | `go [-C <dir>] test <./pkg/...> [-v -race -short -cover -failfast -json -count -p -run -tags -timeout]` |
 | go vet | `go [-C <dir>] vet <./pkg/...>` |
 | ls, cat, head, tail, wc, test | a few named flags and relative paths |
-| grep | `grep [-cnilEFwvxrRhHqo] <literal> <relative path>...` |
-| git grep | `git grep [-nciElwvFIhq] <literal> [--] [relative path]...` |
+| count threshold | `test $(<count>) -ge\|-gt\|-le\|-lt\|-eq\|-ne <integer>`, where `<count>` is `grep -c [flags] <literal> <one path>` or `wc -l\|-c\|-w\|-m <one path>` (`wc -c < <path>` too) |
+| grep | `grep [-cnilEFwvxrRhHqo] [-m N] <literal> <relative path>...` |
+| git grep | `git grep [-nciElwvFIhq] [-m N] <literal> [--] [relative path]...` |
 | git merge-base | `git merge-base --is-ancestor <sha> <ref>` |
 | gh pr view | `gh pr view <n> [-R <owner/repo>] [--json <fields>]` |
 
@@ -297,7 +298,12 @@ parentheses, braces, newline, double quote, backslash) may appear outside a
 token wholly in single quotes (a single-quoted token is a literal, such as a
 grep pattern or a `-run` regex), every path must resolve inside the checkout
 (symlinks followed), and `cd` is never allowed: a line names its directory
-with `npm --prefix` or `go -C`. A trailing `2>&1` is dropped, since both
+with `npm --prefix` or `go -C`. The count threshold is the one place `$(…)`
+is accepted, and it is still not a shell: the inner command must be a single
+`grep -c` or `wc` on one path inside the checkout (no `;`, pipe, nested
+`$(…)` or parenthesis), it runs as argv like any other line, and the plugin
+compares the number it prints, so the evidence shows the count and the
+comparison (`count 14 -ge 10: true`). A trailing `2>&1` is dropped, since both
 streams are captured anyway. An allowed line runs with a minimal environment
 (PATH, locale, the Go cache locations) and a temporary HOME that is removed
 afterwards, so no credential under `~/.config` is readable.

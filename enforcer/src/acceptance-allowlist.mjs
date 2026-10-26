@@ -10,7 +10,10 @@
 //     backslash. A whole token in single quotes is a literal (a grep pattern, a go -run regex); it never reaches a shell;
 //   - every path argument resolves inside the checkout (symlinks followed), `cd` is never allowed;
 //   - each shape names its flags; any other flag is refused (no `-e`, no `-exec`, no `-o`, no `--output`);
-//   - an allowed line runs with a minimal environment and a temporary HOME that is removed afterwards.
+//   - an allowed line runs with a minimal environment and a temporary HOME that is removed afterwards;
+//   - one exception to "no $": a count threshold `test $(<count>) -ge|-gt|-le|-lt|-eq|-ne <integer>`, where <count> is
+//     `grep -c ... <one path>` or `wc -l|-c|-w|-m <one path>` (or `wc ... < <one path>`). Nothing reaches a shell: the
+//     inner command must itself match a shape, runs as argv, and the comparison is done here (COUNT_TEST, runCount).
 // Anything else is reported as SKIP_REASON and the judge reads the worker's own captured output instead.
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
@@ -119,11 +122,26 @@ const flagged = (tool, re, min) => (a, root) => {
   return a.length - i >= min && paths(a.slice(i), root);
 };
 
-/** `grep|git grep [flags] <pattern> [--] <paths>` */
+/** grep's max-count, the one valued flag a grep shape takes: `-m N`, `-mN` or `--max-count=N`. Returns the number of
+ *  tokens it uses at `a[i]` (0 when it is not one). */
+function maxCount(a, i) {
+  if (/^-m\d+$/.test(a[i]) || /^--max-count=\d+$/.test(a[i])) return 1;
+  if (a[i] === '-m' && /^\d+$/.test(a[i + 1] ?? '')) return 2;
+  return 0;
+}
+
+/** `grep|git grep [flags] [-m N] <pattern> [--] <paths>` */
 function grepShape(a, root, lead, re, minPaths) {
   for (let k = 0; k < lead.length; k++) if (a[k] !== lead[k]) return false;
   let i = lead.length;
-  while (i < a.length && a[i].startsWith('-') && a[i] !== '--') if (!re.test(a[i++])) return false;
+  while (i < a.length && a[i].startsWith('-') && a[i] !== '--') {
+    const m = maxCount(a, i);
+    if (m) {
+      i += m;
+      continue;
+    }
+    if (!re.test(a[i++])) return false;
+  }
   if (!pattern(a[i])) return false;
   i++;
   if (a[i] === '--') i++;
@@ -193,17 +211,17 @@ export const ACCEPTANCE_SHAPES = Object.freeze(
     { name: 'wc', usage: 'wc [-l|-c|-w|-m] <relative path>...', match: flagged('wc', /^-[lcwm]+$/, 1) },
     {
       name: 'test',
-      usage: 'test -f|-d|-e|-s <relative path>',
+      usage: 'test -f|-d|-e|-s <relative path> | test $(grep -c <literal> <path>) -ge N | test $(wc -l|-c <path>) -le N',
       match: (a, root) => a.length === 3 && a[0] === 'test' && /^-[fdes]$/.test(a[1]) && inRepo(a[2], root),
     },
     {
       name: 'grep',
-      usage: 'grep [-cnilEFwvxrhHqo] <literal> <relative path>...',
+      usage: 'grep [-cnilEFwvxrhHqo] [-m N] <literal> <relative path>...',
       match: (a, root) => grepShape(a, root, ['grep'], /^-[cnilEFwvxrhHqo]+$/, 1),
     },
     {
       name: 'git grep',
-      usage: 'git grep [-nciElwvFIhq] <literal> [--] [relative path]...',
+      usage: 'git grep [-nciElwvFIhq] [-m N] <literal> [--] [relative path]...',
       match: (a, root) => grepShape(a, root, ['git', 'grep'], /^-[nciElwvFIhq]+$/, 0),
     },
     {
@@ -242,8 +260,50 @@ function headTail(tool, a, root) {
   return a.length > i && paths(a.slice(i), root);
 }
 
+/** The count threshold: `test $(<count>) <op> <integer>`. The inner command may not hold a parenthesis, `$` or a
+ *  backtick, so nothing nests. */
+export const COUNT_TEST = /^test\s+\$\(\s*([^()$`]+?)\s*\)\s+(-eq|-ne|-gt|-ge|-lt|-le)\s+(\d{1,15})$/;
+/** argv[0] of a count threshold: a NUL cannot come out of tokenize, so no line can name it directly. */
+export const COUNT_ARGV0 = '\0count';
+const COUNT_OPS = {
+  '-eq': (a, b) => a === b,
+  '-ne': (a, b) => a !== b,
+  '-gt': (a, b) => a > b,
+  '-ge': (a, b) => a >= b,
+  '-lt': (a, b) => a < b,
+  '-le': (a, b) => a <= b,
+};
+
+/** The inner command of a count threshold, as argv, when it is `grep -c ... <one path>` or `wc -l|-c|-w|-m <one path>`;
+ *  `wc <flag> < <path>` is read as `wc <flag> <path>`. Else null. */
+function countInner(inner, root) {
+  const redirect = /^wc\s+(-[lcwm])\s+<\s*(\S+)$/.exec(inner.trim());
+  const t = tokenize(redirect ? `wc ${redirect[1]} ${redirect[2]}` : inner);
+  if (t.error) return null;
+  const a = t.argv;
+  if (a[0] === 'wc') return a.length === 3 && /^-[lcwm]$/.test(a[1]) && inRepo(a[2], root) ? a : null;
+  // no -r: grep -c over one file prints one bare number
+  if (a[0] !== 'grep' || !grepShape(a, root, ['grep'], /^-[cnilEFwvxhHo]+$/, 1)) return null;
+  let i = 1,
+    counts = false;
+  while (a[i].startsWith('-') && a[i] !== '--') {
+    const m = maxCount(a, i);
+    if (!m && a[i].includes('c')) counts = true;
+    i += m || 1;
+  }
+  i++; // the pattern
+  if (a[i] === '--') i++;
+  return counts && a.length - i === 1 ? a : null;
+}
+
 /** Decide one command: {argv, shape} when it fully matches a shape, else {skip: SKIP_REASON + why}. */
 export function allowedCommand(cmd, { root = process.cwd(), env = process.env } = {}) {
+  const c = COUNT_TEST.exec(String(cmd).trim());
+  if (c) {
+    const inner = countInner(c[1], root);
+    if (!inner) return { skip: `${SKIP_REASON} (count threshold: only grep -c or wc -l|-c|-w|-m on one path)` };
+    return { argv: [COUNT_ARGV0, c[2], c[3], ...inner], shape: 'count threshold' };
+  }
   const t = tokenize(cmd);
   if (t.error) return { skip: `${SKIP_REASON} (${t.error})` };
   const shape = ACCEPTANCE_SHAPES.find((s) => s.match(t.argv, root));
@@ -343,6 +403,23 @@ export function removeTree(dir) {
   return attempt();
 }
 
+/** Run a count threshold: the inner command (an allowed grep -c / wc), then the comparison. Exit 0 when it holds, 1 when
+ *  it does not, 2 when the inner command failed or printed no number. The output keeps the inner command's own output
+ *  and adds the comparison, so the judge reads the number. */
+export function runCount(argv, opts) {
+  const [, op, limit, ...inner] = argv;
+  const r = spawnAllowed(inner, opts);
+  if (r.timedOut || r.error) return r;
+  const out = r.out.trim();
+  // grep -c exits 1 when it counts 0; only an exit above 1 (grep) or any non-zero exit (wc) is a failure
+  const failed = inner[0] === 'grep' ? r.exit > 1 : r.exit !== 0;
+  const m = /^\s*(\d+)/.exec(out);
+  if (failed || !m) return { exit: 2, out: `${out}\ncount: ${failed ? `${inner[0]} exited ${r.exit}` : 'no number in the output'}` };
+  const n = Number(m[1]);
+  const holds = COUNT_OPS[op](n, Number(limit));
+  return { exit: holds ? 0 : 1, out: `${out}\ncount ${n} ${op} ${limit}: ${holds ? 'true' : 'false'}` };
+}
+
 /** The program and arguments to spawn for an allowed argv: `node` is this Node, `npm` on Windows is npm-cli.js. */
 export function binFor(argv) {
   if (argv[0] === 'node') return [process.execPath, argv.slice(1)];
@@ -359,6 +436,7 @@ export function binFor(argv) {
  *  @param {{cwd?: string, env?: any, timeoutMs?: number, run?: any}} [opts]
  *  @returns {{exit: number, out: string, timedOut?: boolean, error?: any}} */
 export function spawnAllowed(argv, { cwd, env = process.env, timeoutMs = 600000, run = spawnSync } = {}) {
+  if (argv[0] === COUNT_ARGV0) return runCount(argv, { cwd, env, timeoutMs, run });
   const home = mkdtempSync(join(tmpdir(), 'enforcer-accept-'));
   try {
     const [bin, args] = binFor(argv);

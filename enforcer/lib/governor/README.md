@@ -1,6 +1,6 @@
 # Enforcer Governor
 
-**A Claude Code plugin that reports what your agents spend and do, and keeps a record you can prove. Decisioning, the part that can refuse an action, is opt-in.**
+**A plugin for Claude Code, and for Codex and Grok Build, that reports what your agents spend and do, and keeps a record you can prove. Decisioning, the part that can refuse an action, is opt-in.**
 
 Out of the box the governor **reports**: spend per agent, tools used, errors, and one receipt for every action it saw, in a hash-chained file on your machine that you can read with OpenTelemetry. It does not block anything until you turn Decisioning on. Until you sign in to an Enforcer workspace, everything stays on your machine, see [What leaves your machine](#what-leaves-your-machine).
 
@@ -12,11 +12,13 @@ Loop detection is not the governor's job: `jev-hooks` owns it.
 ## Install
 
 ```
-/plugin marketplace add instruxi-io/claude-plugins
+/plugin marketplace add instruxi-io/agent-plugins
 /plugin install enforcer@instruxi
 ```
 
 Since enforcer 1.0 the governor ships **inside** the `enforcer` plugin; there is no separate `enforcer-governor` plugin to install or disable. The `/enforcer-governor:*` slash commands named in older copies of this file are not registered by the `enforcer` plugin: use the `node bin/enforcer governor …` commands below (run from the plugin root, or ask for the governor skill), and the config file for everything else.
+
+**Codex and Grok Build.** The same governor runs there; install steps are in the [plugin README](../../../README.md) (Codex CLI, Grok Build). Codex installs the plugin from the same marketplace and runs these hooks with `--harness codex`; its shims are tested on Codex-shaped input and have not yet been run against a live Codex. Grok Build is **experimental**: `enforcer harness install grok` copies the runtime into place, and its hook fixtures come from one grok 1.0.41 run. Under either, receipts and session registration name the harness actually running (`codex`, `grok-cli`), agent ids are `codex:<8>` and `grok:<8>`, and the spend limit reads that harness's own session log. The rest of this file is written for Claude Code; where a harness differs, it says so.
 
 Then restart Claude Code and sign in once with `/enforcer:login`. The `enforcer` plugin is the connection to your Enforcer workspace (its MCP server and the sign-in); the governor works without it, reporting locally, but has no tenant policy to ask and nowhere to send receipts.
 
@@ -95,7 +97,7 @@ deny contains "ask: publishing from an agent needs a person to confirm" if {
 
 **One sign-in for the governor and the Enforcer MCP server.** The MCP server comes with the `enforcer` plugin from the same marketplace (`/plugin install enforcer@instruxi`), not with the governor; until 2.6.0 the governor shipped its own copy. Both read the same credential, `~/.enforcer/credentials.json` (0600), so one `/enforcer:login` signs both in, and signing out stops both sending a credential.
 
-**A spend limit that means dollars.** `node bin/enforcer governor limit 40` sets $40 per agent. Claude prices each model at its own rate, so $40 is $40 whether the agent is on Opus 5 or Haiku 4.5. Where the harness figure is unavailable the cap falls back to cost-weighted effective tokens, because cached sessions re-read their whole context every turn and raw token counts explode while costing very little.
+**A spend limit that means dollars.** `node bin/enforcer governor limit 40` sets $40 per agent. Claude prices each model at its own rate, so $40 is $40 whether the agent is on Opus 5 or Haiku 4.5. Under Grok Build the figure is Grok's own per-turn cost, and under Codex it is Codex's cumulative token counts priced at each turn's model. Where the harness figure is unavailable the cap falls back to cost-weighted effective tokens, because cached sessions re-read their whole context every turn and raw token counts explode while costing very little.
 
 **A word to the agent, not just to you.** An agent that learns it is near the limit can land what it has instead of opening a new front. At roughly two thirds of the budget it is told once, one sentence, at the turn boundary, where it can still change its plan, and then the governor goes quiet until the situation changes. Warning at the limit itself is too late: the turn is already committed. Every word costs, because it joins the cached prefix and is billed on every later turn, which is why it is one sentence and why it is said once.
 
@@ -155,10 +157,10 @@ Once you sign in to an Enforcer workspace, these can leave, each under a switch:
 
 | what | when | switch |
 |---|---|---|
-| **Decision receipts**, the verdict, the rule that fired, the tool name, the model, token counts, a project name derived from the working directory, the `operator` (the `operator` setting if you set one, otherwise the email of the account you are signed in as), and which harness decided (`claude-code`) with its adapter version. Never the command text, never file contents, never prompts. | shipped in the background to your workspace's governance API whenever you are signed in | `shipOn` (default on). Your organisation's managed settings can force it on, and a managed `on` beats a local `off`, so the local switch may not stop it |
-| **A session's project**, at session start, the session id the receipts use (`claude:` + 8 characters) and the project name derived from the working directory, so the session is filed under its project even if it never makes a governed decision. Nothing else. | once per session start, one short request, never retried | `shipOn` (default on), same managed floor |
+| **Decision receipts**, the verdict, the rule that fired, the tool name, the model, token counts, a project name derived from the working directory, the `operator` (the `operator` setting if you set one, otherwise the email of the account you are signed in as), and which harness decided (`claude-code`, `codex` or `grok-cli`) with its adapter version. A session's summary receipt also carries its measured token counts (`usage`: input, output, cache read, cache write, and Grok's reasoning tokens) beside the dollar figure, so governance can read the session's size without trusting a price table. Never the command text, never file contents, never prompts. | shipped in the background to your workspace's governance API whenever you are signed in | `shipOn` (default on). Your organisation's managed settings can force it on, and a managed `on` beats a local `off`, so the local switch may not stop it |
+| **A session's project**, at session start, the session id the receipts use (`claude:`, `codex:` or `grok:` + 8 characters), the project name derived from the working directory, and the harness running the session with its full session id. The project files the session even if it never makes a governed decision; the harness and session id register the session, so governance can match its receipts and telemetry to it (provenance level 2, *registered*; level 3, *corroborated*, once both name it). Nothing else. | once per session start, one short request, never retried | `shipOn` (default on), same managed floor |
 | **Your organisation's policy answers**, for an action a local rule matched, the governor asks your workspace whether to allow, ask or deny. The request names the rule, not the command. | only when a rule matches, and only if you turned `policyOn` on (default off) | `policyOn` (default off) |
-| **Claude Code's own telemetry**, cost, tokens and tool-use metrics from Claude Code's built-in OpenTelemetry exporter. Prompt text and tool parameters are not exported: `telemetry on` removes `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` from Claude Code's settings if they are there, and `telemetry status` warns when they are. | only if you turn it on | `telemetry on` (default off; `enforcer governor telemetry on`) |
+| **Claude Code's own telemetry** (Claude Code only), cost, tokens and tool-use metrics from Claude Code's built-in OpenTelemetry exporter. Prompt text and tool parameters are not exported: `telemetry on` removes `OTEL_LOG_USER_PROMPTS` and `OTEL_LOG_TOOL_DETAILS` from Claude Code's settings if they are there, and `telemetry status` warns when they are. | only if you turn it on | `telemetry on` (default off; `enforcer governor telemetry on`) |
 
 Everything goes to the workspace you signed in to and nowhere else. `/enforcer:login logout` stops all of them on this machine; what has already been sent stays in your workspace's records, which is the point of a record.
 
@@ -179,7 +181,7 @@ Every decision the governor makes, including "no objection", is one JSON record:
 
 `graph_decide` (decide a graph node, the capability of `graph_review`'s approve) is classified as a write by the rule `enforcer.graph_decide`: it asks a person, and a headless worker is denied. It reports as `custom_rule`.
 
-The record is written three places: as the `decision` field, last, on the hash-chained receipt in `~/.config/enforcer/governor/receipts.jsonl`; as one line on the PreToolUse hook's stderr, prefixed `enforcer-governor:decision `; and as the **first line** of the permission reason whenever the hook allows, denies or asks. A parent process (the graph dispatcher, a CI wrapper) parses that line instead of grepping the sentence under it.
+The record is written three places: as the `decision` field, last, on the hash-chained receipt in `~/.config/enforcer/governor/receipts.jsonl`; as one line on the PreToolUse hook's stderr, prefixed `enforcer-governor:decision `; and, in a session nobody is watching (headless), as the **first line** of the permission reason whenever the hook allows, denies or asks. With a person present the reason is only the plain sentence, so the Allow dialog never shows JSON. A parent process (the graph dispatcher, a CI wrapper) parses that line instead of grepping the sentence under it.
 
 | Code | Meaning |
 |---|---|

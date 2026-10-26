@@ -30,6 +30,9 @@ const envLine = () =>
         .join(', ') +
       '. These apply to this process and its children, not to the machine-wide config.'
     : '';
+// The harness prefixes an agent id can carry ('claude:0f3c9a1b', 'grok:...',
+// 'codex:...'), so `resume 0f3c9a1b` finds the agent under any of them.
+const ID_PREFIXES = ['claude', 'grok', 'codex'];
 const usd = (t, m) => '$' + dollarsForTokens(t, priceOf(m, cfg.model).in).toFixed(2);
 
 if (cmd === 'verify') {
@@ -102,17 +105,17 @@ if (cmd === 'config') {
       if (arg === '--why' && spec.hint) console.log(`  ${' '.repeat(width)}  ${' '.repeat(13)}${spec.hint}`);
     }
   }
-  console.log('\n  * changed from the default.  /enforcer-governor:config --why explains each one.');
+  console.log('\n  * changed from the default.  Type /enforcer:governor config to see what each one does.');
   if (Object.keys(managed).length) {
     console.log(`  ! set by your organisation (${Object.keys(managed).length} setting(s)). You can make these stricter, not looser.`);
   }
   if (Object.keys(fromEnv).length) console.log(`  ~ set by this process's environment. ${envLine()}`);
   if (ignoredEnv.length) console.log(`  ${ignoredLine()}`);
-  console.log('  Change one with /enforcer-governor:set <name> <value>.');
+  console.log('  Change one by typing /enforcer:governor set <name> <value>.');
   const dead = Object.keys(RETIRED).filter((k) => k in live);
   if (dead.length) {
     console.log(`\n  Your config still carries ${dead.length} retired setting(s) that do nothing:`);
-    for (const k of dead) console.log(`    ${k} — ${RETIRED[k]}`);
+    for (const k of dead) console.log(`    ${k}: ${RETIRED[k]}`);
   }
   process.exit(0);
 }
@@ -121,7 +124,7 @@ if (cmd === 'set') {
   const [key, ...rest] = (arg || '').split(/\s+/);
   const raw = rest.join(' ');
   if (!key || raw === '') {
-    console.log('Usage: /enforcer-governor:set <name> <value>   —  /enforcer-governor:config lists them.');
+    console.log('Type /enforcer:governor set <name> <value>. To see the names, type /enforcer:governor config.');
     process.exit(0);
   }
   const err = validate(key, raw);
@@ -129,7 +132,7 @@ if (cmd === 'set') {
   // tool call and the failure is silent: a soft mark of 75 instead of 0.75 means
   // the warn never fires and nothing tells you.
   if (err) {
-    console.log(`Not changed — ${err}`);
+    console.log(`Not changed: ${err}`);
     process.exit(0);
   }
   const value = parseValue(SETTINGS[key], raw);
@@ -158,7 +161,7 @@ if (cmd === 'set') {
 if (cmd === 'limit') {
   const d = Number(arg);
   if (!Number.isFinite(d) || d <= 0) {
-    console.log('Give a dollar amount, e.g. /enforcer-governor:limit 40');
+    console.log('Give a dollar amount, for example /enforcer:governor limit 40');
     process.exit(0);
   }
   saveConfig({ ...loadConfig(), dollars: d });
@@ -176,12 +179,16 @@ if (cmd === 'resume') {
     const stopped = Object.entries(s.agents || {}).filter(([, a]) => a.status === 'grounded');
     if (!stopped.length) return { msg: 'No agent is stopped. Nothing to resume.' };
 
-    let ids = arg ? [arg, 'claude:' + arg].filter((id) => s.agents[id]) : stopped.map(([id]) => id);
+    let ids = arg ? [arg, ...ID_PREFIXES.map((p) => p + ':' + arg)].filter((id) => s.agents[id]) : stopped.map(([id]) => id);
     if (arg && !ids.length) return { msg: `No agent called ${arg}. Stopped right now: ${stopped.map(([id]) => id).join(', ')}` };
     // With no argument and several stopped, name them rather than guess: resuming
     // the wrong agent spends real money on work nobody asked to continue.
     if (!arg && ids.length > 1) {
-      return { msg: `${ids.length} agents are stopped. Name one:\n` + ids.map((id) => `  /enforcer-governor:resume ${id.replace(/^claude:/, '')}`).join('\n') };
+      return {
+        msg:
+          `${ids.length} agents are stopped. Name one:\n` +
+          ids.map((id) => `  /enforcer:governor resume ${id.replace(/^(claude|grok|codex):/, '')}`).join('\n'),
+      };
     }
     const id = ids[0];
     const before = s.prevHash;
@@ -225,8 +232,8 @@ for (const a of agents.sort((x, y) => (y.tokens || 0) - (x.tokens || 0)).slice(0
   console.log(`  ${a.id.padEnd(18)} ${usd(a.tokens || 0, a.model).padStart(8)}  ${String(pct).padStart(3)}%${a.client ? '  ' + a.client : ''}${flag}`);
 }
 if (agents.some((a) => a.status === 'grounded')) {
-  console.log('\nStopped agents run again with /enforcer-governor:resume. Raising the limit');
-  console.log('with /enforcer-governor:limit also frees any agent stopped for spending.');
+  console.log('\nTo let a stopped AI agent run again, type /enforcer:governor resume. Raising the limit');
+  console.log('with /enforcer:governor limit also lets any agent stopped for spending carry on.');
 }
 const burn = burnRate(state);
 if (burn > 0) console.log(`\nRight now: $${burn.toFixed(2)}/min across every agent.`);

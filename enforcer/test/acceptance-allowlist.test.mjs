@@ -80,6 +80,15 @@ test('hostile acceptance lines never run', () => {
     () => 'python3 x.py',
     () => 'make all',
     () => "ls 'f'.txt",
+    (m) => `test $(touch ${m}) -ge 0`,
+    (m) => `test $(grep -c x f.txt; touch ${m}) -ge 0`,
+    (m) => `test $(grep -c x $(touch ${m})) -ge 0`,
+    (m) => `test $(grep -c x f.txt | tee ${m}) -ge 0`,
+    () => 'test $(wc -c < ../outside/secret) -ge 0',
+    () => 'test $(grep -c s3cret ../outside/secret) -ge 1',
+    () => 'test $(grep -rc s3cret ..) -ge 1',
+    () => 'test $(cat f.txt) -ge 0',
+    () => 'grep -m ../outside/secret f.txt',
   ];
   writeFileSync(join(outside, 'secret'), 's3cret');
   writeFileSync(join(outside, 'evil.mjs'), `require('fs').writeFileSync(${JSON.stringify(marker('evil'))}, 'x');\n`);
@@ -190,6 +199,47 @@ test('legitimate acceptance lines still run', () => {
     assert.equal(ls.items[0].exit, 0);
     assert.equal(ls.found, 1);
   }
+});
+
+// the shapes graph v5-server-handoff-p0-p2 (e0f4a616) wrote and plugin 1.3.20 refused: a count threshold and grep -m
+test('count thresholds and grep -m run, and the evidence shows the number', () => {
+  writeFileSync(join(repo, 'w.md'), 'shipped a\nShipped b\n## Deferred\nx\n');
+  const lines = [
+    '`test $(grep -c -i shipped w.md) -ge 2` exits 0',
+    '`test $(grep -c -i shipped w.md) -ge 3` exits 1',
+    '`test $(wc -c < w.md) -le 8192` exits 0',
+    '`test $(wc -l w.md) -eq 4` exits 0',
+    "`grep -m1 -o '## Deferred' w.md` prints `## Deferred`",
+    '`grep -o -m 1 Deferred w.md` prints `Deferred`',
+    '`grep --max-count=1 Deferred w.md` prints `## Deferred`',
+    '`test $(grep -c nothing w.md) -eq 0` exits 0',
+  ];
+  const r = evidenceRun.runEvidence(node(lines), { cwd: repo, graph: 'g1' });
+  assert.deepEqual(r.skipped, [], JSON.stringify(r.skipped));
+  assert.deepEqual(
+    r.items.map((i) => i.exit),
+    [0, 1, 0, 0, 0, 0, 0, 0],
+    JSON.stringify(r.items),
+  );
+  assert.equal(r.found, r.total);
+  assert.match(r.items[0].output, /count 2 -ge 2: true/);
+  assert.match(r.items[1].output, /count 2 -ge 3: false/);
+  assert.match(r.items[2].output, /count 34 -le 8192: true/);
+  // grep -c that counts 0 exits 1, which is not a failure of the count
+  assert.match(r.items[7].output, /count 0 -eq 0: true/);
+  // the count is never a shell: the inner grep is spawned as argv with shell false
+  const log = [];
+  evidenceRun.runEvidence(node([lines[0]]), { cwd: repo, run: spy(log) });
+  assert.equal(log.length, 1);
+  assert.equal(log[0].cmd, 'grep');
+  assert.deepEqual(log[0].args, ['-c', '-i', 'shipped', 'w.md']);
+  assert.equal(log[0].opts.shell, false);
+  // plan check accepts them too
+  for (const l of lines) assert.equal(planCheck.skipReason(planCheck.parseLine(l).cmd, repo), null, l);
+  // an inner command with no number is a failed count, exit 2
+  writeFileSync(join(repo, 'empty.md'), '');
+  const bad = allow.runCount([allow.COUNT_ARGV0, '-ge', '1', 'grep', '-c', 'x', 'missing.md'], { cwd: repo });
+  assert.equal(bad.exit, 2);
 });
 
 test('the allow list is one shared structure', () => {

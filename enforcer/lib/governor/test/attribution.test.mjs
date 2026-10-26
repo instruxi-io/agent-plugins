@@ -45,9 +45,10 @@ const srv = createServer((req, res) => {
         res.writeHead(500);
         return res.end('export failed');
       }
-      const { agent, client } = JSON.parse(body);
+      const { agent, client = '', harness, session_id } = JSON.parse(body);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: true, data: { agent, client: client.replace(/^\?/, ''), client_guessed: client[0] === '?' } }));
+      const registration = session_id ? { registration: { harness, session_id, trust: 2, registered_at: '2026-10-15T12:00:00Z' } } : {};
+      return res.end(JSON.stringify({ success: true, data: { agent, client: client.replace(/^\?/, ''), client_guessed: client[0] === '?', ...registration } }));
     }
     if (req.url === '/api/v1/enforcer/auth/me') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -194,14 +195,89 @@ await ok('an unreachable control plane is a silent no-op', async () => {
   setConfig({});
 });
 
+const full = '0f3c9a1b-7d2e-4c11-9a55-3e8b1f0c2d44';
+
+await ok('with the full session id, the same request announces the session under the harness', async () => {
+  const r = await gov.session.start({ ...session, session: full });
+  assert.equal(posts.length, 1, 'still one request');
+  assert.deepEqual(posts[0].body, { agent: 'claude:0f3c9a1b', client: '?acme-api', harness: 'test', session_id: full });
+  assert.deepEqual(r, { sent: true, status: 200, client: 'acme-api', trust: 2 });
+});
+
+await ok("the event names the harness that is running, over the governor's own", async () => {
+  await gov.session.start({ ...session, session: full, harness: 'grok-cli' });
+  // '' is an adapter saying it cannot tell: the project goes, no announcement.
+  await gov.session.start({ ...session, session: full, harness: '' });
+  assert.deepEqual(
+    posts.map((p) => p.body),
+    [
+      { agent: 'claude:0f3c9a1b', client: '?acme-api', harness: 'grok-cli', session_id: full },
+      { agent: 'claude:0f3c9a1b', client: '?acme-api' },
+    ],
+  );
+});
+
+await ok('a session with no project to name is still announced', async () => {
+  const r = await gov.session.start({ agent: 'claude:0f3c9a1b', session: full });
+  assert.deepEqual(
+    posts.map((p) => p.body),
+    [{ agent: 'claude:0f3c9a1b', harness: 'test', session_id: full }],
+  );
+  assert.deepEqual(r, { sent: true, status: 200, trust: 2 });
+});
+
+await ok('a registration the server would refuse is left off, so the project still lands', async () => {
+  // The agent id's short form is not the session's: the server refuses the
+  // whole body, so only the attribution goes.
+  await gov.session.start({ ...session, session: 'deadbeef-0000' });
+  // 'unknown' is reserved for rows no profile matched; it announces nothing.
+  await createGovernor().session.start({ ...session, session: full });
+  assert.deepEqual(
+    posts.map((p) => p.body),
+    [
+      { agent: 'claude:0f3c9a1b', client: '?acme-api' },
+      { agent: 'claude:0f3c9a1b', client: '?acme-api' },
+    ],
+  );
+});
+
+await ok('neither a project nor a registrable session: nothing is sent', async () => {
+  await createGovernor().session.start({ agent: 'claude:0f3c9a1b', session: full });
+  assert.equal(posts.length, 0);
+});
+
+await ok("the running harness: Grok's shim, Claude Code's marker, else unknown to us", async () => {
+  const { runningHarness } = await import('../adapters/claude-code/index.mjs');
+  assert.equal(runningHarness({ ENFORCER_HARNESS: 'grok', CLAUDECODE: '1' }), 'grok-cli');
+  assert.equal(runningHarness({ ENFORCER_HARNESS: 'codex' }), 'codex');
+  assert.equal(runningHarness({ CLAUDECODE: '1' }), 'claude-code');
+  assert.equal(runningHarness({ ENFORCER_HARNESS: 'claude' }), '', 'the default value of ENFORCER_HARNESS proves nothing');
+  assert.equal(runningHarness({}), '', 'Codex today: same hooks, no marker');
+});
+
+await ok('the agent id names the running harness: claude:, grok:, codex:, else claude:', async () => {
+  const { agentOf } = await import('../adapters/claude-code/events.mjs');
+  const sid = '0f3c9a1b-2222-4333-8444-555566667777';
+  assert.equal(agentOf({ session_id: sid }, { CLAUDECODE: '1' }), 'claude:0f3c9a1b');
+  assert.equal(agentOf({ session_id: sid }, { ENFORCER_HARNESS: 'grok' }), 'grok:0f3c9a1b');
+  assert.equal(agentOf({ session_id: sid }, { ENFORCER_HARNESS: 'codex' }), 'codex:0f3c9a1b');
+  assert.equal(agentOf({ session_id: sid }, {}), 'claude:0f3c9a1b', 'a harness we cannot tell keeps the old id');
+  assert.equal(agentOf({ session_id: sid, agent_id: 'ab12cd34ef' }, { ENFORCER_HARNESS: 'grok' }), 'grok:0f3c9a1b:ab12cd34');
+  assert.equal(agentOf({}, { ENFORCER_HARNESS: 'codex' }), 'codex', 'no session: the harness name');
+  assert.equal(agentOf({}, {}), 'claude-code');
+});
+
 // The hook itself: Claude Code's SessionStart JSON in, one attribution out,
 // and the process exits promptly with the usual empty answer.
 const hook = fileURLToPath(new URL('../hooks/session.mjs', import.meta.url));
-const runHook = (ev) =>
+// The harness markers are the test's to set, never inherited from whatever ran
+// the suite (a Claude Code session exports CLAUDECODE=1).
+const { CLAUDECODE: _cc, ENFORCER_HARNESS: _eh, ...cleanEnv } = process.env;
+const runHook = (ev, env = { CLAUDECODE: '1' }) =>
   new Promise((resolve) => {
     // spawn, not spawnSync: the stub server lives in THIS process's event loop.
     const t0 = Date.now();
-    const p = spawn(process.execPath, [hook], { env: { ...process.env, HOME: home } });
+    const p = spawn(process.execPath, [hook], { env: { ...cleanEnv, HOME: home, ...env } });
     let out = '';
     p.stdout.on('data', (c) => {
       out += c;
@@ -219,7 +295,22 @@ await ok("SessionStart hook: sends the session's attribution once and answers as
   assert.match(systemMessage, /^Decisioning: (ON|OFF)/);
   assert.deepEqual(
     posts.map((p) => p.body),
-    [{ agent: 'claude:0f3c9a1b', client: 'acme' }],
+    [{ agent: 'claude:0f3c9a1b', client: 'acme', harness: 'claude-code', session_id: '0f3c9a1b-2222-4333-8444-555566667777' }],
+  );
+  setConfig({});
+});
+
+await ok('SessionStart hook under Grok announces grok-cli as grok:<session>; with no marker (Codex) it announces nothing', async () => {
+  setConfig({ clients: { '/w/acme-api': 'acme' } });
+  const ev = { hook_event_name: 'SessionStart', session_id: '0f3c9a1b-2222-4333-8444-555566667777', cwd: '/w/acme-api' };
+  await runHook(ev, { ENFORCER_HARNESS: 'grok' });
+  await runHook(ev, {});
+  assert.deepEqual(
+    posts.map((p) => p.body),
+    [
+      { agent: 'grok:0f3c9a1b', client: 'acme', harness: 'grok-cli', session_id: ev.session_id },
+      { agent: 'claude:0f3c9a1b', client: 'acme' },
+    ],
   );
   setConfig({});
 });

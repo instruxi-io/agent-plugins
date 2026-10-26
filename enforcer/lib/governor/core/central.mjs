@@ -123,9 +123,9 @@ export function interpret(decision) {
   // (wrong tenant, no owner) — a governor fault, not a tenant decision. Treat
   // it as no answer so the local rule stands, and say why in the receipt.
   if (isPlatformReason(bare)) return { opinion: UNREACHABLE, detail: `platform refused the check: ${reason}` };
-  if (/^ask:/i.test(bare)) return { opinion: ASK, reason: bare.replace(/^ask:\s*/i, '') || 'the policy asks for confirmation' };
+  if (/^ask:/i.test(bare)) return { opinion: ASK, reason: bare.replace(/^ask:\s*/i, '') || "your organisation's rules ask a person to confirm it" };
   if (bare === TENANT_SILENT_DENY) {
-    return { opinion: DENY, reason: `the tenant policy declares agent actions and has no rule allowing this one` };
+    return { opinion: DENY, reason: "your organisation's rules list the actions an AI may take, and this one is not on the list" };
   }
   return { opinion: DENY, reason };
 }

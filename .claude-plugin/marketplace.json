@@ -11,7 +11,7 @@
       "description": "Connects your agent to your Enforcer workspace as an Agent Plugins 1.0 package (root plugin.json, mcp.json, skills) with a Claude Code fallback: the enforcer MCP server, one sign-in (/enforcer:login), /enforcer:setup, workspace switching. Includes the graph worker and the governor.",
       "category": "platform",
       "source": "./enforcer",
-      "version": "1.3.16"
+      "version": "1.3.29"
     },
     {
       "name": "enforcer-governor",
@@ -26,10 +26,10 @@
       "source": {
         "source": "github",
         "repo": "austpryb/jev-hooks",
-        "ref": "v0.21.1",
-        "sha": "3a1f742b28ec03fa715b3d152d8ba09a0b2f8a39"
+        "ref": "v1.0.1",
+        "sha": "af2afd24776e654557b15a0aaacc485d52818dea"
       },
-      "ref": "3a1f742b28ec03fa715b3d152d8ba09a0b2f8a39"
+      "ref": "af2afd24776e654557b15a0aaacc485d52818dea"
     },
     {
       "name": "enforcer-graph",

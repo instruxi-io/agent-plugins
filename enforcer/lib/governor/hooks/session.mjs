@@ -9,7 +9,7 @@ import { loadConfig } from '../src/store.mjs';
 import { decisioningLine } from '../src/managed.mjs';
 import { sweep } from '../adapters/claude-code/sweep.mjs';
 import { recordPluginRoot } from '../adapters/claude-code/telemetry.mjs';
-import { governor } from '../adapters/claude-code/index.mjs';
+import { governor, runningHarness } from '../adapters/claude-code/index.mjs';
 await guard(async () => {
   const ev = input('SessionStart', 'SessionEnd');
   const EVENT = ev.hook_event_name === 'SessionEnd' ? 'SessionEnd' : 'SessionStart';
@@ -34,8 +34,9 @@ await guard(async () => {
   // to the control plane (core/attribution.mjs): one short, best-effort request
   // when signed in, so the session is filed under its project even if it never
   // makes a governed decision. Only with a real session id -- agentOf's
-  // 'claude-code' fallback names no one session.
-  if (EVENT === 'SessionStart') await gov.session.start(ev.session_id ? { agent: event.agent, cwd: ev.cwd } : {});
+  // no-session fallback (the harness's name) names no one session.
+  if (EVENT === 'SessionStart')
+    await gov.session.start(ev.session_id ? { agent: event.agent, cwd: ev.cwd, session: ev.session_id, harness: runningHarness() } : {});
 
   // ...and to tidy up Claude Code's scratch files: old sessions' only, by age.
   if (EVENT === 'SessionEnd') {
