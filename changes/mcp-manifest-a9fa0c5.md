@@ -1,1 +1,0 @@
-- The locked MCP tool list now matches the connector on production (enforcer-v3-mcp a9fa0c5, 0.10.15): adds `keep_document_version`, `send_by_email` and `used_document` (write, gvnr profile), the GVNR documents and act-by-email tools.

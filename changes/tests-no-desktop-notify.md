@@ -1,1 +1,0 @@
-- The test suites no longer put real desktop notifications on the developer's screen: the dispatcher's `notify-send` now honours `ENFORCER_DISPATCH_NOTIFY=0`, which the test preload and runner set. Users can set it too, to keep the `ATTENTION` log lines without desktop pop-ups.
