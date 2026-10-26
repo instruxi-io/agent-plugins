@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.3.29
+
+- The locked MCP tool list now matches the connector on production (enforcer-v3-mcp a9fa0c5, 0.10.15): adds `keep_document_version`, `send_by_email` and `used_document` (write, gvnr profile), the GVNR documents and act-by-email tools.
+- The test suites no longer put real desktop notifications on the developer's screen: the dispatcher's `notify-send` now honours `ENFORCER_DISPATCH_NOTIFY=0`, which the test preload and runner set. Users can set it too, to keep the `ATTENTION` log lines without desktop pop-ups.
+
 ## 1.3.28
 
 - The locked MCP tool list now matches the connector on production (enforcer-v3-mcp 0da9572): adds `change_budget` (write, gvnr profile), the GVNR spend-limit tool.

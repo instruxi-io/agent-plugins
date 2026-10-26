@@ -102,7 +102,7 @@ What we know is imperfect, stated plainly. Last reviewed 2026-10-12, against plu
 ## Process
 
 - **Dependencies.** Dependabot and SHA-pinned actions are in place on
-  agent-plugins (was claude-plugins), enforcer-graph-demos, gvnr-site and enforcer-v3-portal (since
+  agent-plugins (was claude-plugins), graphwatch (was enforcer-graph-demos), gvnr-site and enforcer-v3-portal (since
   2026-10-09). The pinned-action bumps to checkout 7.0.1 and setup-node 7.0.0
   merged 2026-10-12; the TypeScript 7 bump is open with failing checks. Branch
   protection blocks force-push and deletion everywhere; required human review
