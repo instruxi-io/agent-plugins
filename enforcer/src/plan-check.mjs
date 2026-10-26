@@ -10,7 +10,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { request } from '../lib/api/client.mjs';
-import { headers, allNodes } from './preflight.mjs';
+import { headers, allNodes, acceptanceLint } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
 import { substitute } from './evidence-run.mjs'; // the one place that knows the acceptance-line rules
 import { safeIdent } from './dispatch/ident.mjs';
@@ -112,6 +112,7 @@ export async function planCheck({
   only = null,
   timeoutMs = 300000,
   strict = false,
+  allowLintWarnings = false,
   onLine = () => {},
 } = {}) {
   const base = resolveConfig({ env }).graphUrl;
@@ -153,6 +154,13 @@ export async function planCheck({
     }
   }
   try {
+    const found = await acceptanceLint(base, graph, h, nodes);
+    for (const f of found) emit(`${allowLintWarnings ? 'WARN' : 'LINT'} ${f}`);
+    if (found.length && !allowLintWarnings) bad += found.length;
+  } catch (e) {
+    emit(`WARN acceptance lint unavailable: ${e.message}`);
+  }
+  try {
     const ctx = await request(`${base}/graphs/${encodeURIComponent(graph)}/context`, { headers: h }, { retries: 0 });
     const d = ctx?.data ?? ctx;
     if (!d?.pack?.sha256)
@@ -170,7 +178,7 @@ export async function main(argv) {
   const valued = new Set(['--repo-root', '--only', '--timeout']);
   const graph = argv.find((a, i) => !a.startsWith('-') && !valued.has(argv[i - 1]));
   if (!graph) {
-    process.stderr.write('usage: enforcer plan check <graph> [--repo-root dir] [--only <node key>] [--timeout <seconds>] [--strict]\n');
+    process.stderr.write('usage: enforcer plan check <graph> [--repo-root dir] [--only <node key>] [--timeout <seconds>] [--strict] [--allow-lint-warnings]\n');
     return 2;
   }
   const secs = opt('--timeout') === undefined ? 300 : Number(opt('--timeout'));
@@ -184,6 +192,7 @@ export async function main(argv) {
       only: opt('--only') ?? null,
       timeoutMs: secs * 1000,
       strict: argv.includes('--strict'),
+      allowLintWarnings: argv.includes('--allow-lint-warnings'),
       ...(opt('--repo-root') ? { repoRoot: opt('--repo-root') } : {}),
       onLine: (text, { done, total }) => {
         process.stdout.write(text + '\n');

@@ -1,5 +1,5 @@
 // `enforcer dispatch preflight <graph>`: every way a dispatch fails before it spends, as one line each.
-// Checks: credential, gh, repos, governor-lander, frontier. Exit 2 when any fails.
+// Checks: credential, gh, repos, acceptance, governor-lander, frontier. Exit 2 when any fails.
 import { defaultFetch } from '../lib/api/client.mjs';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -90,6 +90,36 @@ async function get(base, path, h) {
   return { status: r.status, body };
 }
 
+async function lintPost(base, graph, h, acceptance) {
+  const r = await defaultFetch(`${base.replace(/\/$/, '')}/graphs/${graph}/acceptance/lint`, {
+    method: 'POST',
+    headers: { ...h, 'content-type': 'application/json' },
+    body: JSON.stringify({ acceptance }),
+  });
+  if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
+  const b = await r.json();
+  return b.warnings || b.data?.warnings || [];
+}
+
+/** One line per finding: `<key>: line <i> <code> — <first 60 chars>`; a task/bug/chore with no acceptance is acceptance_missing. */
+export async function acceptanceLint(base, graph, h, nodes, types = DISPATCH_TYPES) {
+  const found = [];
+  for (const n of nodes) {
+    if (['done', 'cancelled', 'succeeded'].includes(n.status)) continue;
+    if (types !== null && !types.includes(n.type)) continue;
+    const a = n.data?.acceptance;
+    const lines = (Array.isArray(a) ? a : a ? [a] : []).map(String);
+    const key = n.key || n.id;
+    if (!lines.length) {
+      if (['task', 'bug', 'chore'].includes(n.type)) found.push(`${key}: acceptance_missing — no acceptance lines`);
+      continue;
+    }
+    for (const w of await lintPost(base, graph, h, lines))
+      found.push(`${key}: line ${w.index} ${w.code} — ${(w.line ?? lines[w.index] ?? '').replace(/\s+/g, ' ').slice(0, 60)}`);
+  }
+  return found;
+}
+
 const run = (cmd, args, o = {}) => {
   try {
     return spawnSync(cmd, args, { encoding: 'utf8', timeout: 60000, env: o.env, ...o });
@@ -122,6 +152,7 @@ export async function preflight(
     allowBrowserSignin = false,
     workerRules = DEFAULT_WORKER_RULES,
     workerRoot = OWN_ROOT,
+    allowLintWarnings = false,
   } = /** @type {any} */ ({}),
 ) {
   const res = [];
@@ -200,6 +231,18 @@ export async function preflight(
       !bad.length,
       bad.length ? `missing: ${bad.join(', ')}; clone them under ${repoRoot} or pass --repo-root` : `ok (${repos.size} repo${repos.size === 1 ? '' : 's'})`,
     );
+  }
+
+  // 4a acceptance lint: every dispatchable open node's lines through the server's advisory lint
+  if (nodes) {
+    try {
+      const found = await acceptanceLint(base, graph, h, nodes, types);
+      if (!found.length) add('acceptance', true, 'ok');
+      else if (allowLintWarnings) add('acceptance', true, `warning (--allow-lint-warnings): ${found.join('; ')}`);
+      else add('acceptance', false, `${found.join('; ')}; fix the lines or pass --allow-lint-warnings`);
+    } catch (e) {
+      add('acceptance', false, `cannot lint acceptance: ${e.message}`);
+    }
   }
 
   // 5 governor: the INSTALLED plugin's gate, headless, must allow graph.land for both landers
@@ -292,6 +335,7 @@ export async function main(args, out = process.stdout) {
       const t = args[++i];
       o.types = t === 'all' ? null : t.split(',');
     } else if (args[i] === '--agent') o.agent = args[++i];
+    else if (args[i] === '--allow-lint-warnings') o.allowLintWarnings = true;
     else if (args[i] === '--allow-browser-signin') o.allowBrowserSignin = true;
     else if (args[i] === '--worker-rules') o.workerRules = args[++i];
     else if (args[i] === '--workers') o.workers = Number(args[++i]);
@@ -299,7 +343,7 @@ export async function main(args, out = process.stdout) {
     else if (args[i] && !args[i].startsWith('-') && !o.graph) o.graph = args[i];
   }
   if (!o.graph) {
-    process.stderr.write('usage: enforcer dispatch preflight <graph> [--repo-root dir] [--types t1,t2|all]\n');
+    process.stderr.write('usage: enforcer dispatch preflight <graph> [--repo-root dir] [--types t1,t2|all] [--allow-lint-warnings]\n');
     return 2;
   }
   const res = await preflight(o);
