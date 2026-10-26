@@ -11,7 +11,7 @@ import { strandedReport, strandedLines, workerLogMtime } from './dispatch/strand
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const DEFAULTS = { workers: 3, model: 'sonnet', salvage: 'on', triage: 'on', warm: 'off' };
-export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] [--repo-root dir] [--worker-rules on|off] [--context on|off]   preflight, then start the dispatcher in the background
+export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] [--repo-root dir] [--worker-rules on|off] [--context on|off] [--allow-lint-warnings]   preflight, then start the dispatcher in the background
        enforcer dispatch status [<graph>]                                              what it is doing and what it needs from you
        enforcer dispatch prune [--yes] [--repo-root dir]                               list (or with --yes remove) worktrees whose PR merged and no live worker holds
        enforcer dispatch stop <graph>                                                  finish running workers, start no new ones, then exit
@@ -48,6 +48,7 @@ export function preflightOptions(argv) {
   if (repoRoot) o.repoRoot = repoRoot;
   if (agent) o.agent = agent;
   if (argv.includes('--allow-browser-signin')) o.allowBrowserSignin = true;
+  if (argv.includes('--allow-lint-warnings')) o.allowLintWarnings = true;
   o.workers = Number.isInteger(workers) && workers > 0 ? workers : DEFAULTS.workers;
   return o;
 }
