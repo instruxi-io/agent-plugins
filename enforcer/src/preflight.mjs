@@ -39,6 +39,22 @@ export function installedRoot(env = process.env) {
   return found.at(-1) || OWN_ROOT;
 }
 
+/** Whether Claude Code loads `root` as a plugin: a Grok or Codex runtime copy has plugin.json but no Claude Code manifest dir. */
+export const isClaudePlugin = (root) => existsSync(join(root, DOT + '-plugin', 'plugin.json'));
+
+/**
+ * The installed Claude Code plugin a dispatch started from a runtime copy hands off to, else null. The
+ * `enforcer` shim on PATH (written by `enforcer harness install`) runs ~/.config/enforcer/<harness>/<VERSION>:
+ * passed to workers as --plugin-dir, Claude Code names that copy after its directory and every worker dies at
+ * once with `--agent 'enforcer:graph-worker' not found` (2026-10-13, again 2026-10-26).
+ */
+export function handoffRoot(own = OWN_ROOT, env = process.env) {
+  if (isClaudePlugin(own)) return null;
+  const { CLAUDE_PLUGIN_ROOT: _, ...rest } = env; // a Grok session may point this at the runtime copy itself
+  const r = installedRoot(rest);
+  return r !== own && r !== OWN_ROOT && isClaudePlugin(r) ? r : null; // OWN_ROOT is installedRoot's nothing-found fallback
+}
+
 const pluginVersion = (root) => {
   try {
     return JSON.parse(readFileSync(join(root, 'plugin.json'), 'utf8')).version || 'unknown';
@@ -105,6 +121,7 @@ export async function preflight(
     workers = 3,
     allowBrowserSignin = false,
     workerRules = DEFAULT_WORKER_RULES,
+    workerRoot = OWN_ROOT,
   } = /** @type {any} */ ({}),
 ) {
   const res = [];
@@ -235,8 +252,14 @@ export async function preflight(
   }
 
   // 5b the plugin root workers will run: the dispatcher's checkout (--plugin-dir), not the installed release
-  const workerRoot = OWN_ROOT;
-  add('worker-plugin', true, `workers run ${workerRoot} (enforcer ${pluginVersion(workerRoot)}); the installed release is disabled for them`);
+  if (isClaudePlugin(workerRoot))
+    add('worker-plugin', true, `workers run ${workerRoot} (enforcer ${pluginVersion(workerRoot)}); the installed release is disabled for them`);
+  else
+    add(
+      'worker-plugin',
+      false,
+      `workers would run ${workerRoot}, a runtime copy Claude Code cannot load as enforcer (every worker dies: --agent 'enforcer:graph-worker' not found); install the plugin (claude plugin install enforcer@instruxi) and dispatch again`,
+    );
 
   // 6 frontier: claimable, not claimed
   if (authed) {
