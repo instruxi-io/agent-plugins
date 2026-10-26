@@ -4,6 +4,7 @@
 import { fileURLToPath } from 'node:url';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { test } from 'node:test';
 import { DOT } from '../hooks/claude/paths.mjs';
 const rd = (p) => JSON.parse(readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
 const schema = JSON.parse(readFileSync(new URL('./fixtures/agent-plugins-1.0.0.plugin.schema.json', import.meta.url), 'utf8'));
@@ -169,5 +170,30 @@ console.log('ok   kit defaults: only enforcer and jev-hooks are selectable, only
   assert.deepEqual(nested, [], `nested plugin manifests: ${nested.join(', ')}`);
   console.log('ok   no nested plugin manifests');
 }
+
+test('codex marketplace entry matches plugin.json', () => {
+  const e = JSON.parse(readFileSync(root('.agents/plugins/marketplace.json'), 'utf8')).plugins.find((p) => p.name === 'enforcer');
+  assert.ok(e, 'no enforcer entry');
+  assert.equal(e.source.path, './enforcer');
+  assert.equal(e.version, plugin.version);
+  const hooks = plugin.extensions?.['com.openai']?.hooks;
+  assert.ok(hooks && existsSync(new URL(`../${hooks}`, import.meta.url)), `codex hooks file missing: ${hooks}`);
+  assert.ok(existsSync(new URL('../.mcp.json', import.meta.url)) && existsSync(new URL('../mcp.json', import.meta.url)));
+  assert.equal(rd('.mcp.json').mcpServers.enforcer.url, rd('mcp.json').mcpServers.enforcer.url);
+});
+
+test('hook commands reference files that exist', () => {
+  const hooks = rd('hooks/hooks.json').hooks;
+  let n = 0;
+  for (const g of Object.values(hooks).flat())
+    for (const h of g.hooks) {
+      if (h.type !== 'command') continue;
+      for (const m of h.command.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"\s]+)/g)) {
+        n++;
+        assert.ok(existsSync(new URL(`../${m[1]}`, import.meta.url)), `missing ${m[1]}`);
+      }
+    }
+  assert.ok(n > 0);
+});
 
 console.log('\nOK');

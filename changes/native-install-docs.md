@@ -1,0 +1,1 @@
+- Install docs now list only the native commands for Claude, Grok and Codex plus `npm i -g @instruxi/enforcer`; `enforcer harness install` is no longer documented as an install path. The manifest test now checks the Codex marketplace entry, hook file paths, both MCP files and hook command paths.

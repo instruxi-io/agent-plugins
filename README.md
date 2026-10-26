@@ -48,7 +48,7 @@ hooks when their definition changes, so expect that prompt once after updating.
 
 ```sh
 codex plugin marketplace add instruxi-io/agent-plugins
-codex plugin install enforcer@instruxi
+codex plugin add enforcer@instruxi
 codex mcp login enforcer
 ```
 
@@ -58,23 +58,19 @@ exit 0 and no output. These fixtures are written from Codex's documented payload
 install commands above have not been run against a live Codex: Codex CLI is not installed
 on the build machine.
 
-### Grok Build (experimental)
-
-Grok has no plugin marketplace here, so `enforcer` installs by copying itself into
-place. This is experimental: the hook fixtures come from one grok 1.0.41 run, and
-the dispatcher refuses `--harness grok` unless you pass `--experimental`.
+### Grok Build
 
 ```sh
-enforcer harness install grok --dry-run   # list every file it would write
-enforcer harness install grok             # asks before writing; --yes skips the question
-enforcer harness uninstall grok           # removes only what the install manifest lists
+grok plugin marketplace add instruxi-io/agent-plugins
+grok plugin install enforcer --trust
 ```
 
-It copies the runtime to `~/.config/enforcer/grok/<version>`, writes
-`~/.grok/hooks/enforcer.json` and `~/.grok/agents/graph-worker.md`, adds an
-`[mcp_servers.enforcer]` section to `~/.grok/config.toml` (and refuses if one exists and differs), and
-puts an `enforcer` shim in `~/.local/bin`. Changed files are backed up first. Then sign in
-with `enforcer login`.
+### The CLI
+
+```sh
+npm i -g @instruxi/enforcer
+enforcer login
+```
 
 You can also install `jev-hooks@instruxi` (put your Jev key in
 `~/.claude/settings.json` as `{ "env": { "TYPESAFE_API_KEY": "<your key>" } }`),
