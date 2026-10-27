@@ -1,6 +1,6 @@
 {
   "name": "enforcer",
-  "version": "1.3.29",
+  "version": "1.4.0",
   "description": "Enforcer for your agent: the MCP connection, one sign-in, workspace switching and setup, the graph worker and the governor.",
   "author": {
     "name": "Instruxi",
