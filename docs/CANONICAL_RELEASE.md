@@ -33,6 +33,17 @@ MCP plugin is a user of the governor; nobody installs the governor without a
 workspace. A plugin boundary is not a security boundary: all hooks run in one
 process with one set of permissions.
 
+## Codex status (2026-10-27): beta
+
+`codex plugin marketplace add instruxi-io/agent-plugins && codex plugin add enforcer@instruxi`
+installs the package, and Codex discovers the nine plugin hooks from `.codex-plugin/plugin.json`
+(trust is granted in Codex's `/hooks` UI). **The enforcer MCP server does not attach under Codex
+yet:** `codex mcp login enforcer` completes, but Codex's `initialize` is then refused
+(`auth_rejected … invalid_token`) and the session has no `enforcer_*` tools. Codex's OAuth client
+also asks for every scope the server offers, since it has no `--for work` preset. Both are tracked
+on the release graph as `mcp-oauth-codex` (enforcer-v3-mcp). Until it lands, Codex users get the
+governor and the skills, not the graph tools.
+
 ## What is portable, what is an adapter
 
 The industry drew the line (Agent Plugins 1.0; Codex's and Grok's plugin formats
@@ -62,7 +73,8 @@ enforcer/
   commands/*.md            Claude extra, thin: each just invokes its skill
   hooks/hooks.json         Claude adapter wiring -> bin/enforcer event
   hooks/claude/*.mjs       the shims
-  harness/codex/mcp.json   Codex MCP snippet (the hooks overlay is `extensions.com.openai` in plugin.json, wired to hooks/hooks.json)
+  .codex-plugin/plugin.json  Codex's own manifest: hooks -> hooks/codex/hooks.json, mcpServers -> mcp.json, skills (Codex ignores plugin.json's extensions.com.openai)
+  harness/codex/mcp.json   Codex MCP snippet
   harness/grok/            hooks/enforcer.json template, config.toml.snippet ([mcp_servers.enforcer]), agents/, fixtures/
   hooks/grok/              Grok shims
   bin/enforcer             node CLI: login, workspace, files, headers, governor, event, dispatch, plan, harness uninstall <codex|grok> (a migration: removes the old runtime copy, its hooks/agent files, config.toml section and PATH shim by manifest, restores recorded backups, prints the native install; `install` is the same command; each harness's own plugin manager does the installing)
