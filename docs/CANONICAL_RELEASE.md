@@ -65,7 +65,7 @@ enforcer/
   harness/codex/mcp.json   Codex MCP snippet (the hooks overlay is `extensions.com.openai` in plugin.json, wired to hooks/hooks.json)
   harness/grok/            hooks/enforcer.json template, config.toml.snippet ([mcp_servers.enforcer]), agents/, fixtures/
   hooks/grok/              Grok shims
-  bin/enforcer             node CLI: login, workspace, files, headers, governor, event, dispatch, plan, harness uninstall <codex|grok> (every harness installs from its native plugin manager)
+  bin/enforcer             node CLI: login, workspace, files, headers, governor, event, dispatch, plan, harness uninstall <codex|grok> (each harness's own plugin manager does the installing)
   bin/land-pr.sh
   lib/governor/            the decision core (moved from enforcer-governor with history)
   src/graph/               the graph worker hooks (Node)
