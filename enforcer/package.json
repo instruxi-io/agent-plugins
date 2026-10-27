@@ -1,8 +1,35 @@
 {
-  "name": "@instruxi-io/claude-plugin-enforcer",
-  "private": true,
+  "name": "@instruxi-io/enforcer",
   "license": "FSL-1.1-ALv2",
   "version": "1.3.29",
+  "bin": {
+    "enforcer": "bin/enforcer"
+  },
+  "files": [
+    "bin",
+    "src",
+    "lib",
+    "hooks",
+    "skills",
+    "agents",
+    "commands",
+    "harness",
+    "plugin.json",
+    ".claude-plugin",
+    ".codex-plugin",
+    "mcp.json",
+    ".mcp.json",
+    "docs/graph",
+    "README.md",
+    "LICENSE",
+    "!**/test/**",
+    "!**/fixtures/**",
+    "!**/.github/**"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
   "type": "module",
   "scripts": {
     "pretest": "node test/ensure-deps.mjs",
@@ -12,10 +39,11 @@
     "gen:api": "node lib/api/gen.mjs",
     "lint": "node scripts/biome.mjs lint",
     "format:check": "node scripts/biome.mjs format",
-    "format": "node scripts/biome.mjs format --write"
+    "format": "node scripts/biome.mjs format --write",
+    "prepublishOnly": "npm test"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

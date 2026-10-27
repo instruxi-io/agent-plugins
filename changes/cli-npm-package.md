@@ -1,0 +1,1 @@
+- The `enforcer` CLI now ships as `@instruxi-io/enforcer` on GitHub Packages, published from the same `enforcer/` tree on a `v*` tag. Install docs show the `.npmrc` registry and token lines.

@@ -1,0 +1,31 @@
+name: Publish CLI
+
+# Publishes @instruxi-io/enforcer (the enforcer/ tree) to GitHub Packages on a v* tag.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@instruxi-io'
+      - name: Tag matches plugin.json version
+        run: node scripts/release.mjs check-tag "${GITHUB_REF_NAME}"
+      - name: Install
+        working-directory: enforcer
+        run: npm ci
+      - name: Publish
+        working-directory: enforcer
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
