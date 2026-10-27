@@ -9,7 +9,7 @@ import { readVersions } from '../scripts/release.mjs';
 const hasClaude = spawnSync('claude', ['--version'], { encoding: 'utf8' }).status === 0;
 const plugin = path.resolve('enforcer');
 
-test('six manifests agree', () => {
+test('seven manifests agree', () => {
   const vs = readVersions();
   assert.equal(vs.length, 6);
   const set = new Set(vs.map((v) => v.version));
