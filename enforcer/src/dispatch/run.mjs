@@ -32,6 +32,8 @@ import {
   writeAgentMcpConfig,
   mcpConfigPath,
   removeAgentMcpConfigs,
+  governorLane,
+  drainGovernorLane,
 } from './launch.mjs';
 import { modelFor, nodeMaxTurns } from './model.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
@@ -367,10 +369,20 @@ export class Dispatcher {
     else if (this.args.agentKey) token = this.args.agentKey;
     // With a credential of its own the worker gets an empty ENFORCER_HOME, so the operator's shared sign-in is not on disk for it.
     let enforcerHome = null;
+    // ...and its governor receipts a lane of their own, so they ship under its credential only (see governorLane).
+    let governorHome = null;
     if (token) {
       enforcerHome = join(this.state, `home-${n.key}`);
       mkdirSync(enforcerHome, { recursive: true, mode: 0o700 });
       chmodSync(enforcerHome, 0o700);
+      try {
+        governorHome = governorLane(minted ? { agent: minted.agent } : { agentKey: token }, process.env);
+      } catch (e) {
+        this.say(`refuse ${n.key}: could not prepare its governor record: ${e.message}`);
+        rmSync(enforcerHome, { recursive: true, force: true });
+        if (minted) await revokeWorkerCredential(this.api, minted);
+        return;
+      }
     }
     if (mcpConfig) {
       try {
@@ -380,20 +392,24 @@ export class Dispatcher {
         return;
       }
     }
+    const env = workerEnv(this.g, process.env, {
+      token,
+      release: n.type === 'release',
+      workerRules: this.args.workerRules,
+      context: this.args.context,
+      enforcerHome,
+      governorHome,
+    });
     const proc = spawnWorker(cmd, {
       cwd: path,
       logPath,
-      env: workerEnv(this.g, process.env, {
-        token,
-        release: n.type === 'release',
-        workerRules: this.args.workerRules,
-        context: this.args.context,
-        enforcerHome,
-      }),
+      env,
       cleanup: mcpConfig ? [mcpConfig] : [],
       secrets: [a.agentKey, token].filter(Boolean),
     });
     proc.done.then(async () => {
+      // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
+      if (governorHome) await (this.drainLane || drainGovernorLane)(env);
       if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
       if (minted) await revokeWorkerCredential(this.api, minted);
     });

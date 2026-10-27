@@ -1,9 +1,9 @@
 // Launching workers: the claude/grok/codex command lines, the worker environment, detached spawn,
 // and process-group kill (SIGTERM, a grace period, then SIGKILL) by process.kill(-pid).
 import { spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { assertIdent } from './ident.mjs';
-import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, rmSync, readdirSync } from 'node:fs';
+import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, rmSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { openStream, redactFile } from './logs.mjs';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,7 +130,16 @@ const allowed = (k) => ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.s
 export function workerEnv(
   graphId,
   env = process.env,
-  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on', baseUrl = null, enforcerHome = null } = {},
+  {
+    token = null,
+    release = false,
+    runId = null,
+    workerRules = DEFAULT_WORKER_RULES,
+    context = 'on',
+    baseUrl = null,
+    enforcerHome = null,
+    governorHome = null,
+  } = {},
 ) {
   const root = pluginDirs()[0];
   const out = {};
@@ -167,9 +176,110 @@ export function workerEnv(
     out.ENFORCER_API_KEY = token;
     // HOME stays (git, gh and friends need it) but the shared sign-in lives under ENFORCER_HOME: point that at an empty per-run directory.
     if (enforcerHome) out.ENFORCER_HOME = enforcerHome;
+    // The governor's receipts go to a lane of their own (governorLane): in the operator's record they would be shipped by
+    // whichever process ships next, under ITS credential, and one run would land as two sessions under two accounts.
+    if (governorHome) out.GOVERNOR_HOME = governorHome;
   }
   if (env.ENFORCER_WORKER_GH_TOKEN) out.GH_TOKEN = env.ENFORCER_WORKER_GH_TOKEN;
   return out;
+}
+
+/** The governor's record directory as the governor itself resolves it (lib/governor/core/store.mjs DIR), for `env`. */
+export const governorDir = (env = process.env) =>
+  env.GOVERNOR_HOME || join(env.ENFORCER_CONFIG_HOME || join(env.HOME || env.USERPROFILE || '.', '.config', 'enforcer'), 'governor');
+
+/** A stable, non-secret lane name for the account a worker credential speaks as: the worker agent id when the dispatcher mints, else a hash of the agent key. */
+export const laneId = ({ agent = null, agentKey = null } = {}) => {
+  const owner = agent ? `agent:${agent}` : agentKey ? `key:${agentKey}` : null;
+  return owner ? createHash('sha256').update(owner).digest('hex').slice(0, 16) : null;
+};
+
+/**
+ * The governor record a worker with its own credential writes to: `<governor dir>/agents/<laneId>`, one per account per machine.
+ *
+ * WHY. The governor keeps ONE receipt file and ONE outbox per machine, and its shipper sends whatever is pending under the
+ * credential of the process that runs it. A worker carries the agent's key while the operator's own sessions carry the
+ * operator's sign-in, so each shipped the other's receipts: a dispatched run's decisions landed under the operator's account
+ * while its Claude telemetry landed under the agent's, and the console counted one run as two sessions. A lane per account
+ * means only that account's processes ever ship it. It persists across runs (its chain continues, it is one install, not one
+ * per run), and the operator's config.json is copied in on each launch so shipOn and the local rules still follow the operator.
+ * Returns the lane path, or null when there is no credential of its own to keep apart.
+ */
+export function governorLane(owner, env = process.env) {
+  const id = laneId(owner);
+  if (!id) return null;
+  const base = governorDir(env);
+  const lane = join(base, 'agents', id);
+  mkdirSync(lane, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(lane, 0o700);
+  } catch {
+    /* best effort */
+  }
+  let cfg = null;
+  try {
+    cfg = readFileSync(join(base, 'config.json'));
+  } catch {
+    /* no operator config: the defaults apply, as they do for the operator */
+  }
+  if (cfg) {
+    const tmp = join(lane, `.config.${process.pid}.${randomUUID()}.tmp`);
+    try {
+      writeFileSync(tmp, cfg, { mode: 0o600 });
+      renameSync(tmp, join(lane, 'config.json'));
+    } catch {
+      rmSync(tmp, { force: true });
+    }
+  }
+  return lane;
+}
+
+/** The governor's shipper (lib/governor/core/bin/ship.mjs). */
+export const GOVERNOR_SHIPPER = join(PLUGIN_DIR, 'lib', 'governor', 'core', 'bin', 'ship.mjs');
+
+/**
+ * Ship what a worker's lane still holds, with the worker's own environment (its credential), before that credential is revoked.
+ * The worker's hooks ship at most every 30s, so the last receipts of a run would otherwise wait for the next run of the same
+ * account. Bounded; never throws. Resolves to the shipper's one line, or null.
+ */
+export function drainGovernorLane(env, { shipper = GOVERNOR_SHIPPER, timeoutMs = 20_000, tries = 3, waitMs = 2_000, spawnImpl = spawn } = {}) {
+  if (!env?.GOVERNOR_HOME) return Promise.resolve(null);
+  const once = () =>
+    new Promise((resolve) => {
+      let out = '';
+      let p;
+      try {
+        p = spawnImpl(process.execPath, [shipper, '--print'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch {
+        return resolve(null);
+      }
+      const t = setTimeout(() => {
+        try {
+          p.kill('SIGKILL');
+        } catch {
+          /* gone */
+        }
+      }, timeoutMs);
+      p.stdout?.on('data', (d) => (out += d));
+      p.on('error', () => {
+        clearTimeout(t);
+        resolve(null);
+      });
+      p.on('close', () => {
+        clearTimeout(t);
+        resolve(out.trim() || null);
+      });
+    });
+  return (async () => {
+    let line = null;
+    for (let i = 0; i < tries; i++) {
+      if (i) await new Promise((r) => setTimeout(r, waitMs));
+      line = await once();
+      // A shipper the worker's own hook kicked may still hold the lane's lock: wait it out rather than leave the tail.
+      if (!line || !/another shipper is running/.test(line)) break;
+    }
+    return line;
+  })();
 }
 
 /** Mint a worker-scoped credential for the run through the agent credential route; null when no worker agent is configured. */
