@@ -109,28 +109,12 @@ export function versionLt(a, b) {
   }
   return false;
 }
-export function grokRuntimeCheck(home = homedir(), root = ROOT) {
+// The old `harness install grok` copied the plugin to ~/.config/enforcer/grok/<version>. Grok installs it natively
+// now, so any copy left there is stale by definition: point at the migration that removes it.
+export function grokRuntimeCheck(home = homedir()) {
   const base = join(home, '.config', 'enforcer', 'grok');
   if (!existsSync(base)) return null;
-  let plugin;
-  try {
-    plugin = JSON.parse(readFileSync(join(root, '.' + 'claude-plugin', 'plugin.json'), 'utf8')).version;
-  } catch {
-    return null;
-  }
-  let have;
-  try {
-    have = readFileSync(join(base, 'VERSION'), 'utf8').trim();
-  } catch {
-    have = readdirSync(base)
-      .filter((n) => /^\d+\.\d+/.test(n))
-      .sort((a, b) => (versionLt(a, b) ? -1 : 1))
-      .pop();
-  }
-  if (!have) return null;
-  return versionLt(have, plugin)
-    ? { ok: false, detail: `Grok runtime ${have} is older than the plugin ${plugin}; run: enforcer harness install grok` }
-    : { ok: true, detail: `Grok runtime ${have}` };
+  return { ok: false, detail: `old runtime copy at ${base}: run enforcer harness uninstall grok` };
 }
 
 export const WINDOWS_STATEMENT =
@@ -186,7 +170,7 @@ export async function runChecks({ fetchImpl = defaultFetch, network = true, plat
       detail: `${stale.length} found. Report only, nothing was changed. To remove one, recreate its directory and run: claude plugin uninstall enforcer@instruxi --scope project (from that directory)`,
     });
   const grok = grokRuntimeCheck(home);
-  if (grok) add('grok runtime current', grok);
+  if (grok) add('grok runtime copy', grok);
   return rows;
 }
 

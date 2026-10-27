@@ -18,7 +18,16 @@ const home = mkdtempSync(join(tmpdir(), 'grok-shim-'));
 // Decisioning is off by default; the shims are tested against the checks, so turn them on.
 writeChecksOn(join(home, 'g'));
 const { CLAUDECODE: _cc, ...parentEnv } = process.env;
-const env = { ...parentEnv, HOME: home, ENFORCER_HOME: home, GOVERNOR_HOME: join(home, 'g') };
+// an interactive session: a headless parent (a dispatched worker) would add the decision line to the reason
+const env = {
+  ...parentEnv,
+  ENFORCER_HEADLESS: '',
+  JEV_HOOKS_HEADLESS: '',
+  CLAUDE_CODE_ENTRYPOINT: 'cli',
+  HOME: home,
+  ENFORCER_HOME: home,
+  GOVERNOR_HOME: join(home, 'g'),
+};
 const run = (args, input) => spawnSync(process.execPath, [join(root, 'hooks/grok/shim.mjs'), ...args], { input, encoding: 'utf8', env });
 let n = 0;
 const ok = (m) => {
@@ -95,15 +104,9 @@ ok('config.toml snippet names the enforcer MCP server; graph-worker agent presen
 
 r = spawnSync(process.execPath, [join(root, 'bin/enforcer'), 'harness', 'install', 'grok', '--dry-run'], { encoding: 'utf8', env });
 assert.equal(r.status, 0, r.stderr);
-const lines = r.stdout
-  .trim()
-  .split('\n')
-  .filter((l) => l.startsWith('would write'));
-assert.equal(lines.length, 5, r.stdout); // three files + the shim + the manifest
-assert.ok(lines.some((l) => l.replaceAll('\\', '/').includes('/.grok/hooks/enforcer.json')));
-assert.ok(lines.some((l) => l.replaceAll('\\', '/').includes('/.grok/config.toml')));
-assert.ok(lines.some((l) => l.replaceAll('\\', '/').includes('/.grok/agents/graph-worker.md')));
-ok('enforcer harness install grok --dry-run lists the three files and writes none');
+assert.ok(r.stdout.includes('grok plugin install enforcer --trust'), r.stdout);
+assert.ok(!r.stdout.includes('would write'), r.stdout);
+ok('enforcer harness install grok --dry-run prints the native command and writes nothing');
 assert.ok(!existsSync(join(home, '.grok', 'hooks', 'enforcer.json')), 'dry run must not write');
 
 console.log(`\ngrok-shims: ${n} checks passed`);

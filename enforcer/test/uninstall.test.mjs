@@ -80,17 +80,21 @@ await ok('older schema reader refuses newer state', async () => {
   assert.equal(JSON.parse(readFileSync(SHARED_FILE(), 'utf8')).schema_version, SCHEMA_VERSION + 1, 'newer file untouched');
 });
 
-await ok('codex install writes a manifest and uninstall removes only it', async () => {
+await ok('codex uninstall removes the old runtime copy its manifest lists, and only that', async () => {
   const h = mkdtempSync(join(tmpdir(), 'codex-'));
-  codex.install({ home: h, ...quiet });
   const base = join(h, '.config', 'enforcer', 'codex');
-  const man = JSON.parse(readFileSync(join(base, 'manifest.json'), 'utf8'));
-  assert.equal(man.schema_version, SCHEMA_VERSION);
-  assert.ok(existsSync(man.runtime));
+  const runtime = join(base, '1.3.26');
+  mkdirSync(join(runtime, 'bin'), { recursive: true });
+  writeFileSync(join(runtime, 'bin', 'enforcer'), '//');
+  writeFileSync(join(base, 'VERSION'), '1.3.26\n');
+  writeFileSync(
+    join(base, 'manifest.json'),
+    JSON.stringify({ schema_version: SCHEMA_VERSION, version: '1.3.26', runtime, files: [join(base, 'VERSION')], shim: null }),
+  );
   writeFileSync(join(base, 'mine.txt'), 'not ours');
   const r = codex.uninstall({ home: h, ...quiet });
-  assert.ok(r.removed.includes(man.runtime));
-  assert.ok(!existsSync(man.runtime) && !existsSync(join(base, 'manifest.json')) && !existsSync(join(base, 'VERSION')));
+  assert.ok(r.removed.includes(runtime));
+  assert.ok(!existsSync(runtime) && !existsSync(join(base, 'manifest.json')) && !existsSync(join(base, 'VERSION')));
   assert.ok(existsSync(join(base, 'mine.txt')), 'a file the manifest does not list survives');
 });
 
