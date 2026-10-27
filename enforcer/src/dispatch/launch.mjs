@@ -238,8 +238,8 @@ export function removeAgentMcpConfigs(stateDir, key = null) {
 }
 
 /** The argv of a worker launch. `session` names (or with `resume`, continues) a claude session. */
-export function launchCmd(prompt, model, args, key, { session = null, resume = false, maxTurns = null, mcpConfig = null } = {}) {
-  const harness = args.harness || 'claude';
+export function launchCmd(prompt, model, args, key, { session = null, resume = false, maxTurns = null, mcpConfig = null, harness = null } = {}) {
+  harness = harness || args.harness || 'claude';
   if (harness === 'grok') {
     const cmd = [args.grok || process.env.GROK_BIN || 'grok', '-p', prompt, '--output-format', 'streaming-messages-json'];
     if (harnessKnowsModel('grok', model)) cmd.push('--model', model);

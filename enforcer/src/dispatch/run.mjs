@@ -56,6 +56,16 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const stamp = (t) => new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
 const now = () => Date.now() / 1000;
 
+/** The harness a worker was launched on; a worker without one (an older record) is claude. */
+export const workerHarness = (w) => w?.harness || 'claude';
+
+/** The workers a pids.json records, each with the harness it was launched on. A file from an older dispatcher has no
+ *  harness field: every worker in it reads as claude, the only harness that dispatcher ran. */
+export function pidsEntries(rec) {
+  const meta = (rec && rec.meta) || {};
+  return Object.entries((rec && rec.workers) || {}).map(([key, pid]) => ({ key, pid, meta: meta[key], harness: workerHarness(meta[key]) }));
+}
+
 /** The GitHub Actions component status from the githubstatus.com feed, or null when unreadable (unknown is not a hold). */
 export async function actionsStatus(fetchText = null, url = CI_STATUS_URL) {
   try {
@@ -295,6 +305,11 @@ export class Dispatcher {
   }
 
   // ---- launching
+  /** The harness a node's worker runs on. No route table yet: --harness (default claude) for every node. */
+  harnessFor(_n) {
+    return this.args.harness || 'claude';
+  }
+
   async launch(n) {
     const a = this.args;
     const bad = unsafeIdent(n);
@@ -306,6 +321,8 @@ export class Dispatcher {
     const mt = mergeTarget(n);
     if (mt) return this.launchMerge(n, mt, tag);
     const model = modelFor(n, a.model);
+    // chosen once, here, and carried on the worker (and in pids.json): reap, shutdown and resume read it, never this.args
+    const harness = this.harnessFor(n);
     let path;
     let branch;
     let note;
@@ -337,13 +354,13 @@ export class Dispatcher {
     } else prompt = workerPrompt(this.g, n, path, branch);
     const session = randomUUID();
     // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
-    const ownMcp = a.agent && a.agentKey && a.mcpUrl && (a.harness || 'claude') === 'claude';
+    const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
     const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    const cmd = launchCmd(prompt, model, a, n.key, { session, maxTurns: turnsCap, mcpConfig });
+    const cmd = launchCmd(prompt, model, a, n.key, { session, maxTurns: turnsCap, mcpConfig, harness });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
-        `would launch ${n.key} [${n.type}, tier ${n.data?.tier ?? '-'}] model=${model} worktree=${path} branch=${branch || '-'} (${note}) resources=${res}${turnsCap ? ` max_turns=${turnsCap}` : ''}${t2}`,
+        `would launch ${n.key} [${n.type}, tier ${n.data?.tier ?? '-'}] harness=${harness} model=${model} worktree=${path} branch=${branch || '-'} (${note}) resources=${res}${turnsCap ? ` max_turns=${turnsCap}` : ''}${t2}`,
       );
       return;
     }
@@ -407,6 +424,7 @@ export class Dispatcher {
       resources: resourcesOf(n),
       path,
       model,
+      harness,
       turns: 0,
       maxTurns: Math.max(a.maxTurns, turnsCap || 0),
       session,
@@ -415,7 +433,9 @@ export class Dispatcher {
     this.peak = Math.max(this.peak, this.workers.size);
     const acNote = a.autocompact && (a.autocompact !== 'auto' || !this.acSaid) ? ` autocompact=${a.autocompact}` : '';
     this.acSaid = true;
-    this.say(`launch ${n.key} pid=${proc.pid} model=${model} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`);
+    this.say(
+      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
+    );
   }
 
   async launchMerge(n, [pr, slug], tag) {
@@ -565,7 +585,6 @@ export class Dispatcher {
   }
 
   async reap() {
-    const harness = this.args.harness || 'claude';
     for (const [key, w] of [...this.workers]) {
       if (w.kind === 'merge') {
         if (alive(w.proc) && now() - w.lastHb > this.args.heartbeat) await this.heartbeatWorker(w);
@@ -575,6 +594,7 @@ export class Dispatcher {
         }
         continue;
       }
+      const harness = workerHarness(w);
       w.turns = countTurns(w.logPath, harness);
       if (alive(w.proc) && w.turns > w.maxTurns) {
         this.say(`turn cap: ${key} at ${w.turns} turns > ${w.maxTurns}, stopping it`);
@@ -645,7 +665,9 @@ export class Dispatcher {
       const live = [...this.workers].filter(([, w]) => w.proc);
       const workers = Object.fromEntries(live.map(([k, w]) => [k, w.proc.pid]));
       // what proves a pid is still the worker we launched: its start time and the launch nonce in its environment
-      const meta = Object.fromEntries(live.map(([k, w]) => [k, { start: w.proc.start ?? null, nonce: w.proc.nonce ?? null }]));
+      const meta = Object.fromEntries(
+        live.map(([k, w]) => [k, { start: w.proc.start ?? null, nonce: w.proc.nonce ?? null, ...(w.kind === 'merge' ? {} : { harness: workerHarness(w) }) }]),
+      );
       const p = join(this.state, 'pids.json');
       writeFileSync(p + '.tmp', JSON.stringify({ dispatcher: process.pid, dispatcherStart: procStartTime(process.pid), host: hostname(), workers, meta }), {
         mode: 0o600,
@@ -675,9 +697,8 @@ export class Dispatcher {
       if (st === null || st === rec.dispatcherStart) return [];
     }
     const reaped = [];
-    for (const [key, pid] of Object.entries(rec.workers || {})) {
+    for (const { key, pid, meta, harness } of pidsEntries(rec)) {
       if (!Number.isInteger(pid) || pid === process.pid || !pidAliveGroup(pid)) continue;
-      const meta = (rec.meta || {})[key];
       const notOurs = verifyWorker(pid, meta);
       if (notOurs) {
         this.say(`not reaping ${key} pid ${pid} from pids.json: ${notOurs}; left running (kill it by hand if it is a stale worker)`);
@@ -693,7 +714,7 @@ export class Dispatcher {
         if (!pidAliveGroup(pid)) break;
       }
       killNonce(meta.nonce);
-      this.say(`reaped orphan worker ${key} pid ${pid} from a previous dispatcher`);
+      this.say(`reaped orphan worker ${key} pid ${pid} (${harness}) from a previous dispatcher`);
       reaped.push(key);
     }
     rmSync(path, { force: true });
@@ -703,14 +724,13 @@ export class Dispatcher {
   /** Stop every worker (SIGTERM to its group, then SIGKILL), fail the runs they held open, record pids.json, clear the lease. */
   async shutdown(why = 'SIGTERM') {
     this.say(`${why}: stopping ${this.workers.size} worker(s)`);
-    const harness = this.args.harness || 'claude';
     for (const [key, w] of [...this.workers]) {
       try {
         if (alive(w.proc)) await killGroup(w.proc, Math.min(this.args.killGrace, 10) * 1000);
         let runId = null;
         if (w.kind === 'merge') runId = w.runId;
         else {
-          const s = summarize(w.logPath, harness);
+          const s = summarize(w.logPath, workerHarness(w));
           runId = s.reported ? null : s.run_id;
         }
         if (runId) {
