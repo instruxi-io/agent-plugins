@@ -185,4 +185,4 @@ Native commands only; no copier and no PATH shim:
 - Claude: `claude plugin marketplace add instruxi-io/agent-plugins && claude plugin install enforcer@instruxi`
 - Grok: `grok plugin marketplace add instruxi-io/agent-plugins && grok plugin install enforcer --trust`
 - Codex: `codex plugin marketplace add instruxi-io/agent-plugins && codex plugin add enforcer@instruxi`
-- CLI: `npm i -g @instruxi/enforcer`
+- CLI: add `@instruxi-io:registry=https://npm.pkg.github.com` and `//npm.pkg.github.com/:_authToken=<GitHub token with read:packages>` to `~/.npmrc`, then `npm i -g @instruxi-io/enforcer` (published from the same `enforcer/` tree on a `v*` tag by `.github/workflows/publish.yml`)

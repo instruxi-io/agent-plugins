@@ -38,3 +38,12 @@ test('changelog entry or Unreleased satisfies the gate', () => {
   assert.ok(changelogHas('1.0.5'));
   assert.ok(changelogHas('1.0.1'));
 });
+
+test('enforcer package is the publishable CLI', () => {
+  const p = JSON.parse(fs.readFileSync('enforcer/package.json', 'utf8'));
+  assert.equal(p.name, '@instruxi-io/enforcer');
+  assert.notEqual(p.private, true);
+  assert.equal(p.publishConfig.registry, 'https://npm.pkg.github.com');
+  assert.ok(fs.existsSync(path.join('enforcer', p.bin.enforcer)));
+  assert.equal(p.version, readVersions('.')[0].version);
+});
