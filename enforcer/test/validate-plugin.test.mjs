@@ -34,16 +34,21 @@ function validate(s, v, path = '$') {
   return errs;
 }
 
+// plugin.json deliberately carries no `$schema`: Codex reads a root manifest that declares one as a
+// bare Agent Plugins 1.0 manifest (skills + MCP only) and then ignores .codex-plugin/plugin.json,
+// which is where Codex's hooks are wired. Validate it as the Agent Plugins document it is.
 const plugin = rd('plugin.json');
-assert.deepEqual(validate(schema, plugin), []);
+assert.equal(plugin.$schema, undefined, 'root plugin.json must not declare $schema (Codex would drop the hooks)');
+assert.deepEqual(validate(schema, { $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', ...plugin }), []);
 console.log('ok   plugin.json validates against the vendored Agent Plugins 1.0.0 schema');
 assert.ok(validate(schema, { name: 'x' }).length > 0);
-assert.ok(validate(schema, { ...plugin, bogus: 1 }).length > 0);
+assert.ok(validate(schema, { $schema: 'x', ...plugin, bogus: 1 }).length > 0);
 console.log('ok   the validator rejects a missing $schema and an unknown property');
 
 const versions = {
   'plugin.json': plugin.version,
   [`${DOT}-plugin/plugin.json`]: rd(`${DOT}-plugin/plugin.json`).version,
+  '.codex-plugin/plugin.json': rd('.codex-plugin/plugin.json').version,
   'package.json': rd('package.json').version,
 };
 const kitJson = JSON.parse(readFileSync(new URL('../../kit.json', import.meta.url), 'utf8'));
@@ -172,7 +177,7 @@ test('codex marketplace entry matches plugin.json', () => {
   assert.ok(e, 'no enforcer entry');
   assert.equal(e.source.path, './enforcer');
   assert.equal(e.version, plugin.version);
-  const hooks = plugin.extensions?.['com.openai']?.hooks;
+  const hooks = rd('.codex-plugin/plugin.json').hooks;
   assert.ok(hooks && existsSync(new URL(`../${hooks}`, import.meta.url)), `codex hooks file missing: ${hooks}`);
   assert.ok(existsSync(new URL('../.mcp.json', import.meta.url)) && existsSync(new URL('../mcp.json', import.meta.url)));
   assert.equal(rd('.mcp.json').mcpServers.enforcer.url, rd('mcp.json').mcpServers.enforcer.url);
@@ -193,3 +198,7 @@ test('hook commands reference files that exist', () => {
 });
 
 console.log('\nOK');
+
+test('mcp.json declares the $schema Codex accepts (any other makes Codex drop the plugin MCP server)', () => {
+  assert.equal(rd('mcp.json').$schema, 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json');
+});

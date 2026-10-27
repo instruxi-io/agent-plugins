@@ -1,0 +1,21 @@
+{
+  "name": "enforcer",
+  "version": "1.3.29",
+  "description": "Enforcer for your agent: the MCP connection, one sign-in, workspace switching and setup, the graph worker and the governor.",
+  "author": { "name": "Instruxi", "url": "https://instruxi.io" },
+  "homepage": "https://instruxi.io",
+  "repository": "https://github.com/instruxi-io/agent-plugins",
+  "keywords": ["enforcer", "mcp", "identity", "authorization"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json",
+  "hooks": "./hooks/codex/hooks.json",
+  "interface": {
+    "displayName": "Enforcer",
+    "shortDescription": "Enforcer for your agent: MCP connection, sign-in, files, graph worker and governor.",
+    "longDescription": "Connects Codex to your Enforcer workspace: the enforcer MCP server, one sign-in, workspace files, the graph worker and the governor that gates risky tool calls.",
+    "developerName": "Instruxi",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://instruxi.io"
+  }
+}

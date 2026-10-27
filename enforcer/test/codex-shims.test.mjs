@@ -65,7 +65,7 @@ for (const [f, shims] of [
 }
 
 const plugin = JSON.parse(readFileSync(join(root, 'plugin.json'), 'utf8'));
-assert.equal(plugin.extensions['com.openai'].hooks, './hooks/codex/hooks.json');
+assert.equal(JSON.parse(readFileSync(new URL('../.codex-plugin/plugin.json', import.meta.url), 'utf8')).hooks, './hooks/codex/hooks.json');
 assert.ok(plugin.extensions['com.openai'].interface.displayName);
 ok('plugin.json carries extensions.com.openai, with its own hooks file');
 
