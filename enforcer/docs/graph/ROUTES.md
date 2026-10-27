@@ -1,6 +1,6 @@
 # Per-tier routes: harness, model and endpoint per tier (design)
 
-Status: design, not implemented. Nothing in this file is shipped behaviour yet; DISPATCHER.md describes what runs today.
+Status: items 1-3 and 6 are implemented (`src/dispatch/routes.mjs`, `routeFor` in `src/dispatch/model.mjs`, `test/dispatch/routes.test.mjs`): the table, its sources and validation, precedence, the probe and fallback, the preflight and status lines. Item 4 (the worker environment for an endpoint) is not yet: until it lands, a claude route with an endpoint launches with the run's own provider environment, so do not point a tier at an endpoint before then. The paragraph below describes the dispatcher before routes.
 
 Today one dispatcher run has one harness and each node has one model:
 

@@ -37,6 +37,12 @@ and, for each ready node, up to `--workers` at once:
 - **Model**: `data.model` (or the claim card's `model`) wins; a tier set by a
   person (`tier_source: user`) beats `--model`; otherwise `--model` caps it;
   otherwise `mechanical`/`standard` -> sonnet, `deep` -> opus, default sonnet.
+  `enforcer dispatch` passes `--model` only when you give it.
+- **Routes**: a route table (`--routes FILE`, `ENFORCER_ROUTES`, the graph's
+  `node_defaults.routes`, `<config home>/dispatch/routes.json`; `--no-routes`
+  ignores them) gives each tier a harness, model and optional endpoint, probed
+  at `/v1/models` (cached `--route-probe-ttl` seconds, default 60) with a
+  per-route fallback. A bad table exits 5 at startup. See ROUTES.md.
 - **Turn cap**: `data.max_turns`, when set, is passed as `claude --max-turns`
   (accepted and enforced by Claude Code 2.1.288 though not in `--help`; the run
   ends `error_max_turns`). The dispatcher also counts assistant turns in the

@@ -23,6 +23,7 @@ Every variable below is checked. A malformed value is a named error (`GRAPH_HOOK
 | `ENFORCER_CONFIG_HOME` | `~/.config/enforcer` | Root of per-user plugin state. |
 | `ENFORCER_STATE_DIR` | `<config home>/sessions/<harness>` | Session state (graph runs, captured evidence). |
 | `ENFORCER_HARNESS` | `claude` | `claude`, `codex` or `grok`. |
+| `ENFORCER_ROUTES` | unset | Path to a dispatcher route table, as `--routes` (docs/graph/ROUTES.md); beaten by `--routes`, beats the graph's `node_defaults.routes` and `<config home>/dispatch/routes.json`. |
 | `ENFORCER_HEADLESS` | unset | Marks a headless worker (0/1/true/false/yes/no). |
 | `ENFORCER_GOVERNOR` | unset | Governor selector read by the governor hooks. |
 | `ENFORCER_SCOPE` | unset | Scope requested by `login`. |

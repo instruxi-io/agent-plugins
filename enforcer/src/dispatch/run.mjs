@@ -35,7 +35,8 @@ import {
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { modelFor, nodeMaxTurns } from './model.mjs';
+import { routeFor, nodeMaxTurns } from './model.mjs';
+import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
@@ -57,9 +58,20 @@ const GRAPH_TOOL_RE = /__graph_(next_work|heartbeat|report|remember|plan_status)
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 const stamp = (t) => new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
 const now = () => Date.now() / 1000;
+const ENDPOINT_LOST = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EHOSTUNREACH|fetch failed|connection (refused|error|reset)/i;
 
 /** The harness a worker was launched on; a worker without one (an older record) is claude. */
 export const workerHarness = (w) => w?.harness || 'claude';
+
+/** A worker's pids.json meta beyond start and nonce: the harness, model and route it was launched on. */
+export const routeMeta = (w) => ({
+  harness: workerHarness(w),
+  ...(w.model ? { model: w.model } : {}),
+  ...(w.tier ? { tier: w.tier } : {}),
+  ...(w.route ? { route: w.route } : {}),
+  ...(w.endpoint ? { endpoint: w.endpoint.url, api: w.endpoint.api } : {}),
+  ...(w.fallbackFrom ? { fallback_from: w.fallbackFrom.route, fallback_reason: w.fallbackFrom.reason } : {}),
+});
 
 /** The workers a pids.json records, each with the harness it was launched on. A file from an older dispatcher has no
  *  harness field: every worker in it reads as claude, the only harness that dispatcher ran. */
@@ -147,6 +159,10 @@ export function defaultArgs(o = {}) {
     killGrace: 30,
     mergeAllow: [],
     prView: null,
+    routesFile: null, // --routes FILE; else ENFORCER_ROUTES, the graph's node_defaults.routes, <config home>/dispatch/routes.json
+    noRoutes: false,
+    routeProbeTtl: DEFAULT_PROBE_TTL,
+    routesEnv: null, // the environment the table's sources and token_env are read from (process.env when null)
     ...o,
   };
 }
@@ -162,6 +178,10 @@ export class Dispatcher {
     this.types = args.types === 'all' ? null : new Set(String(args.types).split(','));
     this.lease = new Lease(api, this.g, { say: (m) => this.say(m), takeover: args.takeover, noLease: args.noLease, dryRun: args.dryRun });
     this.workers = new Map();
+    this.routes = null; // the route table in force (docs/graph/ROUTES.md); null is today's --harness and TIER_MODEL
+    this.probes = new ProbeCache({ ttl: args.routeProbeTtl ?? DEFAULT_PROBE_TTL, env: args.routesEnv || process.env });
+    this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
+    this.holdNoted = new Map();
     this.attempts = new Map();
     this.failures = new Map();
     this.denied = new Map();
@@ -254,7 +274,7 @@ export class Dispatcher {
     const agents = affinityOrder(
       cands.filter((n) => !mergeTarget(n)),
       {},
-      (n) => modelFor(n, this.args.model),
+      (n) => routeFor(n, this.routes, this.args).model,
     );
     const merges = cands.filter((n) => mergeTarget(n));
     const a = select(agents, held, Math.max(slots, 0), this.workers);
@@ -274,16 +294,68 @@ export class Dispatcher {
       return { nodes, launched: [], frontier: this.lastFrontier };
     }
     const launched = [];
+    this.holds = new Map();
     for (const n of chosen) {
       try {
-        await this.launch(n);
-        launched.push(n);
+        // a node held by a down endpoint is not launched and spends no attempt
+        if ((await this.launch(n)) !== 'held') launched.push(n);
       } catch (e) {
         if (e instanceof APIError) throw e;
         this.say(`launch ${n.key} failed (${e.name}: ${e.message}); continuing`);
       }
     }
+    this.noteHolds();
     return { nodes, launched, frontier: this.lastFrontier };
+  }
+
+  // ---- routes
+  /** Load and validate the route table before anything is claimed: a bad table (or a route on a harness that cannot
+   *  run workers) is exit 5 at startup, never a failed node later. Prints the table it will use. */
+  async setupRoutes() {
+    const a = this.args;
+    const env = a.routesEnv || process.env;
+    let graphRoutes;
+    if (!a.noRoutes && !a.routesFile && !env.ENFORCER_ROUTES) {
+      try {
+        graphRoutes = ((await this.api.graph?.(this.g)) || {}).node_defaults?.routes;
+      } catch (e) {
+        this.say(`could not read graph node_defaults.routes (${e.message}); using the next source`);
+      }
+    }
+    let loaded;
+    try {
+      loaded = loadRoutes({ file: a.routesFile, noRoutes: a.noRoutes, graphRoutes, env, experimental: a.experimental, harness: a.harness });
+    } catch (e) {
+      if (!(e instanceof RouteError)) throw e;
+      this.say(e.message);
+      return e.exitCode;
+    }
+    this.routes = loaded.table;
+    if (loaded.table) for (const l of await routeLines(loaded, a, { probes: this.probes })) this.say(l);
+    return 0;
+  }
+
+  /** The route a node launches on this pass (probe and fallback included); see resolveRoute. */
+  async pickRoute(n) {
+    if (!this.routes) return { hold: false, route: routeFor(n, null, this.args), fallbackFrom: null };
+    return resolveRoute(n, this.routes, this.args, this.probes);
+  }
+
+  noteHold(n, pick) {
+    const url = pick.route.endpoint.url;
+    const h = this.holds.get(url) || { tier: pick.fallbackFrom?.route || pick.route.route, reason: pick.reason, keys: new Set() };
+    h.keys.add(n.key);
+    this.holds.set(url, h);
+  }
+
+  /** `route <tier>: endpoint <url> down (<reason>); holding <keys>`, once per endpoint per 10 minutes. */
+  noteHolds() {
+    for (const [url, h] of this.holds) {
+      if (now() - (this.holdNoted.get(url) || 0) < HOLD_NOTE_SECONDS) continue;
+      this.say(`route ${h.tier}: endpoint ${url} down (${h.reason}); holding ${[...h.keys].sort().join(', ')}`);
+      this.holdNoted.set(url, now());
+    }
+    for (const url of [...this.holdNoted.keys()]) if (!this.holds.has(url)) this.holdNoted.delete(url);
   }
 
   // ---- base resolution
@@ -307,9 +379,9 @@ export class Dispatcher {
   }
 
   // ---- launching
-  /** The harness a node's worker runs on. No route table yet: --harness (default claude) for every node. */
-  harnessFor(_n) {
-    return this.args.harness || 'claude';
+  /** The harness a node's worker runs on: node data.harness, else its tier's route, else --harness (default claude). */
+  harnessFor(n) {
+    return routeFor(n, this.routes, this.args).harness;
   }
 
   async launch(n) {
@@ -322,9 +394,22 @@ export class Dispatcher {
     const tag = n._lapsed ? ' (lease lapsed; re-claim)' : '';
     const mt = mergeTarget(n);
     if (mt) return this.launchMerge(n, mt, tag);
-    const model = modelFor(n, a.model);
     // chosen once, here, and carried on the worker (and in pids.json): reap, shutdown and resume read it, never this.args
-    const harness = this.harnessFor(n);
+    const pick = await this.pickRoute(n);
+    if (pick.hold) {
+      this.noteHold(n, pick);
+      return 'held';
+    }
+    const r = pick.route;
+    const { model, harness } = r;
+    if (r.source.harness === 'node') {
+      const why = HARNESSES.includes(harness) ? harnessRefusal(harness, a.experimental) : `data.harness must be one of ${HARNESSES.join(', ')}`;
+      if (why) {
+        this.say(`REFUSE ${n.key}: ${why}; fix the node's data.harness`);
+        return;
+      }
+    }
+    const rnote = this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '';
     let path;
     let branch;
     let note;
@@ -362,7 +447,7 @@ export class Dispatcher {
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
-        `would launch ${n.key} [${n.type}, tier ${n.data?.tier ?? '-'}] harness=${harness} model=${model} worktree=${path} branch=${branch || '-'} (${note}) resources=${res}${turnsCap ? ` max_turns=${turnsCap}` : ''}${t2}`,
+        `would launch ${n.key} [${n.type}, tier ${n.data?.tier ?? '-'}] harness=${harness} model=${model}${rnote} worktree=${path} branch=${branch || '-'} (${note}) resources=${res}${turnsCap ? ` max_turns=${turnsCap}` : ''}${t2}`,
       );
       return;
     }
@@ -441,6 +526,10 @@ export class Dispatcher {
       path,
       model,
       harness,
+      tier: r.tier,
+      route: r.route,
+      endpoint: r.endpoint,
+      fallbackFrom: pick.fallbackFrom,
       turns: 0,
       maxTurns: Math.max(a.maxTurns, turnsCap || 0),
       session,
@@ -450,7 +539,7 @@ export class Dispatcher {
     const acNote = a.autocompact && (a.autocompact !== 'auto' || !this.acSaid) ? ` autocompact=${a.autocompact}` : '';
     this.acSaid = true;
     this.say(
-      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
+      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model}${rnote} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
     );
   }
 
@@ -618,6 +707,8 @@ export class Dispatcher {
       }
       if (alive(w.proc)) continue;
       const s = summarize(w.logPath, harness);
+      // a worker that lost its endpoint: probe it again before the next launch instead of trusting the cached answer
+      if (w.endpoint && ENDPOINT_LOST.test(String(s?.error || ''))) this.probes.clear(w.endpoint.url);
       const limitText = harnessLimitText(s);
       if (limitText) {
         // the harness, not the node: refund the attempt, leave the run to lapse, hold every launch until the reset
@@ -682,12 +773,27 @@ export class Dispatcher {
       const workers = Object.fromEntries(live.map(([k, w]) => [k, w.proc.pid]));
       // what proves a pid is still the worker we launched: its start time and the launch nonce in its environment
       const meta = Object.fromEntries(
-        live.map(([k, w]) => [k, { start: w.proc.start ?? null, nonce: w.proc.nonce ?? null, ...(w.kind === 'merge' ? {} : { harness: workerHarness(w) }) }]),
+        live.map(([k, w]) => [k, { start: w.proc.start ?? null, nonce: w.proc.nonce ?? null, ...(w.kind === 'merge' ? {} : routeMeta(w)) }]),
+      );
+      // what `dispatch status` shows per endpoint: up or down since when, and the nodes held on it
+      const endpoints = Object.fromEntries(
+        Object.entries(this.probes.snapshot()).map(([url, st]) => [url, { ...st, holding: [...(this.holds.get(url)?.keys || [])].sort() }]),
       );
       const p = join(this.state, 'pids.json');
-      writeFileSync(p + '.tmp', JSON.stringify({ dispatcher: process.pid, dispatcherStart: procStartTime(process.pid), host: hostname(), workers, meta }), {
-        mode: 0o600,
-      });
+      writeFileSync(
+        p + '.tmp',
+        JSON.stringify({
+          dispatcher: process.pid,
+          dispatcherStart: procStartTime(process.pid),
+          host: hostname(),
+          workers,
+          meta,
+          ...(Object.keys(endpoints).length ? { endpoints } : {}),
+        }),
+        {
+          mode: 0o600,
+        },
+      );
       chmodSync(p + '.tmp', 0o600);
       renameSync(p + '.tmp', p);
     } catch {
@@ -778,6 +884,8 @@ export class Dispatcher {
       }
     }
     try {
+      const rrc = await this.setupRoutes();
+      if (rrc) return rrc;
       if (!a.dryRun) {
         mkdirSync(this.state, { recursive: true, mode: 0o700 });
         chmodSync(this.state, 0o700);
@@ -999,6 +1107,8 @@ export class Dispatcher {
         }
         await this.sleep(a.attendPoll * 1000);
         continue;
+      } else if (!a.exitWhenIdle && this.holds.size && !this.workers.size && !launched.length && !busy) {
+        idle = 0; // nodes held by a down endpoint are waiting, not done; noteHolds says so every 10 minutes
       } else if (!this.workers.size && !launched.length && !busy) {
         if (++idle >= 2) {
           const left = nodes
@@ -1055,6 +1165,9 @@ const OPTS = {
   agent: { type: 'string' },
   'allow-browser-signin': { type: 'boolean' },
   harness: { type: 'string' },
+  routes: { type: 'string' },
+  'no-routes': { type: 'boolean' },
+  'route-probe-ttl': { type: 'string' },
   autocompact: { type: 'string' },
   experimental: { type: 'boolean' },
   grok: { type: 'string' },
@@ -1088,6 +1201,9 @@ export function parseDispatchArgs(argv, env = process.env) {
   const autocompact = String(v.autocompact ?? env.ENFORCER_DISPATCH_AUTOCOMPACT ?? 'auto');
   if (autocompact !== 'auto' && !(/^\d+$/.test(autocompact) && Number(autocompact) >= 100000 && Number(autocompact) <= 1000000))
     throw new Error('--autocompact must be auto or 100000..1000000');
+  const routeProbeTtl = num(v['route-probe-ttl'], DEFAULT_PROBE_TTL);
+  if (!(routeProbeTtl >= 0)) throw new Error('--route-probe-ttl must be a number of seconds >= 0');
+  if (v.routes && v['no-routes']) throw new Error('--routes and --no-routes cannot be used together');
   const workers = num(v.workers, 3);
   if (!(workers >= 1)) throw new Error('--workers must be >= 1');
   const cfg = env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
@@ -1125,6 +1241,9 @@ export function parseDispatchArgs(argv, env = process.env) {
     takeover: !!v.takeover,
     noLease: !!v['no-lease'],
     harness,
+    routesFile: v.routes || null,
+    noRoutes: !!v['no-routes'],
+    routeProbeTtl,
     autocompact,
     experimental: !!v.experimental,
     agent: v.agent || null,
