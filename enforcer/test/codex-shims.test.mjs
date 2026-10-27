@@ -18,7 +18,16 @@ const run = (shim, input) =>
   spawnSync(process.execPath, [join(root, 'hooks/claude', shim)], {
     input,
     encoding: 'utf8',
-    env: { ...process.env, HOME: home, ENFORCER_HOME: home, GOVERNOR_HOME: join(home, 'g') },
+    // an interactive session: a headless parent (a dispatched worker) would add the decision line to the reason
+    env: {
+      ...process.env,
+      ENFORCER_HEADLESS: '',
+      JEV_HOOKS_HEADLESS: '',
+      CLAUDE_CODE_ENTRYPOINT: 'cli',
+      HOME: home,
+      ENFORCER_HOME: home,
+      GOVERNOR_HOME: join(home, 'g'),
+    },
   });
 let n = 0;
 const ok = (m) => {

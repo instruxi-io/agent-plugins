@@ -28,15 +28,15 @@ test('doctor reports a hook command whose path is missing', () => {
   assert.ok(dead.every((d) => d.file.startsWith(h)));
 });
 
-test('doctor reports a Grok runtime older than the plugin', async () => {
+test('doctor reports an old Grok runtime copy and names the migration', async () => {
   const h = mkHome();
   mkdirSync(join(h, '.config/enforcer/grok/0.0.1'), { recursive: true });
   writeFileSync(join(h, '.config/enforcer/grok/VERSION'), '0.0.1\n');
   const r = grokRuntimeCheck(h);
   assert.equal(r.ok, false);
-  assert.match(r.detail, /enforcer harness install grok/);
+  assert.match(r.detail, /old runtime copy at .*: run enforcer harness uninstall grok/);
   const rows = await runChecks({ network: false, home: h });
-  assert.ok(rows.some((x) => x.name === 'grok runtime current' && !x.ok));
+  assert.ok(rows.some((x) => x.name === 'grok runtime copy' && !x.ok));
 });
 
 test('doctor is silent when every hook path exists', async () => {
@@ -46,7 +46,7 @@ test('doctor is silent when every hook path exists', async () => {
   writeFileSync(join(h, '.grok/hooks/enforcer.json'), hooksDoc(`node "${f}"`));
   assert.deepEqual(deadHookPaths(h), []);
   const rows = await runChecks({ network: false, home: h });
-  assert.ok(!rows.some((x) => x.name === 'hook path exists' || x.name === 'grok runtime current'));
+  assert.ok(!rows.some((x) => x.name === 'hook path exists' || x.name === 'grok runtime copy'));
 });
 
 test('doctor changes no file', () => {

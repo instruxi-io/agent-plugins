@@ -57,10 +57,6 @@ const codex = JSON.parse(readFileSync(new URL('../../.agents/plugins/marketplace
 assert.ok(codex.version, 'Codex marketplace entry has no version');
 versions['.agents marketplace.json'] = codex.version;
 assert.ok(codex.policy?.authentication, 'Codex marketplace entry has no policy.authentication');
-{
-  const g = readFileSync(new URL('../src/grok-install.mjs', import.meta.url), 'utf8');
-  assert.match(g, /JSON\.parse\(rd\('plugin\.json'\)\)\.version/, 'Grok VERSION file must come from plugin.json');
-}
 const market = rd(`../${DOT}-plugin/marketplace.json`).plugins.find((p) => p.name === 'enforcer');
 if (market.version) versions['marketplace.json'] = market.version;
 assert.equal(new Set(Object.values(versions)).size, 1, `versions differ: ${JSON.stringify(versions)}`);
