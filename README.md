@@ -65,6 +65,13 @@ grok plugin marketplace add instruxi-io/agent-plugins
 grok plugin install enforcer --trust
 ```
 
+**Moving off an older copied install.** Releases up to 1.3.x copied the runtime to
+`~/.config/enforcer/<grok|codex>/<version>` and put an `enforcer` shim in `~/.local/bin`.
+`enforcer harness uninstall grok` (or `codex`; `install` does the same) removes exactly what
+that install's `manifest.json` lists, restores any `.enforcer-bak-*` file it recorded, and
+prints the native command above. With no manifest it writes nothing. `--dry-run` lists what
+would go. `enforcer doctor` flags a leftover copy.
+
 ### The CLI
 
 ```sh

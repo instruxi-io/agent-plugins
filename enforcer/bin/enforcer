@@ -132,22 +132,13 @@ if (area === 'governor' && GOV.includes(sub)) {
   process.exit(r.status ?? 1);
 }
 
-if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && rest[0] === 'codex') {
-  const g = await import('../src/codex-install.mjs');
-  const opts = { dryRun: rest.includes('--dry-run') };
-  const r = sub === 'install' ? g.install(opts) : g.uninstall(opts);
+// `harness install` and `harness uninstall` are the same migration off the old runtime copy and PATH shim:
+// remove what its manifest lists, restore recorded backups, print the native install command.
+if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok', 'codex'].includes(rest[0])) {
+  const { migrate } = await import('../src/harness-migrate.mjs');
+  const r = migrate(rest[0], { dryRun: rest.includes('--dry-run') });
   process.exit(r.ok ? 0 : 1);
 }
 
-if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && rest[0] === 'grok') {
-  const g = await import('../src/grok-install.mjs');
-  const opts = { dryRun: rest.includes('--dry-run'), yes: rest.includes('--yes') || rest.includes('-y') };
-  const flag = { graphOnly: '--graph-only', noHooks: '--no-hooks', noAgent: '--no-agent', skills: '--skills' };
-  const given = Object.fromEntries(Object.entries(flag).filter(([, f]) => rest.includes(f)).map(([k]) => [k, true]));
-  if (Object.keys(given).length) opts.options = given;
-  const r = await (sub === 'install' ? g.install(opts) : g.uninstall(opts));
-  process.exit(r.ok ? 0 : 1);
-}
-
-process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run] [--yes] [--graph-only] [--no-hooks] [--no-agent] [--skills]\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n`);
+process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n`);
 process.exit(2);
