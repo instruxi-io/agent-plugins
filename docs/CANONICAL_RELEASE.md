@@ -64,7 +64,7 @@ per-harness extensions.**
 
 ```
 enforcer/
-  plugin.json              Agent Plugins 1.0 (name enforcer, version 1.1.0, $schema)
+  plugin.json              Agent Plugins 1.0 (name enforcer, version 1.3.29, $schema)
   mcp.json                 streamable-http, api.instruxi.dev/mcp
   .claude-plugin/plugin.json   Claude compatibility fallback (same version)
   .mcp.json                Claude: http + headersHelper (until OAuth verified)
