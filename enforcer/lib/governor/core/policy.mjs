@@ -383,6 +383,9 @@ export const DEFAULTS = {
   // Ship receipts to the control plane (src/ship.mjs), in the background,
   // with the Enforcer sign-in. Inert when signed out.
   shipOn: true,
+  // Codex's own OTel export to governance (adapters/codex/telemetry.mjs), written
+  // at Codex session start and sign-in. Off removes it and keeps it removed.
+  codexTelemetry: true,
   ingestUrl: '', // empty: centralUrl
   adviseModel: true, // say when the model looks mismatched to the task
   // Days a finished session's scratch files (cost-*/cursor-*) are kept before

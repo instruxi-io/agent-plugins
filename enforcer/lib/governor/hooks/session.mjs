@@ -25,6 +25,16 @@ await guard(async () => {
   // the plugin to a new versioned directory) never leaves telemetry signed out.
   if (EVENT === 'SessionStart') recordPluginRoot();
 
+  // Under Codex, its own OTel export to governance is on by default: written (or
+  // its ingest key refreshed) here, unless codexTelemetry is off. Best effort and
+  // time-boxed; Codex reads its config at start, so a change applies next session.
+  if (EVENT === 'SessionStart' && runningHarness() === 'codex') {
+    try {
+      const [{ ensure }, { isFederated }] = await Promise.all([import('../adapters/codex/telemetry.mjs'), import('../core/credentials.mjs')]);
+      await ensure({ ...DEFAULTS, ...loadConfig() }, { signedIn: isFederated, timeoutMs: 4000 });
+    } catch {}
+  }
+
   // A session's end is the natural moment to catch up; its summary receipt was
   // just written, so the 30s throttle is bypassed.
   gov.flush(EVENT === 'SessionEnd' ? 0 : 30_000);

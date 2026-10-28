@@ -456,6 +456,27 @@ export async function replacementNotice(previous, next, base, fetchImpl = defaul
   return [await revokePreviousToken(previous, base, fetchImpl), RECONNECT_LINE];
 }
 
+/**
+ * After a sign-in, turn on Codex's telemetry export where the Enforcer plugin is installed in Codex (on by
+ * default; `enforcer governor telemetry codex off` keeps it off). One line when it was written, none otherwise.
+ * @param {{ ensure?: Function, installed?: () => boolean }} [deps]
+ */
+export async function codexTelemetryAfterSignIn(deps = {}) {
+  try {
+    const codex = await import('../lib/governor/adapters/codex/telemetry.mjs');
+    if (!(deps.installed || codex.pluginInstalled)()) return [];
+    const { loadConfig } = await import('../lib/governor/core/store.mjs');
+    const { DEFAULTS } = await import('../lib/governor/core/policy.mjs');
+    const r = await (deps.ensure || codex.ensure)({ ...DEFAULTS, ...loadConfig() }, { timeoutMs: 8000 });
+    if (r.skipped) return r.skipped.startsWith('turned off') ? [] : [`Codex telemetry: not set up (${r.skipped}). The next Codex session retries.`];
+    return [
+      `Codex telemetry: on, to ${r.logs.replace(/\/v1\/logs$/, '')} with this machine's Codex ingest key. Turn it off with: enforcer governor telemetry codex off`,
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function main(rawArgv) {
   const { argv: a1, scope } = extractScope(rawArgv);
   const { argv, preset: forPreset } = extractPreset(a1);
@@ -569,6 +590,7 @@ async function main(rawArgv) {
         ? `Saved. Signed in as ${who(me)}. Every Enforcer plugin on this machine now uses this key.`
         : 'Saved, but Enforcer did not accept the key just now. Check it with /enforcer:login status.',
     );
+    if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
     return;
   }
 
@@ -627,6 +649,7 @@ async function main(rawArgv) {
     out(describe(await currentWorkspace().catch(() => ({ tenant: 'unknown' }))));
     out('Wrong workspace? /enforcer:workspace list, then /enforcer:workspace switch <name>.');
     for (const line of notice) out(line);
+    if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
     return;
   }
 
