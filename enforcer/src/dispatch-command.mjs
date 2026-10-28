@@ -7,15 +7,17 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { headers, allNodes, preflight } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
+import { TIER_MODEL } from './dispatch/model.mjs';
 import { strandedReport, strandedLines, workerLogMtime } from './dispatch/stranded.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const DEFAULTS = { workers: 3, model: 'sonnet', salvage: 'on', triage: 'on', warm: 'off' };
+// no model: without --model each node runs on its tier's model (TIER_MODEL) or its route's, never a forced sonnet
+export const DEFAULTS = { workers: 3, salvage: 'on', triage: 'on', warm: 'off' };
 export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] [--repo-root dir] [--worker-rules on|off] [--context on|off] [--allow-lint-warnings]   preflight, then start the dispatcher in the background
        enforcer dispatch status [<graph>]                                              what it is doing and what it needs from you
        enforcer dispatch prune [--yes] [--repo-root dir]                               list (or with --yes remove) worktrees whose PR merged and no live worker holds
        enforcer dispatch stop <graph>                                                  finish running workers, start no new ones, then exit
-defaults: ${DEFAULTS.workers} workers, ${DEFAULTS.model} model cap, salvage ${DEFAULTS.salvage}, triage ${DEFAULTS.triage}, warm workers ${DEFAULTS.warm}
+defaults: ${DEFAULTS.workers} workers, no model cap (each tier's model, or its route's), routes from --routes / ENFORCER_ROUTES / the graph / routes.json, salvage ${DEFAULTS.salvage}, triage ${DEFAULTS.triage}, warm workers ${DEFAULTS.warm}
 state: ~/.config/enforcer/dispatch/<graph> (dispatcher.log, pids.json, STOP)
        enforcer dispatch --dry-run <graph>                                             print the planned launches; launch nothing
 other dispatcher flags pass through; see docs/graph/DISPATCHER.md
@@ -23,7 +25,7 @@ other dispatcher flags pass through; see docs/graph/DISPATCHER.md
 
 // Flags that take a value, so the value is never mistaken for the graph id.
 // --agent is not handled here but passes through to the runner.
-const VALUE_FLAGS = ['--workers', '--model', '--repo-root', '--worker-rules', '--context', '--agent'];
+const VALUE_FLAGS = ['--workers', '--model', '--repo-root', '--worker-rules', '--context', '--agent', '--routes', '--route-probe-ttl'];
 
 const flagValue = (argv, n) => {
   const i = argv.indexOf(n);
@@ -106,6 +108,8 @@ export async function start(argv, env = process.env) {
     process.stderr.write('enforcer dispatch: preflight failed, nothing started\n');
     return 2;
   }
+  const rrc = await routesPreflight(argv, graph, env);
+  if (rrc) return rrc;
   const dir = stateDir(graph, env);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try {
@@ -136,8 +140,8 @@ export async function start(argv, env = process.env) {
     graph,
     '--workers',
     String(flag('--workers') || DEFAULTS.workers),
-    '--model',
-    flag('--model') || DEFAULTS.model,
+    // --model only when it was given: a forced default would cap every tier and route model to it
+    ...(flag('--model') ? ['--model', flag('--model')] : []),
     '--state-dir',
     dir,
     ...(workerRules ? ['--worker-rules', workerRules] : []),
@@ -151,6 +155,62 @@ export async function start(argv, env = process.env) {
   writeFileSync(join(dir, 'dispatcher.pid'), String(child.pid));
   process.stdout.write(`dispatching ${graph}: pid ${child.pid}. See what it is doing: enforcer dispatch status ${graph}\n`);
   return 0;
+}
+
+/** The route table the runner will use, printed after preflight: a table that cannot be used stops here (exit 5). */
+export async function routesPreflight(argv, graph, env = process.env, { api = null, out = (s) => process.stdout.write(s) } = {}) {
+  const { loadRoutes, routeLines, ProbeCache, RouteError } = await import('./dispatch/routes.mjs');
+  const file = flagValue(argv, '--routes') || null;
+  const noRoutes = argv.includes('--no-routes');
+  const ttl = Number(flagValue(argv, '--route-probe-ttl') ?? 60);
+  const args = { harness: flagValue(argv, '--harness') || 'claude', model: flagValue(argv, '--model') || null, experimental: argv.includes('--experimental') };
+  let graphRoutes;
+  let nodes = [];
+  if (!noRoutes && !file && !env.ENFORCER_ROUTES) {
+    try {
+      if (!api) {
+        const { API } = await import('./dispatch/api.mjs');
+        api = new API(resolveConfig({ env }).graphUrl, { headers: () => headers(env) });
+      }
+      graphRoutes = ((await api.graph(graph)) || {}).node_defaults?.routes;
+    } catch {
+      /* unreadable graph defaults: the next source decides, as the runner does */
+    }
+  }
+  try {
+    const loaded = loadRoutes({ file, noRoutes, graphRoutes, env, ...args });
+    if (loaded.table && api?.nodes) nodes = await api.nodes(graph).catch(() => []);
+    const probes = loaded.table ? new ProbeCache({ ttl: Number.isFinite(ttl) ? ttl : 60, env }) : null;
+    for (const l of await routeLines(loaded, args, { probes, nodes })) out(`${l}\n`);
+    return 0;
+  } catch (e) {
+    if (!(e instanceof RouteError)) throw e;
+    out(`fail  routes: ${e.message}\n`);
+    process.stderr.write('enforcer dispatch: the route table cannot be used, nothing started\n');
+    return e.exitCode;
+  }
+}
+
+/** A running worker's model, and with a route its harness, endpoint and tier, from its pids.json meta. */
+export function workerRouteText(meta, n) {
+  const tier = String(n.data?.tier || '').toLowerCase();
+  const model = meta?.model || (Object.hasOwn(TIER_MODEL, tier) ? TIER_MODEL[tier] : 'sonnet');
+  if (!meta?.route && !meta?.fallback_from) return model;
+  const at = meta.endpoint ? ` @${String(meta.endpoint).replace(/^https?:\/\//, '')}` : '';
+  const via = meta.fallback_from ? `${meta.fallback_from}->fallback:${meta.route || meta.harness}, endpoint down` : meta.route;
+  return `${meta.harness || 'claude'} ${model}${at} (${via})`;
+}
+
+const hhmm = (t) => new Date(t * 1000).toISOString().slice(11, 16) + 'Z';
+
+/** One line per endpoint the dispatcher has probed: up, or down since when and why, with the nodes it holds. */
+export function endpointLines(endpoints) {
+  const L = [];
+  for (const [url, e] of Object.entries(endpoints || {})) {
+    const held = e.holding?.length ? `; holding ${e.holding.length} node${e.holding.length === 1 ? '' : 's'}: ${e.holding.join(', ')}` : '';
+    L.push(e.up ? `endpoint ${url} up` : `endpoint ${url} DOWN since ${hhmm(e.since)} (${e.reason})${held}`);
+  }
+  return L;
 }
 
 /** Failed criteria of a review item, from verdict/verification {threshold, failed:[{criterion|line|text|index, probability}]}. */
@@ -202,7 +262,7 @@ export async function statusText(graph, env = process.env) {
     const t = Date.parse(n.updated_at || n.started_at || '');
     return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : '?';
   };
-  const model = (n) => ({ mechanical: 'haiku', standard: 'sonnet', deep: 'opus' })[n.data?.tier] || DEFAULTS.model;
+  const model = (n) => workerRouteText(pids?.meta?.[n.key], n);
   const L = [];
   L.push(`dispatcher: ${running ? `running (pid ${pids.dispatcher})` : 'not running'}${ci.length && running ? '; blocked on CI' : ''}`);
   const sl = strandedLines(strandedRep, graph, { dispatcherRunning: Boolean(running) });
@@ -210,6 +270,7 @@ export async function statusText(graph, env = process.env) {
   L.push(`workers (${workers.length}):`);
   for (const n of workers) L.push(`  ${n.key}  ${mins(n)} min  ${model(n)}`);
   if (!workers.length) L.push('  none running');
+  if (running) for (const l of endpointLines(pids?.endpoints)) L.push(l);
   L.push(`nodes: ${done.length} done, ${open.length} open, ${landing.length} landing blocked, ${needsYou.length} needs you`);
   L.push(`needs you: ${needsYou.length}`);
   for (const n of landing) L.push(`  landing blocked: ${n.key}`);

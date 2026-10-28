@@ -1,6 +1,6 @@
 # Per-tier routes: harness, model and endpoint per tier (design)
 
-Status: design, not implemented. Nothing in this file is shipped behaviour yet; DISPATCHER.md describes what runs today.
+Status: implemented for claude. Items 1-3 and 6 are in `src/dispatch/routes.mjs`, `routeFor` in `src/dispatch/model.mjs` and `test/dispatch/routes.test.mjs`: the table, its sources and validation, precedence, the probe and fallback, and the preflight and status lines. Item 4 is in `endpointEnv` / `workerEnv` in `src/dispatch/launch.mjs` with `test/dispatch/endpoint-env.test.mjs`: the worker environment for a claude endpoint. The codex and grok endpoint forms are not built; validation refuses them. The paragraph below describes the dispatcher before routes.
 
 Today one dispatcher run has one harness and each node has one model:
 

@@ -53,7 +53,7 @@ export const VARS = {
   ENFORCER_HOME: { default: '~/.enforcer', check: nonEmpty },
   ENFORCER_CONFIG_HOME: { default: '~/.config/enforcer', check: nonEmpty },
   ENFORCER_STATE_DIR: { default: '<config home>/sessions/<harness>', check: nonEmpty },
-  ENFORCER_HARNESS: { default: 'claude', check: oneOf('claude', 'codex', 'grok') },
+  ENFORCER_HARNESS: { default: 'claude', check: oneOf('claude', 'codex', 'grok', 'cursor') },
   ENFORCER_HEADLESS: { default: '(unset)', check: flag },
   ENFORCER_GOVERNOR: { default: '(unset)', check: nonEmpty },
   ENFORCER_SCOPE: { default: '(unset)', check: nonEmpty },

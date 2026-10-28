@@ -1,0 +1,1 @@
+The dispatcher chooses each worker's harness at launch and keeps it on the worker and in pids.json; reaping, the turn count, shutdown and orphan reaping read that harness instead of --harness (still the default for every node), and a pids.json from an older dispatcher reads as claude.

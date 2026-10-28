@@ -28,9 +28,13 @@ import { readUsage } from './usage.mjs';
 import { runningHarness } from './harness.mjs';
 import { readGrokUsage } from '../grok/usage.mjs';
 import { readCodexUsage } from '../codex/usage.mjs';
+import { readCursorUsage } from '../cursor/usage.mjs';
 
 export const HARNESS = 'harness';
 export const TRANSCRIPT = 'transcript';
+// No usage reported at all, and usage at a model the table cannot price (Cursor): spend not known.
+export const UNMETERED = 'unmetered';
+export const UNPRICED = 'unpriced';
 
 // The harness figure is only as good as its last render. A session whose status
 // line has not been drawn for a long time is not evidence of current spend, and
@@ -77,17 +81,18 @@ export function harnessUsd(sessionId) {
 // at their OWN log format, which the Claude Code reader finds nothing in: it
 // read $0 from a real Grok session, so a spend limit never tripped there. Each
 // harness's log gets its own reader.
-const READERS = { 'grok-cli': readGrokUsage, codex: readCodexUsage };
+const READERS = { 'grok-cli': readGrokUsage, codex: readCodexUsage, cursor: readCursorUsage };
 export const usageReader = (harness = runningHarness()) => READERS[harness] || readUsage;
 
 export function read(sessionId, transcriptPath, cfg = {}, harness = runningHarness()) {
   // The transcript pass is not optional even when the harness figure exists:
   // it is where the model and the last prompt come from, and both are needed
   // to price the budget and to say what the agent is working on.
-  const { usd: own, ...t } = usageReader(harness)(sessionId, transcriptPath);
+  const { usd: own, unmetered, unpriced, ...t } = usageReader(harness)(sessionId, transcriptPath);
   // Grok writes its own price into its log; the status line is Claude Code's.
   const usd = typeof own === 'number' ? own : harnessUsd(sessionId);
-  if (usd === null) return { ...t, usd: null, source: TRANSCRIPT };
+  // A reader that found no usage at all, or a model it cannot price, says so: neither is $0.
+  if (usd === null) return { ...t, usd: null, source: unmetered ? UNMETERED : unpriced ? UNPRICED : TRANSCRIPT };
 
   // Budgets are effective tokens, so convert at the model that is answering
   // now — the same unit the rest of the policy compares against.

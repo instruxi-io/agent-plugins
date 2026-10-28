@@ -1,0 +1,19 @@
+{
+  "name": "enforcer",
+  "displayName": "Enforcer",
+  "version": "1.4.0",
+  "description": "Connects Cursor to your Enforcer workspace: the Enforcer MCP server, the skills, and the governor's hooks that gate and record every tool call.",
+  "author": {
+    "name": "Instruxi",
+    "url": "https://instruxi.io"
+  },
+  "homepage": "https://instruxi.io",
+  "repository": "https://github.com/instruxi-io/agent-plugins",
+  "license": "FSL-1.1-ALv2",
+  "keywords": ["enforcer", "mcp", "identity", "authorization", "governance"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json",
+  "hooks": "./hooks/cursor/hooks.json",
+  "commands": [],
+  "agents": []
+}

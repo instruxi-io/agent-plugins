@@ -72,6 +72,36 @@ that install's `manifest.json` lists, restores any `.enforcer-bak-*` file it rec
 prints the native command above. With no manifest it writes nothing. `--dry-run` lists what
 would go. `enforcer doctor` flags a leftover copy.
 
+### Cursor (experimental)
+
+Two ways in; use one, not both (both would fire every hook twice):
+
+```sh
+# the hooks alone, for you, in ~/.cursor/hooks.json (the CLI must be installed, below)
+enforcer harness install cursor
+# or for a repo, in a committable .cursor/hooks.json (cloud agents read this one)
+enforcer harness install cursor --repo .
+```
+
+or install the `enforcer` plugin from this repo's Cursor marketplace (`.cursor-plugin/marketplace.json`,
+manifest `enforcer/.cursor-plugin/plugin.json`: skills, `mcp.json`, and `hooks/cursor/hooks.json`).
+`enforcer harness uninstall cursor [--repo <dir>]` removes only enforcer's hooks; `--dry-run` shows
+the change. This target is hooks only: Cursor's team OpenTelemetry export is not wired yet.
+
+The shim (`enforcer/hooks/cursor/shim.mjs`) maps Cursor's payloads onto the shared core: the
+session is the `conversation_id` (a subagent's parent conversation, with the subagent as the
+agent), `Shell` is `Bash`, `MCP:<tool>` is `mcp__<server>__<tool>`, and every receipt says
+`cursor`, agent `cursor:<8>`. Caveats, all from Cursor's docs and not yet a live run:
+
+- Cursor accepts `ask` on `preToolUse` but does not enforce it today, so a governor *ask* there
+  does not stop the call. Denies are enforced, and the hook fails closed (`failClosed`).
+- Cursor also runs Claude Code hooks from `~/.claude/settings.json` when third-party hooks are
+  on; with the Claude plugin installed too, those fire beside these.
+- No token usage is documented in Cursor's hook payloads or transcript, so the spend reader is
+  tolerant: it counts a usage object if one appears and nothing otherwise.
+- Cloud agents run the repo's `.cursor/hooks.json` on their VM, which needs
+  `npm i -g @instruxi-io/enforcer` in the environment's install step.
+
 ### The CLI
 
 ```sh

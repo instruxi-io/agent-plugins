@@ -41,6 +41,8 @@ import { shadow } from './shadow.mjs';
 // the action text here -- a receipt states what the caller said, no more.
 const recorded = (event) => String(('name' in event ? event.name : event.tool) || '');
 
+// Readings whose dollars are not known: no meter, no usage reported, or no price for the model.
+const UNKNOWN_SPEND = new Set(['none', 'unmetered', 'unpriced']);
 /**
  * How a harness reports spend. Claude Code's comes from its transcript and its
  * status-line figure (adapters/claude-code/meter.mjs); a harness with no figure
@@ -161,7 +163,7 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
           // What the agent had spent when this was decided, in dollars, so a
           // receipt can be read without the price table. Omitted when the
           // harness reports no spend at all (a zero there would be invented).
-          spentUsd: reading.source === 'none' ? undefined : costUsd(dollarsForTokens(a.tokens, priceOf(a.model, cfg.model).in)),
+          spentUsd: UNKNOWN_SPEND.has(reading.source) ? undefined : costUsd(dollarsForTokens(a.tokens, priceOf(a.model, cfg.model).in)),
         }),
       );
       const hash = sha256(state.prevHash + JSON.stringify(entry));
@@ -301,15 +303,18 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
         const { tokens, model, usd: harnessFigure, source, usage } = cost.total(event);
         const a = state.agents[agent];
         if (!a && !tokens) return;
-        const usd = harnessFigure ?? dollarsForTokens(tokens, priceOf(model).in);
+        // Spend the harness did not report (unmetered) or at a model with no price (unpriced) is
+        // said as such: a $0 or an Opus-priced figure there would be invented.
+        const unknown = harnessFigure == null && (source === 'unmetered' || source === 'unpriced');
+        const usd = unknown ? null : (harnessFigure ?? dollarsForTokens(tokens, priceOf(model).in));
         // ONE number, two readers: the sentence and the field a machine sums.
-        const c = costUsd(usd);
+        const c = unknown ? undefined : costUsd(usd);
         const counts = receiptUsage(usage);
         const entry = {
           ts: new Date().toISOString(),
           agent,
           verdict: 'summary',
-          reason: `session ended after $${usd.toFixed(2)}`,
+          reason: unknown ? `session ended, spend ${source}${source === 'unpriced' && model ? ` (${model})` : ''}` : `session ended after $${usd.toFixed(2)}`,
           tokens: Math.round(tokens),
           ...(model ? { model } : {}),
           ...(a?.client ? { client: a.client } : {}),

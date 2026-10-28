@@ -1,0 +1,6 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Fix the failing auth tests"}]}}
+{"role":"assistant","id":"gen-1","model":"claude-4.5-sonnet","message":{"content":[{"type":"text","text":"Looking at src/auth.ts."}],"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":4000}}}
+{"role":"assistant","id":"gen-1","model":"claude-4.5-sonnet","message":{"content":[{"type":"text","text":"Looking at src/auth.ts."}],"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":4000}}}
+{"role":"tool","message":{"content":"42 passing"}}
+{"role":"assistant","id":"gen-2","model":"claude-4.5-sonnet","tokenUsage":{"inputTokens":500,"outputTokens":100}}
+not json at all
