@@ -14,6 +14,7 @@ import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch } f
 import {
   launchCmd,
   workerEnv,
+  routeToken,
   mintWorkerCredential,
   revokeWorkerCredential,
   spawnWorker,
@@ -501,13 +502,15 @@ export class Dispatcher {
       context: this.args.context,
       enforcerHome,
       governorHome,
+      route: r,
+      routeEnv: a.routesEnv || process.env,
     });
     const proc = spawnWorker(cmd, {
       cwd: path,
       logPath,
       env,
       cleanup: mcpConfig ? [mcpConfig] : [],
-      secrets: [a.agentKey, token].filter(Boolean),
+      secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
     proc.done.then(async () => {
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.

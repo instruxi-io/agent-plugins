@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
 import { assertIdent } from './ident.mjs';
 import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, rmSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
-import { openStream, redactFile } from './logs.mjs';
+import { openStream, redactFile, addSecret } from './logs.mjs';
 import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig, DEFAULT_BASE_URL, BASE_URL_VAR } from '../config.mjs';
@@ -125,8 +125,45 @@ export const WORKER_SCOPES = ['graph:read', 'graph:write'];
 
 const allowed = (k) => ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.startsWith(p));
 
-/** The worker environment: the allowlist, the run's worker-scoped token (as GRAPH_API_KEY) and, if the operator
- *  provides one, a repo-scoped GH_TOKEN (ENFORCER_WORKER_GH_TOKEN). Nothing else. */
+/** Operator credentials a Claude worker on an endpoint route must not inherit: each would win over ANTHROPIC_BASE_URL (or bill the operator). */
+export const ENDPOINT_DROP = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'ANTHROPIC_API_KEY'];
+/** Claude Code's model aliases: all point at the route's model, so no alias (agent file, subagent, fallback) lands on Anthropic. */
+export const ENDPOINT_MODEL_VARS = [
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+  'CLAUDE_CODE_SUBAGENT_MODEL',
+];
+/** The route endpoint's token, read only from the variable its `token_env` names (never argv, never a file); null when it names none. */
+export const routeToken = (route, env = process.env) => {
+  const name = route?.endpoint?.token_env;
+  const v = name ? env[name] : null;
+  return typeof v === 'string' && v ? v : null;
+};
+
+/** ROUTES.md item 4: the endpoint variables for `route` set on `out` in place. A route with no endpoint changes nothing. */
+export function endpointEnv(out, route, env = process.env) {
+  const ep = route?.endpoint;
+  if (!ep) return out;
+  const harness = route.harness || 'claude';
+  // Only claude has an endpoint form today; validation (routes.mjs) refuses the others, so this is a second guard, not a path.
+  if (harness !== 'claude') throw new Error(`${harness} cannot use a custom endpoint`);
+  for (const k of ENDPOINT_DROP) delete out[k];
+  const token = routeToken(route, env);
+  if (token) addSecret(token);
+  out.ANTHROPIC_BASE_URL = ep.url;
+  // Sent as Authorization: Bearer. A fixed placeholder when the route names no token, so Claude Code never falls back to the operator's login.
+  out.ANTHROPIC_AUTH_TOKEN = token || 'none';
+  for (const k of ENDPOINT_MODEL_VARS) out[k] = String(route.model);
+  out.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  return out;
+}
+
+/** The worker environment: the allowlist, the run's worker-scoped token (as GRAPH_API_KEY), if the operator
+ *  provides one, a repo-scoped GH_TOKEN (ENFORCER_WORKER_GH_TOKEN), and, for a route with an endpoint, that
+ *  endpoint's variables (endpointEnv; the token from the route's token_env, read in `routeEnv` or `env`). Nothing else. */
 export function workerEnv(
   graphId,
   env = process.env,
@@ -139,6 +176,8 @@ export function workerEnv(
     baseUrl = null,
     enforcerHome = null,
     governorHome = null,
+    route = null,
+    routeEnv = null,
   } = {},
 ) {
   const root = pluginDirs()[0];
@@ -181,6 +220,8 @@ export function workerEnv(
     if (governorHome) out.GOVERNOR_HOME = governorHome;
   }
   if (env.ENFORCER_WORKER_GH_TOKEN) out.GH_TOKEN = env.ENFORCER_WORKER_GH_TOKEN;
+  // A route with an endpoint: that harness's base URL, token and model variables, and the operator's provider credentials dropped.
+  if (route?.endpoint) endpointEnv(out, route, routeEnv || env);
   return out;
 }
 
