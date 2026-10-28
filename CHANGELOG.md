@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.6.0
+
+- Codex workers are now experimental: `codex exec --json` streams are parsed (recorded fixture test/fixtures/codex-exec.jsonl), so `--harness codex --experimental` launches and is reaped.
+- Telemetry headers no longer go stale inside Claude Code's 10-minute header cache: the OTel helper now refreshes any OAuth token that would expire before Claude Code next calls it (debounce + 2 min, derived from the debounce the adapter writes), instead of only within 60s of expiry, which let the last minutes of each window export with an expired token and be dropped as 401s. The shim's actual entry point, lib/governor/bin/enforcer-headers.mjs, now delegates to bin/enforcer-headers.mjs; MCP and hooks keep the 60s skew.
+
 ## 1.5.0
 
 - `enforcer dispatch <graph> --allow-lint-warnings` no longer kills the dispatcher at birth: the flag is preflight-only and was forwarded to `dispatch run`, which refused it (`Unknown option`). 1.4.0 regression from the acceptance preflight.
