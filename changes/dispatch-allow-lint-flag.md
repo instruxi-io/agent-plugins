@@ -1,0 +1,1 @@
+- `enforcer dispatch <graph> --allow-lint-warnings` no longer kills the dispatcher at birth: the flag is preflight-only and was forwarded to `dispatch run`, which refused it (`Unknown option`). 1.4.0 regression from the acceptance preflight.

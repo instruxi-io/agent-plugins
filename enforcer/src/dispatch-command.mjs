@@ -122,9 +122,13 @@ export async function start(argv, env = process.env) {
     process.stderr.write(`enforcer dispatch: already running for ${graph} (pid ${old.dispatcher}); see: enforcer dispatch status ${graph}\n`);
     return 3;
   }
+  // Preflight-only flags never reach `dispatch run`, whose parser refuses what it does not know:
+  // on 2026-10-27 `--allow-lint-warnings` passed preflight and then killed the dispatcher at birth.
+  const PREFLIGHT_ONLY = ['--allow-lint-warnings'];
   const extra = argv.filter(
     (a, i) =>
       a !== graph &&
+      !PREFLIGHT_ONLY.includes(a) &&
       !['--workers', '--model', '--repo-root', '--worker-rules', '--context'].includes(a) &&
       !['--workers', '--model', '--repo-root', '--worker-rules', '--context'].includes(argv[i - 1]),
   );
