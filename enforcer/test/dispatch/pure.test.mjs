@@ -354,8 +354,8 @@ test('summarize parses the grok stream fixture', () => {
   assert.equal(s.run_id, '5a1c33f4-e7bd-4f6b-8b52-2ce6a3c92754');
   assert.equal(s.result, 'success');
 });
-test('the codex stub fails loudly', () => {
-  assert.throws(() => summarize(join(FX, 'grok-ok.json'), 'codex'), /no fixture/);
+test('the codex parser ignores a stream with no codex events', () => {
+  assert.equal(summarize(join(FX, 'grok-ok.json'), 'codex').turns, 0);
 });
 
 // ---- prune

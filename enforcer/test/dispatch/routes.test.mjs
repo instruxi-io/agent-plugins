@@ -96,7 +96,7 @@ test('a down endpoint with a fallback route reroutes', async () => {
   });
 });
 
-test('a route naming an unsupported harness fails startup', async () => {
+test('a route naming an experimental harness without the flag fails startup', async () => {
   const state = tmp();
   const file = join(state, 'routes.json');
   writeFileSync(file, JSON.stringify({ version: 1, routes: { mechanical: { harness: 'codex' } } }));
@@ -104,7 +104,7 @@ test('a route naming an unsupported harness fails startup', async () => {
   // FakeAPI has no lease methods: reaching the lease would throw, so exit 5 proves nothing was claimed
   const d = new Dispatcher(new FakeAPI(), mkArgs(state, { routesFile: file }), (m) => lines.push(m));
   assert.equal(await d.run(), 5);
-  assert.match(lines.join('\n'), /routes\.mechanical\.harness: --harness codex is not supported/);
+  assert.match(lines.join('\n'), /routes\.mechanical\.harness: --harness codex is experimental/);
   // experimental grok needs --experimental, per route as for the flag
   assert.throws(() => table({ deep: { harness: 'grok' } }), /routes\.deep\.harness: --harness grok is experimental/);
   assert.throws(() => table({ deep: { harness: 'gemini' } }), /routes\.deep\.harness: must be one of claude, codex, grok/);
@@ -131,7 +131,7 @@ test('the table is validated with the field named', () => {
   assert.throws(() => v({ deep: { model: 'm', endpoint: { ...GPU, token_env: 'MISSING_TOKEN' } } }), /token_env: MISSING_TOKEN is not set/);
   assert.throws(() => v({ deep: { model: 'm', endpoint: { ...GPU, token_env: 'sk-abc123' } } }), /token_env: must be a variable name, not a token/);
   assert.throws(() => v({ deep: { fallback: 'retry' } }), /routes\.deep\.fallback: must be wait or route:<tier\|harness>/);
-  assert.throws(() => v({ deep: { fallback: 'route:codex' } }), /routes\.deep\.fallback: --harness codex is not supported/);
+  assert.throws(() => v({ deep: { fallback: 'route:codex' } }), /routes\.deep\.fallback: --harness codex is experimental/);
   assert.throws(
     () => v({ mechanical: { model: 'm', endpoint: GPU, fallback: 'route:standard' }, standard: { model: 'm', endpoint: GPU, fallback: 'route:mechanical' } }),
     /forms a cycle \(mechanical -> standard -> mechanical\)/,
