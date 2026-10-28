@@ -5,12 +5,13 @@
 // Grok Build and Codex run the same hook scripts as Claude Code, so the
 // adapter's name ('claude-code') is not proof of it. Grok's shim sets
 // ENFORCER_HARNESS=grok; Codex's hooks file passes `--harness codex`, which
-// bin/enforcer turns into ENFORCER_HARNESS=codex; Claude Code marks its
+// bin/enforcer turns into ENFORCER_HARNESS=codex; Cursor's shim sets
+// ENFORCER_HARNESS=cursor (enforcer-governance's cursor profile); Claude Code marks its
 // environment CLAUDECODE=1. With none of them it is '': a session is announced
 // only under a harness that is known, because announcing a session under the
 // wrong one would make it a contradiction.
 export const HARNESS_NAME = 'claude-code';
-const RUNNING = { grok: 'grok-cli', codex: 'codex' };
+const RUNNING = { grok: 'grok-cli', codex: 'codex', cursor: 'cursor' };
 export function runningHarness(env = process.env) {
   if (RUNNING[env.ENFORCER_HARNESS]) return RUNNING[env.ENFORCER_HARNESS];
   return env.CLAUDECODE === '1' ? HARNESS_NAME : '';
@@ -21,5 +22,5 @@ export function runningHarness(env = process.env) {
 // harnesses were told apart). The control plane maps a receipt's stamped
 // harness to the same prefixes (enforcer-governance migration 016), which is
 // what lets an older plugin's 'claude:' id and this one land on one session.
-const PREFIX = { 'grok-cli': 'grok', codex: 'codex' };
+const PREFIX = { 'grok-cli': 'grok', codex: 'codex', cursor: 'cursor' };
 export const agentPrefix = (env = process.env) => PREFIX[runningHarness(env)] || 'claude';

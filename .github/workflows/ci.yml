@@ -69,7 +69,7 @@ jobs:
             console.log("enforcer hooks.json routes the graph events through bin/enforcer event");'
       - name: manifests are valid JSON
         run: |
-          for f in .claude-plugin/marketplace.json kit.json enforcer/.claude-plugin/plugin.json enforcer/.mcp.json enforcer/hooks/hooks.json enforcer/docs/graph/settings.example.json enforcer/lib/api/spec/mcp-manifest.json; do
+          for f in .claude-plugin/marketplace.json .cursor-plugin/marketplace.json kit.json enforcer/.claude-plugin/plugin.json enforcer/.cursor-plugin/plugin.json enforcer/hooks/cursor/hooks.json enforcer/.mcp.json enforcer/hooks/hooks.json enforcer/docs/graph/settings.example.json enforcer/lib/api/spec/mcp-manifest.json; do
             node -e 'JSON.parse(require("fs").readFileSync(process.argv[1]))' "$f" && echo "$f ok"
           done
       # A local source that stops resolving breaks every new install while

@@ -7,6 +7,18 @@ import { stateBase } from './state.mjs';
 import { logHook, noteFailure } from './graph/hooklog.mjs';
 import { loadRun } from './graph/run.mjs';
 import { LEGACY_PROJECT_CONFIG } from '../hooks/claude/paths.mjs';
+import { cursorPayload, onceKey, once, approvalMessage } from './cursor-once.mjs';
+
+// Cursor runs a preToolUse "ask" (it does not enforce one) and refuses a subagentStart ask, so under
+// Cursor the core's ask is a deny that says approval is what is missing.
+export function cursorAsk(event, out, ev = {}) {
+  const hs = out?.hookSpecificOutput;
+  if (!isObj(hs) || hs.permissionDecision !== 'ask' || (event !== 'PreToolUse' && event !== 'SubagentStart')) return out;
+  const what = event === 'SubagentStart' ? 'this subagent' : (typeof ev.tool_name === 'string' && ev.tool_name) || 'this tool call';
+  const reason = approvalMessage(what, hs.permissionDecisionReason);
+  const { updatedInput, ...rest } = hs;
+  return { ...out, hookSpecificOutput: { ...rest, permissionDecision: 'deny', permissionDecisionReason: reason } };
+}
 
 export const GRAPH_TOOL = /^mcp__(plugin_enforcer_enforcer|enforcer|enforcer-graph)__graph_/;
 const PRE_GRAPH = /^mcp__(plugin_enforcer_enforcer|enforcer|enforcer-graph)__graph_(next_work|report|remember|heartbeat)$/;
@@ -169,29 +181,53 @@ export async function runEvent(name, opts = {}) {
     ev = JSON.parse(raw || '{}') || {};
   } catch {}
   if (!isObj(ev)) ev = {};
-  // The harness names the event itself; a shim routed an event it does not own stays silent.
-  let out = null;
-  if (spec.gov && !opts.graphOnly) out = await govRun(spec.gov, raw);
-  const denied = out?.hookSpecificOutput?.permissionDecision === 'deny';
-  let handlers = [];
-  const tool = ev.tool_name || '';
-  if (event === 'PreToolUse' && PRE_GRAPH.test(tool)) handlers = ['attach_evidence'];
-  else if (event === 'PreToolUse' && tool === 'Bash') handlers = ['start_ticker'];
-  else if (event === 'PostToolUse') handlers = [...(POST_GRAPH.test(tool) ? ['track_run'] : []), 'stop_ticker', 'capture_evidence', 'heartbeat'];
-  else if (event === 'PostToolUseFailure') handlers = ['stop_ticker', 'capture_evidence', 'heartbeat'];
-  else if (event === 'SessionEnd') handlers = ['stop_ticker'];
-  else if (event === 'SessionStart' && (!ev.source || /^(startup|resume|compact|clear)$/.test(ev.source))) handlers = ['session_start'];
-  else if (event === 'PreCompact') handlers = ['remember_on_compact'];
-  else if (event === 'Stop' || event === 'SubagentStop') handlers = ['stop_ticker', 'open_run_guard'];
-  if (opts.only) handlers = handlers.filter((h) => h === opts.only);
-  if (denied) handlers = [];
-  let code = 0;
-  if (handlers.length && (event === 'SessionStart' || graphContextLive(ev))) {
-    // session-start notices print with or without a graph
-    const r = await nativeRun(handlers, ev, deadline);
-    out = merge(out, r.out);
-    code = r.code;
+  // Cursor: its own payload, through the shim or through the Claude Code hooks Cursor imports.
+  // Both are read the same way, as one Cursor event, and decided once (cursor-once.mjs).
+  const cursor = !opts.notCursor && cursorPayload(ev);
+  let onceK = null;
+  if (cursor) {
+    const { normalize, EVENTS: CURSOR_EVENTS } = await import('../hooks/cursor/shim.mjs');
+    if (typeof ev.cursor_event !== 'string') {
+      // Not through the shim: Cursor ran the Claude Code hook itself. Read it as the shim would.
+      const ce = CURSOR_EVENTS[ev.hook_event_name] ? ev.hook_event_name : Object.keys(CURSOR_EVENTS).find((k) => CURSOR_EVENTS[k][1] === event);
+      normalize(ev, ce);
+      raw = JSON.stringify(ev);
+    }
+    process.env.ENFORCER_HARNESS = 'cursor';
+    onceK = onceKey(`${event}${opts.graphOnly ? ':graph' : ''}${opts.only ? `:${opts.only}` : ''}`, ev);
   }
+  const decide = async () => {
+    let out = null;
+    // The harness names the event itself; a shim routed an event it does not own stays silent.
+    if (spec.gov && !opts.graphOnly) out = await govRun(spec.gov, raw);
+    const denied = out?.hookSpecificOutput?.permissionDecision === 'deny';
+    let handlers = [];
+    const tool = ev.tool_name || '';
+    if (event === 'PreToolUse' && PRE_GRAPH.test(tool)) handlers = ['attach_evidence'];
+    else if (event === 'PreToolUse' && tool === 'Bash') handlers = ['start_ticker'];
+    else if (event === 'PostToolUse') handlers = [...(POST_GRAPH.test(tool) ? ['track_run'] : []), 'stop_ticker', 'capture_evidence', 'heartbeat'];
+    else if (event === 'PostToolUseFailure') handlers = ['stop_ticker', 'capture_evidence', 'heartbeat'];
+    else if (event === 'SessionEnd') handlers = ['stop_ticker'];
+    else if (event === 'SessionStart' && (!ev.source || /^(startup|resume|compact|clear)$/.test(ev.source))) handlers = ['session_start'];
+    else if (event === 'PreCompact') handlers = ['remember_on_compact'];
+    else if (event === 'Stop' || event === 'SubagentStop') handlers = ['stop_ticker', 'open_run_guard'];
+    if (opts.only) handlers = handlers.filter((h) => h === opts.only);
+    if (denied) handlers = [];
+    let code = 0;
+    if (handlers.length && (event === 'SessionStart' || graphContextLive(ev))) {
+      // session-start notices print with or without a graph
+      const r = await nativeRun(handlers, ev, deadline);
+      out = merge(out, r.out);
+      code = r.code;
+    }
+    if (cursor && out) out = cursorAsk(event, out, ev);
+    return { out, code };
+  };
+  let out, code;
+  if (onceK) {
+    const { DIR } = await import('../lib/governor/core/store.mjs');
+    ({ out, code } = await once(onceK, opts.onceDir || DIR, decide));
+  } else ({ out, code } = await decide());
   if (out) (opts.write || ((t) => process.stdout.write(t)))(JSON.stringify(out) + '\n');
   return code;
 }
