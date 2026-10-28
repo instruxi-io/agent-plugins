@@ -98,7 +98,7 @@ await t('a fresh config: writes the block, enables diagnostics-otel, and records
   assert.equal(oc.file.plugins.entries.other.enabled, true, 'other plugin entries are kept');
   const raw = readFileSync(statusFile, 'utf8');
   assert.ok(!raw.includes(KEY1), 'the status file never holds the key');
-  assert.equal(statSync(statusFile).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(statusFile).mode & 0o777, 0o600);
   assert.equal(readStatus(statusFile).credentialId, 'cred-1');
   assert.match(statusText(readStatus(statusFile)), /on: metrics go to Enforcer governance/);
 });
@@ -188,7 +188,7 @@ await t('the config file that holds the key is made 0600 if it was not', async (
   chmodSync(path, 0o644);
   const oc = fakeOpenClaw({}, { path });
   await run(oc);
-  assert.equal(statSync(path).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(path).mode & 0o777, 0o600);
 });
 
 await t('the entry: a full load registers one scheduled service; discovery loads start nothing', async () => {
