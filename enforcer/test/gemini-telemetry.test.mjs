@@ -81,7 +81,7 @@ test('enable: key, switch and content limits in .env (0600); endpoint in setting
   assert.equal(read(settingsPath(o) + '.enforcer-backup'), JSON.stringify(settings), 'their settings backed up');
 
   const text = read(envPath(o));
-  assert.equal(mode(envPath(o)), 0o600, '.env holds a secret: 0600, though it was 0644');
+  if (process.platform !== 'win32') assert.equal(mode(envPath(o)), 0o600, '.env holds a secret: 0600, though it was 0644');
   assert.match(text, /^GEMINI_API_KEY=theirs\n# a comment\n/, 'their lines kept, first');
   const v = dotenv(text);
   assert.equal(v.GEMINI_API_KEY, 'theirs');
