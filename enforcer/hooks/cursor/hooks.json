@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" preToolUse",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" postToolUse",
+        "timeout": 10
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" postToolUseFailure",
+        "timeout": 10
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" sessionStart",
+        "timeout": 15
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" sessionEnd",
+        "timeout": 10
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" beforeSubmitPrompt",
+        "timeout": 10
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" subagentStart",
+        "timeout": 10
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" subagentStop",
+        "timeout": 10
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" preCompact",
+        "timeout": 15
+      }
+    ],
+    "stop": [
+      {
+        "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" stop",
+        "timeout": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "conversation_id": "6c1e3b2a-4d5f-4a8b-9c0d-1e2f3a4b5c6d",
+  "generation_id": "0b7f9e21-3c4d-4e5f-8a9b-0c1d2e3f4a5b",
+  "model": "claude-4.5-sonnet",
+  "model_id": "claude-4.5-sonnet",
+  "cursor_version": "3.4.12",
+  "workspace_roots": [
+    "/Users/dev/acme-api"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/Users/dev/.cursor/projects/Users-dev-acme-api/agent-transcripts/6c1e3b2a-4d5f-4a8b-9c0d-1e2f3a4b5c6d.jsonl",
+  "hook_event_name": "sessionEnd",
+  "session_id": "6c1e3b2a-4d5f-4a8b-9c0d-1e2f3a4b5c6d",
+  "reason": "completed",
+  "duration_ms": 45000,
+  "is_background_agent": false,
+  "final_status": "completed"
+}

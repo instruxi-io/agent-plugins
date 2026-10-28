@@ -17,6 +17,7 @@
     "plugin.json",
     ".claude-plugin",
     ".codex-plugin",
+    ".cursor-plugin",
     "mcp.json",
     ".mcp.json",
     "docs/graph",

@@ -28,6 +28,7 @@ import { readUsage } from './usage.mjs';
 import { runningHarness } from './harness.mjs';
 import { readGrokUsage } from '../grok/usage.mjs';
 import { readCodexUsage } from '../codex/usage.mjs';
+import { readCursorUsage } from '../cursor/usage.mjs';
 
 export const HARNESS = 'harness';
 export const TRANSCRIPT = 'transcript';
@@ -77,7 +78,7 @@ export function harnessUsd(sessionId) {
 // at their OWN log format, which the Claude Code reader finds nothing in: it
 // read $0 from a real Grok session, so a spend limit never tripped there. Each
 // harness's log gets its own reader.
-const READERS = { 'grok-cli': readGrokUsage, codex: readCodexUsage };
+const READERS = { 'grok-cli': readGrokUsage, codex: readCodexUsage, cursor: readCursorUsage };
 export const usageReader = (harness = runningHarness()) => READERS[harness] || readUsage;
 
 export function read(sessionId, transcriptPath, cfg = {}, harness = runningHarness()) {

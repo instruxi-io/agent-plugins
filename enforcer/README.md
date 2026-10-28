@@ -9,6 +9,8 @@ claude plugin marketplace add instruxi-io/agent-plugins && claude plugin install
 grok plugin marketplace add instruxi-io/agent-plugins && grok plugin install enforcer --trust
 # Codex (beta: hooks and skills load; the enforcer MCP sign-in under Codex is not working yet)
 codex plugin marketplace add instruxi-io/agent-plugins && codex plugin add enforcer@instruxi
+# Cursor (experimental: hooks only, from the CLI; or the plugin from .cursor-plugin/marketplace.json)
+enforcer harness install cursor            # ~/.cursor/hooks.json; --repo . for a committable .cursor/hooks.json
 # CLI (GitHub Packages: ~/.npmrc needs the two lines below)
 # @instruxi-io:registry=https://npm.pkg.github.com
 # //npm.pkg.github.com/:_authToken=<GitHub token with read:packages>

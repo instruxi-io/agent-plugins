@@ -57,7 +57,7 @@ if (area === 'event') {
   // (hooks/codex/hooks.json), and this is how the governor learns it is under
   // Codex: Codex sets no marker of its own. Grok's shim sets the same variable.
   const h = rest[rest.indexOf('--harness') + 1];
-  if (rest.includes('--harness') && ['claude', 'codex', 'grok'].includes(h)) process.env.ENFORCER_HARNESS = h;
+  if (rest.includes('--harness') && ['claude', 'codex', 'grok', 'cursor'].includes(h)) process.env.ENFORCER_HARNESS = h;
   const code = await runEvent(sub, { graphOnly });
   await new Promise((done) => process.stdout.write('', done)); // drain a piped stdout before exiting (macOS cut replies at 8192 bytes)
   process.exit(code);
@@ -134,11 +134,16 @@ if (area === 'governor' && GOV.includes(sub)) {
 
 // `harness install` and `harness uninstall` are the same migration off the old runtime copy and PATH shim:
 // remove what its manifest lists, restore recorded backups, print the native install command.
+// Cursor is the exception: `harness install cursor` writes Cursor's hooks.json (see src/cursor-install.mjs).
+if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && rest[0] === 'cursor') {
+  const { main: cursorMain } = await import('../src/cursor-install.mjs');
+  process.exit(cursorMain(sub, rest.slice(1)));
+}
 if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok', 'codex'].includes(rest[0])) {
   const { migrate } = await import('../src/harness-migrate.mjs');
   const r = migrate(rest[0], { dryRun: rest.includes('--dry-run') });
   process.exit(r.ok ? 0 : 1);
 }
 
-process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n`);
+process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n`);
 process.exit(2);
