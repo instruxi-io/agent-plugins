@@ -1,1 +1,0 @@
-- Gemini CLI: the repo root is a Gemini extension (enforcer MCP server, SessionStart hook), and its telemetry goes to Enforcer governance by default after sign-in, authenticated with a gemini-cli ingest key in ~/.gemini/.env (0600), with prompt/response text, argv and traces kept out; `enforcer gemini telemetry on|off|status`. Depends on the ingest-key module (#338).

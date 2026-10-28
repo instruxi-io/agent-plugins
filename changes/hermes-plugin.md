@@ -1,1 +1,0 @@
-Hermes Agent plugin (`enforcer/harness/hermes`): sends Hermes session, model-call (tokens and cost), tool and sub-agent telemetry to governance as `hermes.*` OTLP logs and metrics with the machine's ingest key, on by default; `hermes enforcer status | telemetry off | mcp`.
