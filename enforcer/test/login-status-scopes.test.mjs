@@ -37,11 +37,15 @@ test('status lists granted scopes and the families they cover', () => {
   assert.match(text, /yes  graph runs and nodes/);
   assert.match(text, /yes  files/);
   assert.match(text, /yes  workspace switching/);
+  // The default sign-in can provision a harness's telemetry key (src/ingest-key.mjs) without a second consent.
+  assert.match(text, /yes  agent management/);
+  assert.match(text, /yes  telemetry keys/);
 });
 
 test('status prints the fix command for a missing family', () => {
-  const text = scopeLines(WORK_SCOPES.join(' ')).join('\n');
+  const text = scopeLines(WORK_SCOPES.filter((x) => !x.startsWith('enforcer:agents')).join(' ')).join('\n');
   assert.match(text, /no   agent management: .*Fix: enforcer login --for agents/);
+  assert.match(text, /no   telemetry keys .*Fix: enforcer login --for work/);
   assert.match(text, /no   graph import and templates: .*Fix: enforcer login --for plan/);
 });
 

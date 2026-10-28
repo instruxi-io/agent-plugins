@@ -4,9 +4,12 @@
 // person's own short-lived token. Codex, Gemini CLI, Hermes and OpenClaw take a fixed header from a
 // config file or the environment. Writing the person's own credential there would put an
 // unrestricted, long-lived secret in a harness config, so each machine + harness gets its own v3
-// agent (`<harness>@<hostname>`) holding one credential with INGEST_SCOPE, which can only write
-// telemetry to governance. It is cached in ~/.enforcer/ingest-keys.json (0600), rotated when it has
-// under 7 days left, and minted again when it was revoked, as long as this machine is signed in.
+// agent (`<harness>@<hostname>`) holding a credential with INGEST_SCOPE (and the harness stamped on
+// the credential), which can only write telemetry to governance. It is cached in
+// ~/.enforcer/ingest-keys.json (0600), replaced by a freshly issued one when it has under 7 days left
+// (the old one is left to expire: rotate/revoke need the .destructive scope, issuing does not), and
+// minted again when it was revoked, as long as this machine is signed in. At most two live keys per
+// harness: the current one and the one it replaced, still expiring.
 //
 // Disabling the AGENT in the console is the durable off switch: a disabled agent is reported, never
 // replaced. Revoking only the credential gets a fresh one on the next call while signed in.
@@ -17,26 +20,27 @@ import { readFileSync, mkdirSync, chmodSync, openSync, writeSync, fsyncSync, clo
 import { join } from 'node:path';
 import { hostname as osHostname } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { SHARED_DIR, acquireRefreshLock, authHeaders, credentialId, isFederated } from './credentials.mjs';
+import { SHARED_DIR, acquireRefreshLock, authHeaders, credentialId, isFederated, enforcerKey, readCredentials } from './credentials.mjs';
 import { resolveConfig } from './config.mjs';
 import { assertSchema, stamp } from './schema.mjs';
 import { apiFetch } from '../lib/api/client.mjs';
 
-// The v3 scope the ingest credential carries. Working name from the harness-telemetry plan:
-// workstream F (enforcer-v3 / enforcer-governance) defines and enforces the real scope, and F's PR
-// finalizes this string. v3 refuses an unknown scope (400 invalid_scope) until then.
-export const INGEST_SCOPE = 'enforcer:governance-ingest.write';
+// The v3 scope the ingest credential carries (authz.ScopeGovernanceIngest, enforcer-v3 #633). Accepted
+// only on agents and agent credentials, and it must stand alone: mixed with any other scope v3 answers
+// 400 invalid_scope. Not an `enforcer:governance-*` fine scope on purpose: leaves match fine scopes by
+// service prefix, so that would grant every governance write.
+export const INGEST_SCOPE = 'governance:ingest';
 
 /** Harnesses that get an ingest key. Claude Code is absent on purpose: it uses otelHeadersHelper. */
 export const INGEST_HARNESSES = Object.freeze(['codex', 'gemini-cli', 'hermes', 'openclaw']);
 
 const DAY = 86_400_000;
-/** Rotate a credential with less than this left. */
+/** Replace a credential with less than this left. */
 export const ROTATE_WITHIN_MS = 7 * DAY;
 /** How often a cached key is checked against v3 (revoked? expired?) before it is handed out again. */
 export const CHECK_EVERY_MS = 60 * 60_000;
-/** How long the old secret keeps working after a rotation, so a harness holding it can pick up the new one. */
-export const ROTATE_GRACE_SECONDS = 86_400;
+/** Live keys per harness after a mint: the current one, and the one it replaced while that expires. */
+export const MAX_LIVE_KEYS = 2;
 const LOCK_WAIT_MS = 30_000;
 const LOCK_STALE_MS = 60_000;
 const HTTP_TIMEOUT_MS = 10_000;
@@ -54,8 +58,10 @@ export const OTLP_BASE = (baseUrl = currentBase()) => `${trim(baseUrl)}/api/v1/g
  *   bad_harness   - not one of INGEST_HARNESSES
  *   signed_out    - no Enforcer sign-in on this machine, or v3 refused it (401)
  *   agent_disabled - the harness's agent is disabled or suspended in the console (the off switch)
+ *   insufficient_scope - the sign-in may not create agents / issue agent credentials (log in again)
+ *   too_many_keys - MAX_LIVE_KEYS live keys already exist for the harness and this sign-in cannot revoke one
  *   busy          - another process held the mint lock for LOCK_WAIT_MS and left no key
- *   api           - v3 refused or failed; `status` and `apiCode` say how
+ *   api           - v3 refused or failed; `status` and `apiCode` say how (the agent cap is api/agent_limit_reached)
  */
 export class IngestKeyError extends Error {
   constructor(code, message, { status = 0, apiCode = null } = {}) {
@@ -156,11 +162,12 @@ function cachedEntry(harness, base, owner) {
 
 const publicView = (e, source) => ({ key: e.key, credentialId: e.credentialId, agentId: e.agentId, expiresAt: e.expiresAt, source });
 const msLeft = (e, now) => Date.parse(e?.expiresAt || '') - now;
-// Rotate inside the last 7 days, or the last half of the lifetime for a tenant whose TTL is shorter than 14 days,
-// so a short default TTL does not rotate on every call.
+// Replace inside the last 7 days, or the last third of the lifetime for a tenant whose TTL is shorter than 21 days,
+// so a short default TTL does not replace on every call, and the replaced key has expired before the next
+// replacement (which keeps it to MAX_LIVE_KEYS).
 const rotateWindow = (e) => {
   const life = Date.parse(e?.expiresAt || '') - Date.parse(e?.issuedAt || '');
-  return Number.isFinite(life) && life > 0 ? Math.min(ROTATE_WITHIN_MS, life / 2) : ROTATE_WITHIN_MS;
+  return Number.isFinite(life) && life > 0 ? Math.min(ROTATE_WITHIN_MS, life / 3) : ROTATE_WITHIN_MS;
 };
 const fresh = (e, now) => !!e && msLeft(e, now) > rotateWindow(e) && now - Date.parse(e.checkedAt || '') < CHECK_EVERY_MS;
 
@@ -194,7 +201,33 @@ async function v3(ctx, method, path, body) {
   };
 }
 
+const LOGIN_AGAIN =
+  'Run /enforcer:login (or `enforcer login`) again: the default sign-in asks for enforcer:agents.write and enforcer:agents-credentials.write.';
+
 function fail(what, r) {
+  if (r.status === 403 && r.apiCode === 'insufficient_scope') {
+    return new IngestKeyError('insufficient_scope', `${what}: this sign-in may not create telemetry keys (HTTP 403 insufficient_scope). ${LOGIN_AGAIN}`, {
+      status: 403,
+      apiCode: r.apiCode,
+    });
+  }
+  if (r.status === 403 && r.apiCode === 'agent_cannot_mint') {
+    return new IngestKeyError(
+      'api',
+      `${what}: this machine is signed in with an agent key, which cannot create agents or keys. Sign in as a person (/enforcer:login).`,
+      {
+        status: 403,
+        apiCode: r.apiCode,
+      },
+    );
+  }
+  if (r.status === 409 && r.apiCode === 'agent_limit_reached') {
+    return new IngestKeyError(
+      'api',
+      `${what}: you already hold as many agents as this workspace allows per person (max_agents_per_steward). Telemetry keys need one agent per harness per machine; delete an unused agent in the Enforcer console or ask a workspace admin to raise the cap.`,
+      { status: 409, apiCode: r.apiCode },
+    );
+  }
   if (r.status === 401)
     return new IngestKeyError('signed_out', `${what}: Enforcer refused this machine's sign-in (HTTP 401). Run /enforcer:login.`, { status: 401 });
   const detail = r.status ? `HTTP ${r.status}${r.apiCode ? ` ${r.apiCode}` : ''}${r.message ? `: ${r.message}` : ''}` : r.message;
@@ -278,13 +311,71 @@ function entryFrom(ctx, agentId, data) {
   };
 }
 
-async function mint(ctx, knownAgentId) {
+// Scopes that let a browser sign-in create the agent and issue its credential (enforcer-v3 #633).
+const MINT_SCOPES = [
+  'enforcer:write',
+  'enforcer:admin',
+  'enforcer:agents.write',
+  'enforcer:agents.destructive',
+  'enforcer:agents-credentials.write',
+  'enforcer:agents-credentials.destructive',
+];
+
+/** False only for a browser sign-in whose recorded scopes cannot mint; an API key, or no record, is left to v3. */
+export function signInCanMint(doc = readCredentials()) {
+  if (enforcerKey()) return true;
+  const scope = doc?.enforcer?.oauth?.scope;
+  if (typeof scope !== 'string' || !scope.trim()) return true;
+  const granted = scope.split(/\s+/);
+  return MINT_SCOPES.some((s) => granted.includes(s));
+}
+
+const isLive = (c, now) => !!c && !c.revoked_at && Date.parse(c.expires_at || '') > now;
+
+/**
+ * Keep the agent's live keys for this harness under MAX_LIVE_KEYS before a new one is issued: keep `keepId`
+ * (the key being replaced) or else the one expiring last, and revoke the others (keys this machine lost track
+ * of, e.g. a deleted cache or another sign-in on the same account). Revoking needs the .destructive scope; a
+ * sign-in without it gets too_many_keys rather than a growing pile.
+ */
+async function boundLiveKeys(ctx, agentId, keepId) {
+  const r = await v3(ctx, 'GET', `/agents/${encodeURIComponent(agentId)}/credentials`);
+  if (!r.ok) {
+    if (r.status === 404) return;
+    throw fail("Listing the agent's keys", r);
+  }
+  const live = (Array.isArray(r.data?.items) ? r.data.items : [])
+    .filter((c) => isLive(c, ctx.now()) && (!c.harness || c.harness === ctx.harness))
+    .sort((a, b) => Date.parse(b.expires_at) - Date.parse(a.expires_at));
+  if (live.length < MAX_LIVE_KEYS) return;
+  const keep = live.find((c) => c.id === keepId) || live[0];
+  const extra = live.filter((c) => c.id !== keep.id);
+  for (const c of extra) {
+    const v = await v3(ctx, 'POST', `/agents/${encodeURIComponent(agentId)}/credentials/${encodeURIComponent(c.id)}/revoke`, {
+      reason: 'superseded: enforcer ingest-key keeps one live key per harness plus the one being replaced',
+    });
+    if (v.ok || v.status === 404) continue;
+    if (v.status === 401) throw fail('Revoking a superseded key', v);
+    throw new IngestKeyError(
+      'too_many_keys',
+      `${live.length} live ${ctx.harness} telemetry keys already exist on the agent ${agentName(ctx.harness, ctx.host)} and this sign-in cannot revoke the extra ones (HTTP ${v.status}${v.apiCode ? ` ${v.apiCode}` : ''}). Revoke the unused ones in the Enforcer console, or wait until one expires (${extra[extra.length - 1].expires_at}).`,
+      { status: v.status, apiCode: v.apiCode },
+    );
+  }
+}
+
+async function mint(ctx, knownAgentId, keepId = null) {
+  if (!signInCanMint()) {
+    throw new IngestKeyError('insufficient_scope', `This sign-in may not create telemetry keys (it holds none of ${MINT_SCOPES.join(', ')}). ${LOGIN_AGAIN}`);
+  }
   let agentId = knownAgentId;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (!agentId) agentId = await findOrCreateAgent(ctx);
+    await boundLiveKeys(ctx, agentId, keepId);
     const r = await v3(ctx, 'POST', `/agents/${encodeURIComponent(agentId)}/credentials`, {
       name: `ingest ${agentName(ctx.harness, ctx.host)}`,
       scopes: [INGEST_SCOPE],
+      harness: ctx.harness,
     });
     if (r.ok) return entryFrom(ctx, agentId, r.data);
     // The cached agent was deleted (404) or transferred away: look it up again by name, once.
@@ -326,20 +417,18 @@ async function refresh(ctx, cached) {
         saveEntry(ctx.harness, next);
         return publicView(next, 'cache');
       }
-      const r = await v3(ctx, 'POST', `/agents/${encodeURIComponent(cached.agentId)}/credentials/${encodeURIComponent(cached.credentialId)}/rotate`, {
-        grace_seconds: ROTATE_GRACE_SECONDS,
-      });
-      if (r.ok) {
-        const next = entryFrom(ctx, cached.agentId, r.data);
-        saveEntry(ctx.harness, next);
-        return publicView(next, 'rotated');
+      // Under the window: issue a fresh key on the same agent and let this one expire on its own. Rotate
+      // and revoke are .destructive in agents-credentials; issuing is .write, which the default sign-in holds.
+      let next;
+      try {
+        next = { ...(await mint(ctx, cached.agentId, cached.credentialId)), previousCredentialId: cached.credentialId };
+      } catch (e) {
+        // Could not replace it yet (v3 down, a scope, a cap): the current key still works until it expires.
+        if (e?.code !== 'signed_out' && msLeft(cur, ctx.now()) > 0) return publicView(cur, 'cache');
+        throw e;
       }
-      if (r.status === 401) throw fail('Rotating the ingest credential', r);
-      if (r.status !== 409 && r.status !== 404) {
-        if (msLeft(cur, ctx.now()) > 0) return publicView(cur, 'cache');
-        throw fail('Rotating the ingest credential', r);
-      }
-      // 409 credential_revoked (revoked between the check and the rotate) or 404: mint a new one below.
+      saveEntry(ctx.harness, next);
+      return publicView(next, 'rotated');
     }
   }
   const next = await mint(ctx, cached?.agentId || null);
@@ -352,7 +441,7 @@ async function refresh(ctx, cached) {
  *
  * Returns { key, credentialId, agentId, expiresAt, source } where source is 'cache', 'minted' or
  * 'rotated'. A caller that wrote the key into a harness config rewrites it whenever source is not
- * 'cache' (after a rotation the old key keeps working for ROTATE_GRACE_SECONDS).
+ * 'cache' (after a rotation the old key keeps working until its own expiry).
  *
  * Throws IngestKeyError (see its codes). Signed out: throws before any network call.
  * force: check the cached key with v3 now instead of trusting a check made within CHECK_EVERY_MS.
@@ -415,12 +504,13 @@ export function ingestHeaders(harness) {
 // ---- CLI: enforcer ingest-key --harness <h> [--json] --------------------------------------------
 
 /** Exit codes of `enforcer ingest-key`. */
-export const EXIT = Object.freeze({ ok: 0, failed: 1, usage: 2, signedOut: 3, agentDisabled: 4 });
+export const EXIT = Object.freeze({ ok: 0, failed: 1, usage: 2, signedOut: 3, agentDisabled: 4, insufficientScope: 5 });
 
 export const USAGE = `usage: enforcer ingest-key --harness <${INGEST_HARNESSES.join('|')}> [--json]
   Prints this machine's telemetry-only Enforcer key for that harness (minting or rotating it as needed).
   stdout: the key alone, or with --json {"key","credentialId","agentId","expiresAt","source","harness","otlpBase"}.
-  exit: 0 ok, 1 failed (v3 error or busy), 2 usage, 3 signed out, 4 the harness's agent is disabled in the console.
+  exit: 0 ok, 1 failed (v3 error, agent cap, too many live keys, busy), 2 usage, 3 signed out,
+        4 the harness's agent is disabled in the console, 5 the sign-in lacks the agent scopes (log in again).
 `;
 
 /** `enforcer ingest-key` main. Only the key (or its JSON) goes to stdout; every message goes to stderr. */
@@ -452,6 +542,7 @@ export async function main(argv, { out = (s) => process.stdout.write(s), err = (
     err(`enforcer ingest-key: ${e?.message || e}\n`);
     if (e?.code === 'signed_out') return EXIT.signedOut;
     if (e?.code === 'agent_disabled') return EXIT.agentDisabled;
+    if (e?.code === 'insufficient_scope') return EXIT.insufficientScope;
     if (e?.code === 'bad_harness') return EXIT.usage;
     return EXIT.failed;
   }
