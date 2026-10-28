@@ -15,12 +15,12 @@ function fixture() {
   return d;
 }
 
-test('bump script edits all nine manifests', () => {
-  assert.equal(MANIFESTS.length, 9);
+test('bump script edits all ten manifests', () => {
+  assert.equal(MANIFESTS.length, 10);
   const d = fixture();
   bump('9.8.7', d);
   const vs = readVersions(d);
-  assert.equal(vs.length, 9);
+  assert.equal(vs.length, 10);
   for (const v of vs) assert.equal(v.version, '9.8.7', v.file);
   assert.throws(() => bump('nope', d));
 });

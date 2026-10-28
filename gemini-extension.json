@@ -1,0 +1,11 @@
+{
+  "name": "enforcer",
+  "version": "1.6.0",
+  "description": "Connects Gemini CLI to your Enforcer workspace: the enforcer MCP server, and Gemini's telemetry to Enforcer governance (on once you sign in with `enforcer login`).",
+  "mcpServers": {
+    "enforcer": {
+      "httpUrl": "https://api.instruxi.dev/mcp",
+      "description": "Enforcer workspace"
+    }
+  }
+}

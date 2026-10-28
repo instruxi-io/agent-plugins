@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "enforcer-telemetry",
+            "description": "Keeps Gemini CLI telemetry to Enforcer governance on, and its ingest key fresh, for the next session",
+            "command": "node \"${extensionPath}${/}enforcer${/}bin${/}enforcer\" gemini session-start",
+            "timeout": 15000
+          }
+        ]
+      }
+    ]
+  }
+}
