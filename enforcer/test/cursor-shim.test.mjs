@@ -71,7 +71,21 @@ assert.deepEqual(toCursor('preToolUse', deny), {
   user_message: 'enforcer-governor: pipe to shell',
   agent_message: 'enforcer-governor: pipe to shell',
 });
-assert.equal(toCursor('preToolUse', { hookSpecificOutput: { permissionDecision: 'ask', permissionDecisionReason: 'r' } }).permission, 'ask');
+// Cursor runs a preToolUse "ask" without asking: an ask is a deny that says approval is missing,
+// and a rewritten input never rides on it.
+const asked = toCursor(
+  'preToolUse',
+  { hookSpecificOutput: { permissionDecision: 'ask', permissionDecisionReason: 'pushes to main', updatedInput: { command: 'git push' } } },
+  { tool_name: 'Bash' },
+);
+assert.equal(asked.permission, 'deny');
+assert.equal(asked.updated_input, undefined);
+assert.match(
+  asked.user_message,
+  /^Enforcer needs approval for Bash: pushes to main\. .*approve it in the Enforcer console or adjust the policy, then retry\.$/,
+);
+assert.equal(asked.agent_message, asked.user_message);
+assert.equal(toCursor('preToolUse', { hookSpecificOutput: { permissionDecision: 'deny', updatedInput: { command: 'x' } } }).updated_input, undefined);
 assert.deepEqual(toCursor('preToolUse', null), { permission: 'allow' });
 assert.deepEqual(toCursor('preToolUse', { hookSpecificOutput: { permissionDecision: 'allow', updatedInput: { command: 'ls' } } }), {
   permission: 'allow',
@@ -101,6 +115,7 @@ for (const [name, list] of Object.entries(hooks.hooks)) {
   assert.ok(list[0].timeout > 0);
 }
 assert.equal(hooks.hooks.preToolUse[0].failClosed, true);
+assert.equal(hooks.hooks.subagentStart[0].failClosed, true);
 const man = JSON.parse(readFileSync(join(root, '.cursor-plugin/plugin.json'), 'utf8'));
 assert.equal(man.name, 'enforcer');
 assert.equal(man.version, JSON.parse(readFileSync(join(root, 'plugin.json'), 'utf8')).version);
@@ -136,7 +151,7 @@ const run = (event, input, h) =>
   assert.ok(recs.length > 0, 'a receipt was written');
   assert.deepEqual([...new Set(recs.map((x) => x.harness))], ['cursor']);
   assert.deepEqual([...new Set(recs.map((x) => x.agent))], ['cursor:6c1e3b2a']);
-  const b = run('preToolUse', JSON.stringify(fx('pre-tool-use.json')), h);
+  const b = run('preToolUse', JSON.stringify({ ...fx('pre-tool-use.json'), tool_use_id: 'tool-2' }), h);
   assert.equal(b.status, 0, b.stderr);
   assert.equal(JSON.parse(b.stdout.trim()).permission, 'allow');
 }

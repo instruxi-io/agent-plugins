@@ -41,7 +41,8 @@
     "subagentStart": [
       {
         "command": "node \"${CURSOR_PLUGIN_ROOT}/hooks/cursor/shim.mjs\" subagentStart",
-        "timeout": 10
+        "timeout": 10,
+        "failClosed": true
       }
     ],
     "subagentStop": [

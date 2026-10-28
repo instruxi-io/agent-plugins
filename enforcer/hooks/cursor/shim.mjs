@@ -14,8 +14,12 @@
 // See https://cursor.com/docs/hooks.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { approvalMessage } from '../../src/cursor-once.mjs';
+
+export { approvalMessage };
 
 // Cursor event -> the core's kebab event name and the Claude Code name the governor reads.
 export const EVENTS = {
@@ -33,6 +37,8 @@ export const EVENTS = {
 // The hooks that gate an action: Cursor blocks on an answer that does not match their schema,
 // so they always get a well-formed one.
 const PERMISSION = new Set(['preToolUse', 'subagentStart']);
+// The core's time, a little under each hook's timeout in hooks.json.
+const CHILD_TIMEOUT_MS = { preToolUse: 25000, sessionStart: 13000, preCompact: 13000 };
 
 const TOOLS = {
   Shell: 'Bash',
@@ -121,7 +127,7 @@ const reasonOf = (out) => {
 };
 
 /** The core's Claude Code-shaped answer as Cursor's answer for `cursorEvent`; null means print nothing. */
-export function toCursor(cursorEvent, out) {
+export function toCursor(cursorEvent, out, ev = {}) {
   const hs = isObj(out?.hookSpecificOutput) ? out.hookSpecificOutput : {};
   const sys = typeof out?.systemMessage === 'string' && out.systemMessage ? out.systemMessage : '';
   const ctx = typeof hs.additionalContext === 'string' && hs.additionalContext ? hs.additionalContext : '';
@@ -129,15 +135,23 @@ export function toCursor(cursorEvent, out) {
   const blocked = out?.decision === 'block' || out?.continue === false;
   if (cursorEvent === 'preToolUse' || cursorEvent === 'subagentStart') {
     let permission = hs.permissionDecision === 'deny' || hs.permissionDecision === 'ask' ? hs.permissionDecision : blocked ? 'deny' : 'allow';
-    // Cursor treats ask as deny for a subagent; say so rather than leave it to the harness.
-    if (cursorEvent === 'subagentStart' && permission === 'ask') permission = 'deny';
+    // Cursor does not enforce "ask" on preToolUse (it runs the call) and treats it as deny on
+    // subagentStart, so an ask is a deny here, with a reason that says approval is what is missing.
+    let msg = [why, sys].filter(Boolean).join('\n');
+    let agent = why || msg;
+    if (permission === 'ask') {
+      permission = 'deny';
+      msg = approvalMessage(cursorEvent === 'subagentStart' ? 'this subagent' : (typeof ev.tool_name === 'string' && ev.tool_name) || 'this tool call', why);
+      agent = msg;
+      if (sys) msg += '\n' + sys;
+    }
     const a = { permission };
-    const msg = [why, sys].filter(Boolean).join('\n');
     if (permission !== 'allow' && msg) {
       a.user_message = msg;
-      a.agent_message = why || msg;
+      a.agent_message = agent;
     } else if (sys) a.user_message = sys;
-    if (cursorEvent === 'preToolUse' && isObj(hs.updatedInput)) a.updated_input = hs.updatedInput;
+    // A rewritten input only ever rides on an allow: a denied call must not carry one.
+    if (cursorEvent === 'preToolUse' && permission === 'allow' && isObj(hs.updatedInput)) a.updated_input = hs.updatedInput;
     return a;
   }
   if (cursorEvent === 'beforeSubmitPrompt') {
@@ -199,8 +213,15 @@ export function recordUsage(ev, dir) {
   } catch {}
   // One figure per generation, the latest: a payload repeated on every tool call of one
   // generation is then counted once.
-  const gen = ev.generation_id || ev.tool_use_id || `t${Date.now()}`;
-  d.gens[gen] = { usage, usd: usd || null, model: ev.model || ev.model_id || '' };
+  // Without an id, the payload's own figures name it: the same payload seen twice is one entry.
+  const gen =
+    ev.generation_id ||
+    ev.tool_use_id ||
+    `h${createHash('sha256')
+      .update(JSON.stringify([ev.conversation_id || sid, usage, usd, ev.model_id || ev.model || '']))
+      .digest('hex')
+      .slice(0, 16)}`;
+  d.gens[gen] = { usage, usd: usd || null, model: ev.model_id || ev.model || '' };
   d.at = Date.now();
   try {
     mkdirSync(dir, { recursive: true });
@@ -262,6 +283,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     env: process.env,
     stdio: ['pipe', 'pipe', 'inherit'],
     maxBuffer: 16 * 1024 * 1024,
+    // Under Cursor's own hook timeout (hooks.json), so a stuck governor is this shim's deny, not Cursor's default.
+    timeout: CHILD_TIMEOUT_MS[cursorEvent] || 8000,
   });
   if (r.status === null || r.error) fail(`hook child did not run to completion (${r.error?.message || r.signal})`);
   let out = null;
@@ -274,6 +297,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
   }
   if (r.status !== 0 && PERMISSION.has(cursorEvent) && !out) fail(`hook child exited ${r.status}`);
-  print(toCursor(cursorEvent, out));
+  print(toCursor(cursorEvent, out, ev));
   process.exit(PERMISSION.has(cursorEvent) ? 0 : r.status);
 }
