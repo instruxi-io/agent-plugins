@@ -217,8 +217,9 @@ export function enforcerKey() {
 }
 
 // Refresh this long before expiry, so a token is never presented with seconds
-// left and rejected mid-flight.
-const REFRESH_SKEW_MS = 60_000;
+// left and rejected mid-flight. A caller whose headers outlive the call (Claude
+// Code caches the OTel helper's for its debounce window) passes a larger skewMs.
+export const REFRESH_SKEW_MS = 60_000;
 
 /**
  * Headers that authenticate a request to Enforcer, or {} when signed out.
@@ -232,14 +233,17 @@ const REFRESH_SKEW_MS = 60_000;
  * Never throws. A transient refresh failure (timeout, network, 5xx) retries once and keeps the
  * current pair, returning the access token while it is still unexpired; only a 4xx rejection
  * (invalid_grant, 400, 401) returns {} — signed out. The reason is written to oauth.last_refresh_error.
+ *
+ * skewMs: refresh when the token expires within this long. 60s suits a header used at once; a
+ * header that is cached must still be valid when the cache is last used (see bin/enforcer-headers.mjs).
  */
-export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now, backoffMs = 250 } = {}) {
+export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now, backoffMs = 250, skewMs = REFRESH_SKEW_MS } = {}) {
   const key = enforcerKey();
   if (key) return { 'X-API-Key': key };
   const doc = readCredentials();
   const o = doc?.enforcer?.oauth;
   if (!o?.access_token) return {};
-  if (!o.expires_at || Date.parse(o.expires_at) - now() > REFRESH_SKEW_MS) {
+  if (!o.expires_at || Date.parse(o.expires_at) - now() > skewMs) {
     return { Authorization: `Bearer ${o.access_token}` };
   }
   const stale = { Authorization: `Bearer ${o.access_token}` };
@@ -253,7 +257,7 @@ export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now
     // Re-read under the lock: whoever held it before us may have rotated the pair.
     const cur = readCredentials();
     const c = cur?.enforcer?.oauth;
-    if (c?.access_token && c.expires_at && Date.parse(c.expires_at) - now() > REFRESH_SKEW_MS) {
+    if (c?.access_token && c.expires_at && Date.parse(c.expires_at) - now() > skewMs) {
       return { Authorization: `Bearer ${c.access_token}` };
     }
     const doc2 = cur || doc;
@@ -304,7 +308,7 @@ export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now
       // refusal may be momentary. Re-read the file, and replay with whatever pair is current.
       await sleep(backoffMs);
       const again = readCredentials()?.enforcer?.oauth;
-      if (again?.access_token && again.expires_at && Date.parse(again.expires_at) - now() > REFRESH_SKEW_MS) {
+      if (again?.access_token && again.expires_at && Date.parse(again.expires_at) - now() > skewMs) {
         return { Authorization: `Bearer ${again.access_token}` };
       }
       const rt = again?.refresh_token || o2.refresh_token;

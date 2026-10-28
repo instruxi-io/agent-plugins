@@ -17,8 +17,11 @@
 // OAuth access token lives 15. Left at the default, every 29-minute cycle sent
 // ~14 minutes of telemetry with an expired token: 401s, and 40-50% of cost and
 // usage data lost (measured on instruxi 2026-09-24). Ten minutes is under the
-// token's life, and the helper renews a token within 60s of expiry, so a cached
-// header always has minutes left.
+// token's life. The helper must also renew any token that would expire inside
+// that window: a token served with 6 minutes left is cached for 10, and the last
+// 4 minutes of exports are 401s, which OTLP drops without retrying (seen on
+// instruxi 2026-10-28). So the helper refreshes on TELEMETRY_REFRESH_SKEW_MS,
+// the debounce plus a margin, not the 60s every other caller uses.
 //
 // AUTH WITHOUT A STATIC SECRET. OTEL_EXPORTER_OTLP_HEADERS would put a credential
 // in a settings file in plain text, and an OAuth access token lasts 15 minutes.
@@ -67,6 +70,12 @@ export const SENSITIVE_KEYS = ['OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_TOOL_DETAILS']
 
 /** How long Claude Code may reuse the helper's headers: under an OAuth token's 15-minute life. */
 export const HEADERS_REFRESH_MS = '600000';
+
+/**
+ * How long a token the OTel helper serves must still be valid: the debounce Claude Code caches it
+ * for, plus 2 minutes for export latency and clock skew. Derived, so the two cannot drift.
+ */
+export const TELEMETRY_REFRESH_SKEW_MS = Number(HEADERS_REFRESH_MS) + 120_000;
 
 // This file sits at <plugin root>/adapters/claude-code/, two levels down.
 const pluginRoot = () => join(dirname(fileURLToPath(import.meta.url)), '..', '..');
