@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { disable as disableTelemetry } from '../lib/governor/adapters/claude-code/telemetry.mjs';
+import { disable as disableCodexTelemetry } from '../lib/governor/adapters/codex/telemetry.mjs';
 import { SHARED_DIR, SHARED_FILE } from './credentials.mjs';
 import { configHome } from './state.mjs';
 import { uninstall as uninstallGrok } from './grok-install.mjs';
@@ -38,6 +39,13 @@ export async function uninstall({ purge = false, yes = false, home = homedir(), 
     } catch (e) {
       left.push(`Gemini CLI telemetry entries (${e.message})`);
     }
+  }
+  // Codex's [otel] keys (only the ones its enable wrote); config.toml under this home unless CODEX_HOME says otherwise
+  try {
+    const r = disableCodexTelemetry({ env: { ...process.env, CODEX_HOME: process.env.CODEX_HOME || join(home, '.codex') } });
+    if (r.changed) removed.push(`OTEL entries in ${r.config}`);
+  } catch (e) {
+    left.push(`OTEL entries in Codex config.toml (${e.message})`);
   }
   for (const f of ['otel-headers.mjs', 'plugin-root']) {
     const p = join(SHARED_DIR(), f);
