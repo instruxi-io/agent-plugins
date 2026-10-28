@@ -40,6 +40,12 @@ export const WORK_SCOPES = [
   'enforcer:graph-edges.write',
   'enforcer:files-files.write',
   'enforcer:workspace.write' /* workspace switch/join; only requested when the server offers it */,
+  // Telemetry keys (src/ingest-key.mjs): Codex, Gemini CLI, Hermes and OpenClaw send telemetry with a
+  // governance:ingest-only agent credential that the plugin provisions on first use. Creating that agent and
+  // issuing its credential needs these two; asking at sign-in keeps telemetry on by default without a second
+  // consent popping up later in a headless harness. Not the .destructive pair: rotation issues a fresh key.
+  'enforcer:agents.write',
+  'enforcer:agents-credentials.write',
 ];
 export const PLAN_SCOPES = [...WORK_SCOPES, 'enforcer:graph-graphs.write', 'enforcer:graph-graph-templates.write', 'enforcer:graph-epochs.write'];
 export const AGENTS_SCOPES = ['enforcer:read', 'policy:self', 'enforcer:agents.write', 'enforcer:agents-credentials.write'];
@@ -61,6 +67,11 @@ export const FAMILIES = [
   { name: 'files', needs: ['enforcer:files-files.write'], fix: 'enforcer login --for work' },
   { name: 'agent management', needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'], fix: 'enforcer login --for agents' },
   { name: 'workspace switching', needs: ['enforcer:workspace.write'], fix: 'enforcer login --for work' },
+  {
+    name: 'telemetry keys (Codex, Gemini CLI, Hermes, OpenClaw)',
+    needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'],
+    fix: 'enforcer login --for work',
+  },
 ];
 
 /** Lines saying which scopes a browser sign-in holds and which families they cover. Never prints a token. */
@@ -445,6 +456,27 @@ export async function replacementNotice(previous, next, base, fetchImpl = defaul
   return [await revokePreviousToken(previous, base, fetchImpl), RECONNECT_LINE];
 }
 
+/**
+ * After a sign-in, turn on Codex's telemetry export where the Enforcer plugin is installed in Codex (on by
+ * default; `enforcer governor telemetry codex off` keeps it off). One line when it was written, none otherwise.
+ * @param {{ ensure?: Function, installed?: () => boolean }} [deps]
+ */
+export async function codexTelemetryAfterSignIn(deps = {}) {
+  try {
+    const codex = await import('../lib/governor/adapters/codex/telemetry.mjs');
+    if (!(deps.installed || codex.pluginInstalled)()) return [];
+    const { loadConfig } = await import('../lib/governor/core/store.mjs');
+    const { DEFAULTS } = await import('../lib/governor/core/policy.mjs');
+    const r = await (deps.ensure || codex.ensure)({ ...DEFAULTS, ...loadConfig() }, { timeoutMs: 8000 });
+    if (r.skipped) return r.skipped.startsWith('turned off') ? [] : [`Codex telemetry: not set up (${r.skipped}). The next Codex session retries.`];
+    return [
+      `Codex telemetry: on, to ${r.logs.replace(/\/v1\/logs$/, '')} with this machine's Codex ingest key. Turn it off with: enforcer governor telemetry codex off`,
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function main(rawArgv) {
   const { argv: a1, scope } = extractScope(rawArgv);
   const { argv, preset: forPreset } = extractPreset(a1);
@@ -558,6 +590,7 @@ async function main(rawArgv) {
         ? `Saved. Signed in as ${who(me)}. Every Enforcer plugin on this machine now uses this key.`
         : 'Saved, but Enforcer did not accept the key just now. Check it with /enforcer:login status.',
     );
+    if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
     return;
   }
 
@@ -616,6 +649,7 @@ async function main(rawArgv) {
     out(describe(await currentWorkspace().catch(() => ({ tenant: 'unknown' }))));
     out('Wrong workspace? /enforcer:workspace list, then /enforcer:workspace switch <name>.');
     for (const line of notice) out(line);
+    if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
     return;
   }
 

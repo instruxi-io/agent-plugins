@@ -17,7 +17,7 @@ const BASE = 'http://127.0.0.1:9';
 process.env.ENFORCER_BASE_URL = BASE;
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'enforcer');
 
-const { ensureIngestKey, ingestHeaders, INGEST_SCOPE, OTLP_BASE, INGEST_KEYS_FILE, CHECK_EVERY_MS, ROTATE_GRACE_SECONDS, agentSlug, main } = await import(
+const { ensureIngestKey, ingestHeaders, INGEST_SCOPE, OTLP_BASE, INGEST_KEYS_FILE, CHECK_EVERY_MS, MAX_LIVE_KEYS, agentSlug, main } = await import(
   '../src/ingest-key.mjs'
 );
 
@@ -41,10 +41,11 @@ const DAY = 86_400_000;
 const T0 = Date.parse('2026-10-28T00:00:00Z');
 
 /** In-memory v3: agents + credentials, enough of the agents API for the module. */
-function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, now = () => T0 } = {}) {
+function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, now = () => T0, canRevoke = true, canCreate = true, agentCap = Infinity } = {}) {
   const s = { agents: [], creds: new Map(), calls: [], n: 0, accepts };
+  s.live = (agentId) => [...s.creds.values()].filter((c) => c.agent_id === agentId && !c.revoked_at && Date.parse(c.expires_at) > now());
   const json = (status, body) => ({ status, body });
-  const issue = (agentId, scopes, rotatedFrom = null) => {
+  const issue = (agentId, scopes, harness, rotatedFrom = null) => {
     const id = `00000000-0000-4000-8000-${String(++s.n).padStart(12, '0')}`;
     const secret = `ag_secret_${s.n}_${'z'.repeat(20)}`;
     const c = {
@@ -55,6 +56,7 @@ function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, no
       created_at: new Date(now()).toISOString(),
       revoked_at: null,
       rotated_from: rotatedFrom,
+      harness,
       secret,
     };
     s.creds.set(id, c);
@@ -73,6 +75,8 @@ function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, no
     if (method === 'GET' && (m = p.match(/^\/roles\/(.+)$/)))
       return json(200, { success: true, data: { id: m[1], tenant_manage: m[1] === 'role-admin', tenant_read: true } });
     if (method === 'POST' && p === '/agents') {
+      if (!canCreate) return json(403, { error: 'insufficient_scope' });
+      if (s.agents.length >= agentCap) return json(409, { error: 'agent_limit_reached' });
       if (s.agents.some((a) => a.slug === body.slug)) return json(409, { error: 'slug_taken' });
       const a = { id: `agent-${s.agents.length + 1}`, state: 'active', ...body };
       s.agents.push(a);
@@ -82,7 +86,21 @@ function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, no
       const a = s.agents.find((x) => x.id === m[1]);
       if (!a) return json(404, { error: 'not_found' });
       if (a.state !== 'active') return json(409, { error: 'agent_suspended' });
-      return json(201, { success: true, data: issue(a.id, body.scopes) });
+      // enforcer-v3 #633: governance:ingest stands alone; harness must match governance's name rule.
+      if (body.scopes?.includes('governance:ingest') && body.scopes.length !== 1) return json(400, { error: 'invalid_scope' });
+      if (body.harness !== undefined && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(body.harness)) return json(400, { error: 'invalid_harness' });
+      return json(201, { success: true, data: issue(a.id, body.scopes, body.harness ?? null) });
+    }
+    if (method === 'GET' && (m = p.match(/^\/agents\/([^/]+)\/credentials$/))) {
+      if (!s.agents.some((x) => x.id === m[1])) return json(404, { error: 'not_found' });
+      return json(200, { success: true, data: { items: s.live(m[1]).map(({ secret: _s, ...v }) => v) } });
+    }
+    if (method === 'POST' && (m = p.match(/^\/agents\/([^/]+)\/credentials\/([^/]+)\/revoke$/))) {
+      if (!canRevoke) return json(403, { error: 'insufficient_scope' }); // revoke is .destructive
+      const c = s.creds.get(m[2]);
+      if (!c) return json(404, { error: 'not_found' });
+      c.revoked_at = new Date(now()).toISOString();
+      return json(200, { success: true, data: {} });
     }
     if (method === 'GET' && (m = p.match(/^\/agents\/([^/]+)\/credentials\/([^/]+)$/))) {
       const c = s.creds.get(m[2]);
@@ -90,14 +108,8 @@ function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, no
       const { secret: _s, ...view } = c;
       return json(200, { success: true, data: view });
     }
-    if (method === 'POST' && (m = p.match(/^\/agents\/([^/]+)\/credentials\/([^/]+)\/rotate$/))) {
-      const c = s.creds.get(m[2]);
-      if (!c) return json(404, { error: 'not_found' });
-      if (c.revoked_at) return json(409, { error: 'credential_revoked' });
-      s.lastGrace = body?.grace_seconds;
-      const out = issue(c.agent_id, c.scopes, c.id);
-      return json(200, { success: true, data: { ...out, previous: { id: c.id, expires_at: c.expires_at } } });
-    }
+    // rotate is .destructive: the default sign-in may not call it, so the module never does.
+    if (method === 'POST' && /\/rotate$/.test(p)) return json(403, { error: 'insufficient_scope' });
     return json(404, { error: 'no_route' });
   };
   s.fetch = async (url, init = {}) => {
@@ -137,12 +149,17 @@ await t('unknown harness is refused before anything else', async () => {
   assert.equal(v3.calls.length, 0);
 });
 
-const shared = fakeV3();
+let clock = T0;
+const shared = fakeV3({ now: () => clock });
+const at = (ms) => {
+  clock = ms;
+  return () => clock;
+};
 let first;
 await t('first mint: agent <harness>@<host> created with the ingest scope, credential issued with it', async () => {
   signIn({ api_key: USER_KEY });
   resetCache();
-  first = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: () => T0, hostname: 'devbox.local' });
+  first = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(T0), hostname: 'devbox.local' });
   assert.equal(first.source, 'minted');
   assert.match(first.key, /^ag_secret_/);
   assert.equal(shared.agents.length, 1);
@@ -153,14 +170,16 @@ await t('first mint: agent <harness>@<host> created with the ingest scope, crede
   assert.equal(a.role_id, 'role-member', 'several allowed roles: the one with the fewest grants');
   assert.deepEqual(a.owner, { kind: 'account' });
   const c = shared.creds.get(first.credentialId);
+  assert.equal(INGEST_SCOPE, 'governance:ingest');
   assert.deepEqual(c.scopes, [INGEST_SCOPE]);
+  assert.equal(c.harness, 'codex', 'the harness rides on the credential (v3 reads it there, not the card)');
   assert.equal(first.agentId, a.id);
   assert.equal(first.expiresAt, c.expires_at);
 });
 
 await t('cache file is 0600 in a 0700 dir and holds the entry per harness', async () => {
-  assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
-  assert.equal(mode(join(home, '.enforcer')), 0o700);
+  if (process.platform !== 'win32') assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
+  if (process.platform !== 'win32') assert.equal(mode(join(home, '.enforcer')), 0o700);
   const doc = JSON.parse(readFileSync(INGEST_KEYS_FILE(), 'utf8'));
   assert.equal(doc.schema_version, 1);
   assert.equal(doc.keys.codex.key, first.key);
@@ -169,7 +188,7 @@ await t('cache file is 0600 in a 0700 dir and holds the entry per harness', asyn
 
 await t('cache hit: no network at all', async () => {
   const before = shared.calls.length;
-  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: () => T0 + 60_000, hostname: 'devbox.local' });
+  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(T0 + 60_000), hostname: 'devbox.local' });
   assert.equal(r.source, 'cache');
   assert.equal(r.key, first.key);
   assert.equal(shared.calls.length, before);
@@ -182,39 +201,132 @@ await t('ingestHeaders: the cached key as X-API-Key, {} for a harness with none'
 
 await t('after CHECK_EVERY_MS the cached key is checked with v3, not re-minted', async () => {
   const before = shared.calls.length;
-  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: () => T0 + CHECK_EVERY_MS + 1, hostname: 'devbox.local' });
+  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(T0 + CHECK_EVERY_MS + 1), hostname: 'devbox.local' });
   assert.equal(r.source, 'cache');
   assert.equal(r.key, first.key);
   assert.deepEqual(shared.calls.slice(before), [`GET /api/v1/enforcer/agents/${first.agentId}/credentials/${first.credentialId}`]);
 });
 
 let rotated;
-await t('rotation window: under 7 days left rotates (with grace), and the file stays 0600', async () => {
-  const at = Date.parse(first.expiresAt) - 6 * DAY;
-  rotated = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: () => at, hostname: 'devbox.local' });
+await t('under 7 days left: a fresh key is issued (no rotate/revoke), the old one left to expire; file stays 0600', async () => {
+  rotated = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(Date.parse(first.expiresAt) - 6 * DAY), hostname: 'devbox.local' });
   assert.equal(rotated.source, 'rotated');
   assert.notEqual(rotated.key, first.key);
-  assert.equal(shared.creds.get(rotated.credentialId).rotated_from, first.credentialId);
-  assert.equal(shared.lastGrace, ROTATE_GRACE_SECONDS);
+  assert.equal(shared.creds.get(rotated.credentialId).harness, 'codex');
+  assert.equal(shared.creds.get(first.credentialId).revoked_at, null, 'the replaced key keeps working until it expires');
+  assert.equal(shared.calls.filter((c) => /\/(rotate|revoke)$/.test(c)).length, 0, 'no .destructive call');
+  assert.equal(shared.live(first.agentId).length, 2);
   assert.equal(shared.agents.length, 1);
-  assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
-  assert.equal(JSON.parse(readFileSync(INGEST_KEYS_FILE(), 'utf8')).keys.codex.key, rotated.key);
+  if (process.platform !== 'win32') assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
+  const e = JSON.parse(readFileSync(INGEST_KEYS_FILE(), 'utf8')).keys.codex;
+  assert.equal(e.key, rotated.key);
+  assert.equal(e.previousCredentialId, first.credentialId);
 });
 
-await t('more than 7 days left: not rotated', async () => {
-  const at = T0 + 2 * CHECK_EVERY_MS; // the rotated credential expires 30 days after T0
-  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: () => at, hostname: 'devbox.local' });
+await t('more than 7 days left: not replaced', async () => {
+  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(clock + 2 * CHECK_EVERY_MS), hostname: 'devbox.local' });
   assert.equal(r.source, 'cache');
   assert.equal(r.key, rotated.key);
 });
 
+await t('the next replacement comes after the previous key expired: never more than MAX_LIVE_KEYS live', async () => {
+  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(Date.parse(rotated.expiresAt) - 6 * DAY), hostname: 'devbox.local' });
+  assert.equal(r.source, 'rotated');
+  assert.equal(MAX_LIVE_KEYS, 2);
+  assert.equal(shared.live(first.agentId).length, 2);
+  rotated = r;
+});
+
 await t('revoked in the console: the next check mints a new credential on the same agent', async () => {
-  shared.creds.get(rotated.credentialId).revoked_at = new Date(T0).toISOString();
-  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: () => T0 + 3 * CHECK_EVERY_MS, hostname: 'devbox.local', force: true });
+  shared.creds.get(rotated.credentialId).revoked_at = new Date(clock).toISOString();
+  const r = await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(clock + 3 * CHECK_EVERY_MS), hostname: 'devbox.local', force: true });
   assert.equal(r.source, 'minted');
   assert.notEqual(r.key, rotated.key);
   assert.equal(r.agentId, rotated.agentId);
   assert.equal(shared.agents.length, 1, 'no second agent');
+});
+
+await t('lost cache, repeatedly: extra live keys are revoked so at most MAX_LIVE_KEYS stay live', async () => {
+  for (let i = 0; i < 4; i++) {
+    resetCache();
+    await ensureIngestKey({ harness: 'codex', fetchImpl: shared.fetch, now: at(clock + 1), hostname: 'devbox.local' });
+    assert.ok(shared.live(first.agentId).length <= MAX_LIVE_KEYS, `round ${i}: ${shared.live(first.agentId).length} live`);
+  }
+});
+
+await t('lost cache and a sign-in that cannot revoke: too_many_keys, not a growing pile', async () => {
+  const v3 = fakeV3({ canRevoke: false });
+  resetCache();
+  await ensureIngestKey({ harness: 'openclaw', fetchImpl: v3.fetch, now: () => T0, hostname: 'p' });
+  resetCache();
+  await ensureIngestKey({ harness: 'openclaw', fetchImpl: v3.fetch, now: () => T0, hostname: 'p' });
+  resetCache();
+  const e = await err(ensureIngestKey({ harness: 'openclaw', fetchImpl: v3.fetch, now: () => T0, hostname: 'p' }));
+  assert.equal(e.code, 'too_many_keys');
+  assert.equal(v3.live(v3.agents[0].id).length, 2);
+});
+
+await t('replacing with a stray live key around: the key being replaced is kept, the stray one revoked', async () => {
+  let c = T0;
+  const v3 = fakeV3({ now: () => c });
+  resetCache();
+  const k1 = await ensureIngestKey({ harness: 'hermes', fetchImpl: v3.fetch, now: () => c, hostname: 's' });
+  // A stray key on the same agent that expires later than k1 (e.g. minted by a lost cache).
+  c = T0 + DAY;
+  v3.handle('POST', `/api/v1/enforcer/agents/${k1.agentId}/credentials`, { 'x-api-key': USER_KEY }, { scopes: [INGEST_SCOPE], harness: 'hermes' });
+  c = Date.parse(k1.expiresAt) - 6 * DAY;
+  const k2 = await ensureIngestKey({ harness: 'hermes', fetchImpl: v3.fetch, now: () => c, hostname: 's' });
+  assert.equal(k2.source, 'rotated');
+  const live = v3.live(k1.agentId).map((x) => x.id);
+  assert.deepEqual(live.sort(), [k1.credentialId, k2.credentialId].sort(), 'k1 (still in harness configs) survives');
+});
+
+await t('short tenant TTL with the v3 clock 5 minutes behind: replacements never need a revoke', async () => {
+  let c = T0;
+  const v3 = fakeV3({ now: () => c - 300_000, ttlDays: 10, canRevoke: false });
+  resetCache();
+  const sources = [];
+  for (let m = 0; m < 25 * 1440; m += 1) {
+    c = T0 + m * 60_000; // every minute: a replacement happens at the first call inside the window
+    sources.push((await ensureIngestKey({ harness: 'gemini-cli', fetchImpl: v3.fetch, now: () => c, hostname: 'q' })).source);
+    assert.ok(v3.live(v3.agents[0].id).length <= MAX_LIVE_KEYS);
+  }
+  assert.ok(sources.filter((x) => x === 'rotated').length >= 3, 'it does replace keys');
+  assert.equal(v3.calls.filter((x) => /\/revoke$/.test(x)).length, 0, 'a replacement never meets two live keys');
+});
+
+await t('browser sign-in without the agent scopes: insufficient_scope naming the fix, before any mint call', async () => {
+  signIn({
+    oauth: {
+      access_token: 'oat_ro',
+      expires_at: new Date(Date.now() + DAY).toISOString(),
+      client_id: 'cli',
+      scope: 'enforcer:read policy:self enforcer:graph-runs.write',
+    },
+  });
+  const v3 = fakeV3({ accepts: () => true });
+  resetCache();
+  const e = await err(ensureIngestKey({ harness: 'codex', fetchImpl: v3.fetch, now: () => T0, hostname: 'h' }));
+  assert.equal(e.code, 'insufficient_scope');
+  assert.match(e.message, /enforcer:login/);
+  assert.equal(v3.calls.filter((c) => c.startsWith('POST')).length, 0);
+  signIn({ api_key: USER_KEY });
+});
+
+await t('v3 refuses agent creation for scope (403 insufficient_scope): insufficient_scope', async () => {
+  const v3 = fakeV3({ canCreate: false });
+  resetCache();
+  const e = await err(ensureIngestKey({ harness: 'codex', fetchImpl: v3.fetch, now: () => T0, hostname: 'h' }));
+  assert.equal(e.code, 'insufficient_scope');
+});
+
+await t('agent cap reached: the api error names max_agents_per_steward', async () => {
+  const v3 = fakeV3({ agentCap: 0 });
+  resetCache();
+  const e = await err(ensureIngestKey({ harness: 'codex', fetchImpl: v3.fetch, now: () => T0, hostname: 'h' }));
+  assert.equal(e.code, 'api');
+  assert.equal(e.apiCode, 'agent_limit_reached');
+  assert.match(e.message, /max_agents_per_steward/);
 });
 
 await t('agent disabled in the console: agent_disabled, never a replacement agent', async () => {
@@ -269,7 +381,14 @@ await t('another sign-in (workspace switch): the old cache entry is not used', a
 });
 
 await t('browser (OAuth) sign-in works the same way, with a Bearer token', async () => {
-  signIn({ oauth: { access_token: 'oat_abc', expires_at: new Date(Date.now() + DAY).toISOString(), client_id: 'cli' } });
+  signIn({
+    oauth: {
+      access_token: 'oat_abc',
+      expires_at: new Date(Date.now() + DAY).toISOString(),
+      client_id: 'cli',
+      scope: 'enforcer:read policy:self enforcer:agents.write enforcer:agents-credentials.write',
+    },
+  });
   const v3 = fakeV3({ accepts: (h) => h.authorization === 'Bearer oat_abc' });
   resetCache();
   const r = await ensureIngestKey({ harness: 'hermes', fetchImpl: v3.fetch, now: () => T0, hostname: 'h' });
@@ -332,6 +451,10 @@ await t('CLI main: the key alone on stdout, JSON with --json, documented exit co
     throw Object.assign(new Error('disabled'), { code: 'agent_disabled' });
   });
   assert.equal(dis.code, 4);
+  const scope = await run(['--harness', 'codex'], async () => {
+    throw Object.assign(new Error('log in again'), { code: 'insufficient_scope' });
+  });
+  assert.deepEqual([scope.code, scope.out], [5, '']);
   const failed = await run(['--harness', 'codex'], async () => {
     throw Object.assign(new Error('HTTP 500'), { code: 'api' });
   });

@@ -155,6 +155,13 @@ export const SETTINGS = {
     hint: 'In the background, with your Enforcer sign-in. Receipts stay in the local file either way.',
   },
   adviseModel: { group: 'checks', type: 'boolean', check: bool(), describe: 'Say when the model and the task look mismatched. Never changes a verdict.' },
+  codexTelemetry: {
+    group: 'checks',
+    type: 'boolean',
+    check: bool(),
+    describe: "Send Codex's own OpenTelemetry (events and metrics, no prompt text) to Enforcer governance.",
+    hint: 'On by default where the Enforcer plugin is installed in Codex. `enforcer governor telemetry codex off` turns it off and removes the settings.',
+  },
   sweepDays: {
     group: 'checks',
     type: 'number',
