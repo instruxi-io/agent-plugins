@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { currentWorkspace, describe } from './enforcer-workspace.mjs';
 import { readCredentials, saveCredentials, legacyCredentialFile, enforcerKey, SHARED_FILE, authHeaders } from '../src/credentials.mjs';
 import { resolveConfig, flagValue } from '../src/config.mjs';
+import { onLogin as geminiOnLogin, statusLine as geminiStatusLine } from '../src/gemini-telemetry.mjs';
 
 const API = '/api/v1/enforcer';
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -473,6 +474,8 @@ async function main(rawArgv) {
     if (life) out(life);
     for (const l of scopes) out(l);
     out(`Shared by every Enforcer plugin on this machine: ${SHARED_FILE()}`);
+    const gemini = geminiStatusLine();
+    if (gemini) out(gemini);
     return;
   }
 
@@ -616,6 +619,8 @@ async function main(rawArgv) {
     out(describe(await currentWorkspace().catch(() => ({ tenant: 'unknown' }))));
     out('Wrong workspace? /enforcer:workspace list, then /enforcer:workspace switch <name>.');
     for (const line of notice) out(line);
+    // Harness telemetry is on by default once signed in (each harness skips itself when absent or turned off).
+    for (const line of await geminiOnLogin()) out(line);
     return;
   }
 

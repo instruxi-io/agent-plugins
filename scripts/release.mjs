@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// The nine manifests that carry the enforcer version. `pick` finds the object holding it.
+// The ten manifests that carry the enforcer version. `pick` finds the object holding it.
 export const MANIFESTS = [
   { file: 'enforcer/plugin.json', pick: (j) => j },
   { file: 'enforcer/.claude-plugin/plugin.json', pick: (j) => j },
@@ -11,6 +11,7 @@ export const MANIFESTS = [
   { file: 'enforcer/.cursor-plugin/plugin.json', pick: (j) => j },
   { file: 'enforcer/package.json', pick: (j) => j },
   { file: 'kit.json', pick: (j) => j },
+  { file: 'gemini-extension.json', pick: (j) => j },
   { file: '.claude-plugin/marketplace.json', pick: (j) => j.plugins.find((p) => p.name === 'enforcer') },
   { file: '.agents/plugins/marketplace.json', pick: (j) => j.plugins.find((p) => p.name === 'enforcer') },
   { file: '.cursor-plugin/marketplace.json', pick: (j) => j.plugins.find((p) => p.name === 'enforcer') },
