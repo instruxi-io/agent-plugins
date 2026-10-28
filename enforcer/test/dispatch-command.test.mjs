@@ -61,7 +61,10 @@ await t('--help prints the three subcommands and the defaults', async () => {
   assert.match(r.out, /enforcer dispatch <graph>/);
   assert.match(r.out, /dispatch status/);
   assert.match(r.out, /dispatch stop/);
-  assert.match(r.out, /defaults: 3 workers, sonnet model cap, salvage on, triage on, warm workers off/);
+  assert.match(
+    r.out,
+    /defaults: 3 workers, no model cap \(each tier's model, or its route's\), routes from --routes \/ ENFORCER_ROUTES \/ the graph \/ routes\.json, salvage on, triage on, warm workers off/,
+  );
 });
 await t('status prints workers, nodes, review items, gates and the last line', async () => {
   const r = await run(['status', 'g1']);
