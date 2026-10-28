@@ -1,0 +1,72 @@
+name: enforcer
+label: Enforcer
+version: "0.1.0"
+manifest_version: 2
+api_version: 1
+description: >
+  Sends Hermes session, model-call (tokens and cost), tool-call and sub-agent
+  telemetry to Enforcer governance as OTLP logs and metrics, authenticated with
+  a telemetry-only ingest key for this machine. Metadata only: no prompts,
+  responses, tool arguments or tool output. On by default; turn off with
+  `hermes enforcer telemetry off`.
+author: Instruxi
+license: FSL-1.1-ALv2
+homepage: https://github.com/instruxi-io/agent-plugins/tree/main/enforcer/harness/hermes
+tags: [observability, telemetry, governance, opentelemetry, enforcer]
+
+provides_tools: []
+provides_hooks:
+  - on_session_start
+  - on_session_end
+  - on_session_finalize
+  - on_session_reset
+  - post_api_request
+  - post_auxiliary_call
+  - api_request_error
+  - post_tool_call
+  - subagent_start
+  - subagent_stop
+  - post_approval_response
+
+optional_env:
+  - name: ENFORCER_TELEMETRY
+    description: "Set to 0 to turn telemetry off for this shell."
+    secret: false
+  - name: ENFORCER_BASE_URL
+    description: "Enforcer origin. Defaults to the signed-in base_url, then https://api.instruxi.dev."
+    secret: false
+  - name: ENFORCER_INGEST_KEY
+    description: "A telemetry-only ingest key, for containers and CI with no signed-in enforcer CLI."
+    secret: true
+
+config_schema:
+  telemetry:
+    type: bool
+    default: true
+    description: "Send Hermes telemetry to Enforcer governance."
+    required: false
+  base_url:
+    type: str
+    default: ""
+    description: "Enforcer origin. Empty: ENFORCER_BASE_URL, then the signed-in base_url, then production."
+    required: false
+  enforcer_cli:
+    type: str
+    default: ""
+    description: "Path to the enforcer CLI that provides the ingest key. Empty: PATH, then the Claude Code plugin copy."
+    required: false
+  flush_interval_s:
+    type: float
+    default: 5.0
+    description: "Seconds between exports."
+    required: false
+  batch_size:
+    type: int
+    default: 256
+    description: "Records per export request."
+    required: false
+  max_queue:
+    type: int
+    default: 2048
+    description: "Records held while governance is slow or unreachable; newer ones are dropped past this."
+    required: false

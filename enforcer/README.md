@@ -11,6 +11,8 @@ grok plugin marketplace add instruxi-io/agent-plugins && grok plugin install enf
 codex plugin marketplace add instruxi-io/agent-plugins && codex plugin add enforcer@instruxi
 # Cursor (experimental: hooks only, from the CLI; or the plugin from .cursor-plugin/marketplace.json)
 enforcer harness install cursor            # ~/.cursor/hooks.json; --repo . for a committable .cursor/hooks.json
+# Hermes Agent (telemetry to governance; needs the CLI below, signed in; see harness/hermes/README.md)
+hermes plugins install instruxi-io/agent-plugins/enforcer/harness/hermes --enable
 # CLI (GitHub Packages: ~/.npmrc needs the two lines below)
 # @instruxi-io:registry=https://npm.pkg.github.com
 # //npm.pkg.github.com/:_authToken=<GitHub token with read:packages>
