@@ -125,6 +125,12 @@ if (area === 'uninstall') {
   process.exit(await uninstallMain([sub, ...rest].filter((x) => x !== undefined)));
 }
 
+// `enforcer gemini telemetry [on|off|status]`, and `gemini session-start` (the Gemini extension's SessionStart hook).
+if (area === 'gemini') {
+  const { main: geminiMain } = await import('../src/gemini-telemetry.mjs');
+  process.exit(await geminiMain([sub, ...rest]));
+}
+
 if (area === 'governor' && GOV.includes(sub)) {
   let script = sub === 'decide' ? here('../lib/governor/bin/governor') : here('../lib/governor/core/report.mjs');
   let args = [sub, ...rest];
@@ -161,5 +167,5 @@ if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok',
   process.exit(r.ok ? 0 : 1);
 }
 
-process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer harness <install|status> openclaw   (prints the OpenClaw install; shows its telemetry state)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
+process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer gemini telemetry [on|off|status]   (Gemini CLI telemetry to governance; on after sign-in)\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer harness <install|status> openclaw   (prints the OpenClaw install; shows its telemetry state)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
 process.exit(2);
