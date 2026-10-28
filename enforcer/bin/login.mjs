@@ -40,6 +40,12 @@ export const WORK_SCOPES = [
   'enforcer:graph-edges.write',
   'enforcer:files-files.write',
   'enforcer:workspace.write' /* workspace switch/join; only requested when the server offers it */,
+  // Telemetry keys (src/ingest-key.mjs): Codex, Gemini CLI, Hermes and OpenClaw send telemetry with a
+  // governance:ingest-only agent credential that the plugin provisions on first use. Creating that agent and
+  // issuing its credential needs these two; asking at sign-in keeps telemetry on by default without a second
+  // consent popping up later in a headless harness. Not the .destructive pair: rotation issues a fresh key.
+  'enforcer:agents.write',
+  'enforcer:agents-credentials.write',
 ];
 export const PLAN_SCOPES = [...WORK_SCOPES, 'enforcer:graph-graphs.write', 'enforcer:graph-graph-templates.write', 'enforcer:graph-epochs.write'];
 export const AGENTS_SCOPES = ['enforcer:read', 'policy:self', 'enforcer:agents.write', 'enforcer:agents-credentials.write'];
@@ -61,6 +67,11 @@ export const FAMILIES = [
   { name: 'files', needs: ['enforcer:files-files.write'], fix: 'enforcer login --for work' },
   { name: 'agent management', needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'], fix: 'enforcer login --for agents' },
   { name: 'workspace switching', needs: ['enforcer:workspace.write'], fix: 'enforcer login --for work' },
+  {
+    name: 'telemetry keys (Codex, Gemini CLI, Hermes, OpenClaw)',
+    needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'],
+    fix: 'enforcer login --for work',
+  },
 ];
 
 /** Lines saying which scopes a browser sign-in holds and which families they cover. Never prints a token. */
