@@ -22,7 +22,7 @@ ENFORCER_TELEMETRY=0 hermes ...   # off for one shell
 
 ## What is sent
 
-The plugin sends OTLP/HTTP protobuf (gzip) to `<origin>/api/v1/governance/otlp/v1/logs` and `.../v1/metrics` with an `X-API-Key` header. The resource is `service.name=hermes`, and every record carries `session.id`, the Hermes session id. Records are metadata only. The plugin never sends prompts, responses, tool arguments, tool output, sub-agent goals or summaries, approval commands, or provider error messages.
+The plugin sends OTLP/HTTP protobuf (gzip) to `<origin>/api/v1/governance/otlp/v1/logs` and `.../v1/metrics` with an `X-API-Key` header. The resource is `service.name=hermes` and the scope is `enforcer.hermes`. Every record carries `hermes.session_id`, the Hermes session id, and `session.id`, the UUIDv5 of it under namespace `5071c4dc-0b0f-5786-8898-ea7c683b9f4e`. Governance files a session under the first 8 characters of `session.id`, and Hermes ids start with a date or a fixed prefix, so `session.id` is a stable UUID derived from the Hermes id. Records are metadata only. The plugin never sends prompts, responses, tool arguments, tool output, sub-agent goals or summaries, approval commands, or provider error messages.
 
 | Hermes hook | Log event | Metric points |
 |---|---|---|

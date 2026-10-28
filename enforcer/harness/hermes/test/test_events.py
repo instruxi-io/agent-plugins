@@ -27,7 +27,7 @@ class Mapping(unittest.TestCase):
         (ev,) = logs
         self.assertEqual(ev["event_name"], "hermes.api_request")
         a = ev["attributes"]
-        self.assertEqual((a["session.id"], a["input_tokens"], a["cache_read_tokens"], a["cache_creation_tokens"], a["cost_usd"], a["duration_ms"], a["ttfb_ms"]),
+        self.assertEqual((a["hermes.session_id"], a["input_tokens"], a["cache_read_tokens"], a["cache_creation_tokens"], a["cost_usd"], a["duration_ms"], a["ttfb_ms"]),
                          ("sess-1", 200, 1000, 5, 0.25, 1500.0, 250.0))
         got = {(p["name"], p["attributes"].get("type")): p["value"] for p in pts}
         self.assertEqual(got, {
@@ -36,7 +36,8 @@ class Mapping(unittest.TestCase):
             ("hermes.token.usage", "reasoning"): 10, ("hermes.cost.usage", None): 0.25,
         })
         for p in pts:
-            self.assertEqual(p["attributes"]["session.id"], "sess-1")
+            self.assertEqual(p["attributes"]["session.id"], events.session_uuid("sess-1"))
+            self.assertEqual(p["attributes"]["hermes.session_id"], "sess-1")
             self.assertEqual(p["attributes"]["model"], "gpt-4o-mini")
 
     def test_an_unpriced_call_sends_tokens_and_no_cost_point(self):
@@ -85,16 +86,29 @@ class Mapping(unittest.TestCase):
         m.on_session_start(session_id="sess-9")
         m.post_tool_call(tool_name="read_file", status="ok")  # no session_id in kwargs
         m.post_approval_response(choice="deny")
-        self.assertEqual({r["attributes"]["session.id"] for r in logs}, {"sess-9"})
-        self.assertEqual({p["attributes"]["session.id"] for p in pts}, {"sess-9"})
+        self.assertEqual({r["attributes"]["hermes.session_id"] for r in logs}, {"sess-9"})
+        self.assertEqual({p["attributes"]["session.id"] for p in pts}, {events.session_uuid("sess-9")})
 
     def test_a_reset_moves_later_records_to_the_new_session(self):
         m, logs, _, _ = mapper()
         m.on_session_start(session_id="old")
         m.on_session_reset(old_session_id="old", new_session_id="new")
         m.post_tool_call(tool_name="x", status="ok")
-        self.assertEqual([r["attributes"]["session.id"] for r in logs], ["old", "new", "new"])
+        self.assertEqual([r["attributes"]["hermes.session_id"] for r in logs], ["old", "new", "new"])
+        self.assertEqual([r["attributes"]["session.id"] for r in logs], [events.session_uuid(x) for x in ("old", "new", "new")])
         self.assertEqual(logs[1]["attributes"]["previous_session_id"], "old")
+
+    def test_session_id_is_a_stable_uuid_whose_first_8_characters_separate_sessions(self):
+        # Governance files a session under left(session.id, 8) (its migration 016). Hermes ids of
+        # one day, or of the TUI, share their first 8 characters; the derived ids must not.
+        raw = ["20261028_120000_abc123", "20261028_120001_def456", "local-c0911747a8446da0", "local-c0911747a8446da1",
+               "cron_job1_20261028_120000", "api_1793207577_0a1b2c3d"]
+        ids = [events.session_uuid(r) for r in raw]
+        self.assertEqual(len({i[:8] for i in ids}), len(raw))
+        self.assertEqual(ids, [events.session_uuid(r) for r in raw])  # deterministic
+        self.assertEqual(events.session_uuid("20261028_120000_abc123"), "5871d149-38b3-5b27-81e3-49d3a4df8d0a")  # pinned
+        self.assertEqual(str(events.SESSION_NAMESPACE), "5071c4dc-0b0f-5786-8898-ea7c683b9f4e")
+        self.assertEqual(events.session_uuid(""), "")
 
     def test_hooks_list_matches_the_manifest(self):
         import re

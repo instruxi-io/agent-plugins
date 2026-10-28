@@ -5,18 +5,35 @@ counts and cost. Prompts, responses, tool arguments, tool results, sub-agent
 goals and summaries, approval commands and provider error messages are never
 read into a record (Hermes hands them to the hooks; this module drops them).
 
-Every record carries `session.id`, the Hermes session id, which is the key
-governance's `hermes` provenance profile and spend rollups read.
+Every record carries `session.id`, the key governance's `hermes` provenance
+profile and spend rollups read, and `hermes.session_id`, the id Hermes itself
+uses. They differ on purpose: governance files a session under the first 8
+characters of session.id (migration 016), and Hermes ids are
+`YYYYMMDD_HHMMSS_<hex6>`, `local-<sha256>`, `cron_<job>_<stamp>`, `api_<epoch>_..`:
+their first 8 characters are a date or a fixed prefix, so every session of a
+day (or every TUI session) would land in one governance session. session.id is
+therefore the UUIDv5 of the Hermes id: stable, random in its first 8 characters
+like Claude Code's session UUIDs, and recomputable from hermes.session_id.
 """
 
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any, Callable, Mapping, Optional
 
 from . import otlp
 
 SESSION = "session.id"
+RAW_SESSION = "hermes.session_id"
+# uuid5(NAMESPACE_URL, "https://instruxi.dev/enforcer/hermes/session"): fixed forever, so
+# governance and anyone else can recompute session.id from hermes.session_id.
+SESSION_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://instruxi.dev/enforcer/hermes/session")
+
+
+def session_uuid(hermes_session_id: str) -> str:
+    """The session.id governance sees for a Hermes session id ("" stays "")."""
+    return str(uuid.uuid5(SESSION_NAMESPACE, hermes_session_id)) if hermes_session_id else ""
 # Prices Hermes itself reports as real money (hermes_otel uses the same set).
 PRICED = {"actual", "estimated"}
 
@@ -103,8 +120,12 @@ class Mapper:
             return str(sid)
         return self._last_session
 
+    @staticmethod
+    def _ids(raw: str) -> dict[str, Any]:
+        return {SESSION: session_uuid(raw) or None, RAW_SESSION: raw or None}
+
     def _event(self, name: str, kw: Mapping[str, Any], attrs: Mapping[str, Any], severity: int = otlp.SEVERITY_INFO, sid: Optional[str] = None) -> None:
-        a = {SESSION: sid if sid is not None else self._sid(kw), **attrs}
+        a = {**self._ids(sid if sid is not None else self._sid(kw)), **attrs}
         self._log({"event_name": name, "time_ns": _now_ns(), "severity": severity, "attributes": {k: v for k, v in a.items() if v is not None}})
 
     def _metric(self, name: str, unit: str, value: float, attrs: Mapping[str, Any], description: str = "") -> None:
@@ -117,7 +138,7 @@ class Mapper:
     def on_session_start(self, **kw: Any) -> None:
         sid = self._sid(kw)
         self._event("hermes.session.start", kw, {"model": _str(kw.get("model")), "platform": _str(kw.get("platform"))}, sid=sid)
-        self._metric("hermes.session.count", "{session}", 1, {SESSION: sid, "platform": _str(kw.get("platform"))}, "Hermes sessions started")
+        self._metric("hermes.session.count", "{session}", 1, {**self._ids(sid), "platform": _str(kw.get("platform"))}, "Hermes sessions started")
 
     def on_session_end(self, **kw: Any) -> None:
         self._event("hermes.session.end", kw, {
@@ -149,7 +170,7 @@ class Mapper:
         tokens = {label: _int(usage.get(src)) for src, label in TOKEN_TYPES}
         priced = self._price(model, provider, str(kw.get("base_url") or ""), usage) if usage else None
         status, usd = priced if priced else ("unknown", None)
-        common = {SESSION: sid, "model": model or None, "provider": provider or None, "hermes.call_kind": kind}
+        common = {**self._ids(sid), "model": model or None, "provider": provider or None, "hermes.call_kind": kind}
         attrs = {
             "model": model or None,
             "provider": provider or None,
@@ -221,7 +242,7 @@ class Mapper:
             "error_type": _str(kw.get("error_type")),
             "mcp_server": tool.split("__")[1] if tool.startswith("mcp__") and tool.count("__") >= 2 else None,
         }, otlp.SEVERITY_INFO if status == "ok" else otlp.SEVERITY_WARN, sid=sid)
-        self._metric("hermes.tool.count", "{call}", 1, {SESSION: sid, "tool_name": tool, "status": status}, "Tool calls by outcome")
+        self._metric("hermes.tool.count", "{call}", 1, {**self._ids(sid), "tool_name": tool, "status": status}, "Tool calls by outcome")
 
     # -- sub-agents ----------------------------------------------------------
     def subagent_start(self, **kw: Any) -> None:
@@ -229,6 +250,7 @@ class Mapper:
         self._event("hermes.subagent.start", kw, {
             "parent_session_id": parent,
             "child_session_id": _str(kw.get("child_session_id")),
+            "child_session_uuid": session_uuid(_str(kw.get("child_session_id")) or "") or None,
             "child_subagent_id": _str(kw.get("child_subagent_id")),
             "child_role": _str(kw.get("child_role")),
         }, sid=parent or "")
@@ -239,6 +261,7 @@ class Mapper:
         self._event("hermes.subagent.stop", kw, {
             "parent_session_id": parent,
             "child_session_id": _str(kw.get("child_session_id")),
+            "child_session_uuid": session_uuid(_str(kw.get("child_session_id")) or "") or None,
             "child_subagent_id": _str(kw.get("child_subagent_id")),
             "child_role": _str(kw.get("child_role")),
             "status": _str(kw.get("status") or kw.get("child_status")),
