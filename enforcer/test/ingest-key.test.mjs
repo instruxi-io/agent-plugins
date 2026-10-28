@@ -178,8 +178,8 @@ await t('first mint: agent <harness>@<host> created with the ingest scope, crede
 });
 
 await t('cache file is 0600 in a 0700 dir and holds the entry per harness', async () => {
-  assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
-  assert.equal(mode(join(home, '.enforcer')), 0o700);
+  if (process.platform !== 'win32') assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
+  if (process.platform !== 'win32') assert.equal(mode(join(home, '.enforcer')), 0o700);
   const doc = JSON.parse(readFileSync(INGEST_KEYS_FILE(), 'utf8'));
   assert.equal(doc.schema_version, 1);
   assert.equal(doc.keys.codex.key, first.key);
@@ -217,7 +217,7 @@ await t('under 7 days left: a fresh key is issued (no rotate/revoke), the old on
   assert.equal(shared.calls.filter((c) => /\/(rotate|revoke)$/.test(c)).length, 0, 'no .destructive call');
   assert.equal(shared.live(first.agentId).length, 2);
   assert.equal(shared.agents.length, 1);
-  assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
+  if (process.platform !== 'win32') assert.equal(mode(INGEST_KEYS_FILE()), 0o600);
   const e = JSON.parse(readFileSync(INGEST_KEYS_FILE(), 'utf8')).keys.codex;
   assert.equal(e.key, rotated.key);
   assert.equal(e.previousCredentialId, first.credentialId);
