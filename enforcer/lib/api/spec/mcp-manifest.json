@@ -349,6 +349,15 @@
       ]
     },
     {
+      "name": "graph_messages",
+      "effect": "read",
+      "always_confirm": false,
+      "profiles": [
+        "graph",
+        "workflow"
+      ]
+    },
+    {
       "name": "graph_my_validations",
       "effect": "read",
       "always_confirm": false,
@@ -377,6 +386,15 @@
     {
       "name": "graph_plan_status",
       "effect": "read",
+      "always_confirm": false,
+      "profiles": [
+        "graph",
+        "workflow"
+      ]
+    },
+    {
+      "name": "graph_post",
+      "effect": "write",
       "always_confirm": false,
       "profiles": [
         "graph",
