@@ -1,1 +1,0 @@
-- The locked MCP tool list now matches the connector on production (enforcer-v3-mcp ca3b432, 0.10.23): adds `graph_messages` (read) and `graph_post` (write), the plan discussion, in the graph and workflow profiles.
