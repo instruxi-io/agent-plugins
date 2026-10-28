@@ -12,7 +12,7 @@ process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.npm_config_cache = path.join(dir, 'npm-cache');
 for (const k of Object.keys(process.env)) {
-  if (/^(ENFORCER_|JEV_HOOKS_|GRAPH_|CLAUDE_PLUGIN_|TYPESAFE_)/.test(k)) delete process.env[k];
+  if (/^(ENFORCER_|JEV_HOOKS_|GRAPH_|CLAUDE_PLUGIN_|TYPESAFE_|CODEX_HOME$)/.test(k)) delete process.env[k];
 }
 // ...nor the developer's desktop: the dispatcher's notify-send is real, and --attend suites ring it.
 process.env.ENFORCER_DISPATCH_NOTIFY = '0';

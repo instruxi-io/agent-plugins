@@ -4,6 +4,7 @@
 //   enforcer login|logout|status|workspace                   sign in (wraps bin/login.mjs, bin/enforcer-workspace.mjs)
 //   enforcer event <name> [--graph-only]                     one process per hook event: governor + graph handlers, merged
 //   enforcer hook <event> [handler]                          alias of: event <event> --graph-only
+//   enforcer ingest-key --harness <h> [--json]               telemetry-only key for a harness (src/ingest-key.mjs)
 // V8 compile cache (node >= 22.1): the governor's module graph loads in a few ms instead of tens.
 try { process.getBuiltinModule?.('node:module')?.enableCompileCache?.(join(process.getBuiltinModule('node:os').tmpdir(), `enforcer-v8-${process.getuid?.() ?? 0}`)); } catch {}
 // A hook runs each capability pattern once or twice and exits: compiling a pattern straight to
@@ -110,6 +111,15 @@ if (area === 'land') {
   process.exit(await landMain([sub, ...rest]));
 }
 
+// `enforcer ingest-key --harness <h> [--json]`: the telemetry-only key for a harness that takes a fixed OTLP header
+// (Codex, Gemini CLI, Hermes, OpenClaw). The key alone on stdout; exit codes in src/ingest-key.mjs (EXIT).
+if (area === 'ingest-key') {
+  const { main: ingestKeyMain } = await import('../src/ingest-key.mjs');
+  const code = await ingestKeyMain([sub, ...rest].filter((x) => x !== undefined));
+  await new Promise((done) => process.stdout.write('', done));
+  process.exit(code);
+}
+
 if (area === 'uninstall') {
   const { main: uninstallMain } = await import('../src/uninstall.mjs');
   process.exit(await uninstallMain([sub, ...rest].filter((x) => x !== undefined)));
@@ -145,5 +155,5 @@ if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok',
   process.exit(r.ok ? 0 : 1);
 }
 
-process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n`);
+process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
 process.exit(2);

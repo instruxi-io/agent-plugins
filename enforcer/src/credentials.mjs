@@ -151,8 +151,12 @@ function lockHolderDead(lock) {
   }
 }
 
-/** Acquire the shared refresh lock; returns a release function, or null on timeout. */
-export async function acquireRefreshLock(timeoutMs = LOCK_TIMEOUT_MS) {
+/**
+ * Acquire the shared refresh lock; returns a release function, or null on timeout.
+ * `path` and `staleMs` let another short critical section (the ingest-key mint, src/ingest-key.mjs)
+ * use the same mkdir-lock pattern under its own directory, so the two never wait on each other.
+ */
+export async function acquireRefreshLock(timeoutMs = LOCK_TIMEOUT_MS, { path = refreshLockPath(), staleMs = LOCK_STALE_MS } = {}) {
   const dir = SHARED_DIR();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   try {
@@ -160,7 +164,7 @@ export async function acquireRefreshLock(timeoutMs = LOCK_TIMEOUT_MS) {
   } catch {
     /* not ours */
   }
-  const lock = refreshLockPath();
+  const lock = path;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
@@ -181,7 +185,7 @@ export async function acquireRefreshLock(timeoutMs = LOCK_TIMEOUT_MS) {
       if (e.code !== 'EEXIST') return null;
       try {
         // A holder that died (pid gone) or sat past STALE_MS never releases: break its lock.
-        if (lockHolderDead(lock) || Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+        if (lockHolderDead(lock) || Date.now() - statSync(lock).mtimeMs > staleMs) {
           rmSync(lock, { recursive: true, force: true });
           continue;
         }
