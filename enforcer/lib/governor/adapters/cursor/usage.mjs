@@ -17,7 +17,16 @@
 // The payload figure wins when there is one; the transcript is still read for
 // the model and the last prompt. Spend is priced from the table (usd stays
 // null, as Codex's does), unless the payload carried Cursor's own cost.
-import { readFileSync } from 'node:fs';
+//
+// Two honest gaps, said rather than filled in:
+//   - unmetered: neither place had any usage. That is "Cursor did not say", not
+//     $0, so the reading carries `unmetered: true` and the receipts no dollars;
+//   - unpriced: Cursor's own model ids (composer-1, auto, default) and ones the
+//     table does not have are NOT priced as the dearest Claude: the model reads
+//     `unpriced:<id>`, `unpriced: true`, usd null, and the tokens are the raw count.
+//     Cursor's `claude-<ver>-<family>` spelling (claude-4.6-sonnet) is read as the
+//     table's (claude-sonnet-4-6) first.
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DIR } from '../../core/store.mjs';
 import { emptyUsage } from '../../core/cost.mjs';
@@ -53,8 +62,21 @@ const add = (a, b) => {
   for (const k of Object.keys(a)) a[k] += b[k] || 0;
   return a;
 };
+/** A Cursor model id as the price table's key, or `unpriced:<id>` with price null. */
+export function cursorModel(id) {
+  const m = String(id || '')
+    .trim()
+    .toLowerCase();
+  const n = m.replace(/^claude-(\d+)(?:[.-](\d+))?-(opus|sonnet|haiku|fable|mythos)\b/, (_, a, b, f) => `claude-${f}-${a}${b ? `-${b}` : ''}`);
+  const p = n ? priceOf(n) : null;
+  // priceOf falls back by family and then to the dearest model; only an exact table key counts.
+  if (p && n.includes(p.key)) return { model: n, price: p };
+  return { model: `unpriced:${m || 'unknown'}`, price: null };
+}
+const rawTokens = (u) => u.input + u.output + u.cache_read + u.cache_write;
 const priced = (u, model) => {
-  const p = priceOf(model);
+  const p = cursorModel(model).price;
+  if (!p) return null;
   return (u.input * p.in + u.cache_read * (p.cin ?? p.in * 0.1) + u.cache_write * (p.cw ?? p.in * 1.25) + u.output * p.out) / 1e6;
 };
 
@@ -100,7 +122,8 @@ export function payloadTotals(sessionId) {
   let usd = 0,
     own = 0,
     model = '',
-    turns = 0;
+    turns = 0,
+    unpriced = 0;
   for (const g of Object.values(d.gens)) {
     const u = usageOf(
       isObj(g?.usage)
@@ -117,31 +140,69 @@ export function payloadTotals(sessionId) {
     if (typeof g?.usd === 'number' && Number.isFinite(g.usd) && g.usd >= 0) {
       usd += g.usd;
       own++;
-    } else if (u) usd += priced(u, model);
+    } else if (u) {
+      const c = priced(u, model);
+      if (c === null) unpriced++;
+      else usd += c;
+    }
     if (u) add(usage, u);
     turns++;
   }
-  return turns ? { usage, usd, own: own === turns, model, turns } : null;
+  return turns
+    ? {
+        usage,
+        usd,
+        own: own === turns,
+        model,
+        turns,
+        unpriced: own !== turns && unpriced > 0,
+      }
+    : null;
 }
 
 /**
- * @returns {{tokens:number, usd:number|null, model:string, task:string, usage:object}}
+ * @returns {{tokens:number, usd:number|null, model:string, task:string, usage:object, unmetered?:true, unpriced?:true}}
  *   `usd` is Cursor's own figure when every recorded generation carried one, else null;
- *   `tokens` is the spend in effective input tokens at the model answering now.
+ *   `tokens` is the spend in effective input tokens at the model answering now (the raw
+ *   count when the model is unpriced).
  */
 export function readCursorUsage(sessionId, transcriptPath) {
   const out = { tokens: 0, usd: null, model: '', task: '', usage: emptyUsage() };
   const cur = readForward(`cursor-${sessionId || 'default'}`, transcriptPath, fresh, fold) || fresh();
   const pay = payloadTotals(sessionId);
-  out.model = pay?.model || cur.model;
+  const id = pay?.model || cur.model;
+  const m = cursorModel(id);
+  out.model = id ? m.model : '';
   out.task = taskLine(cur.task);
-  if (pay) {
-    out.usage = { ...pay.usage };
-    if (pay.own) out.usd = pay.usd;
-    out.tokens = Math.round((pay.usd * 1e6) / priceOf(out.model).in);
+  const usage = pay ? pay.usage : cur.usage;
+  out.usage = { ...usage };
+  if (pay?.own) {
+    out.usd = pay.usd;
+    out.tokens = Math.round((pay.usd * 1e6) / priceOf(m.price ? m.model : '').in);
     return out;
   }
-  out.usage = { ...cur.usage };
-  if (cur.turns) out.tokens = Math.round((priced(cur.usage, out.model) * 1e6) / priceOf(out.model).in);
+  if (!pay && !cur.turns) {
+    sayUnmetered(sessionId);
+    out.unmetered = true;
+    return out;
+  }
+  if (!m.price || pay?.unpriced) {
+    out.unpriced = true;
+    out.model = m.price ? m.model : m.model || 'unpriced:unknown';
+    out.tokens = rawTokens(usage);
+    return out;
+  }
+  const usd = pay ? pay.usd : priced(cur.usage, out.model);
+  out.tokens = Math.round((usd * 1e6) / m.price.in);
   return out;
+}
+
+// Said once per session (a marker beside the sidecar), not on every hook.
+function sayUnmetered(sid) {
+  try {
+    writeFileSync(`${sidecar(sid)}.unmetered`, '', { flag: 'wx', mode: 0o600 });
+  } catch {
+    return;
+  }
+  process.stderr.write('enforcer-governor: Cursor reported no token usage for this session; its spend is unmetered, not $0.\n');
 }
