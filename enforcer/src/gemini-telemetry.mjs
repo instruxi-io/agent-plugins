@@ -162,7 +162,8 @@ export async function enable({ env = process.env, home = undefined, shared = SHA
   const old = readText(ep);
   const rest = stripBlock(old).replace(/\s+$/, '');
   const next = (rest ? rest + '\n\n' : '') + block + '\n';
-  const envChanged = next !== old || (existsSync(ep) && (statSync(ep).mode & 0o777) !== 0o600);
+  // Windows has no POSIX modes (stat reports 0o666): checking there would rewrite on every start.
+  const envChanged = next !== old || (process.platform !== 'win32' && existsSync(ep) && (statSync(ep).mode & 0o777) !== 0o600);
   if (envChanged) writeFile(ep, next, 0o600); // it holds a secret: 0600 even if it was wider
   return { endpoint, settings: sp, env: ep, removed, changed: settingsChanged || envChanged };
 }

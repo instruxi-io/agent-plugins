@@ -77,7 +77,7 @@ test('enable: key, switch and content limits in .env (0600); endpoint in setting
   assert.deepEqual(s.mcpServers, settings.mcpServers);
   assert.deepEqual(s.telemetry, { target: 'local', otlpProtocol: 'http', logPrompts: false, otlpEndpoint: ENDPOINT });
   assert.equal(Object.hasOwn(s.telemetry, 'enabled'), false, 'settings alone never switch export on');
-  assert.equal(mode(settingsPath(o)), 0o664, 'settings.json keeps its mode');
+  if (process.platform !== 'win32') assert.equal(mode(settingsPath(o)), 0o664, 'settings.json keeps its mode');
   assert.equal(read(settingsPath(o) + '.enforcer-backup'), JSON.stringify(settings), 'their settings backed up');
 
   const text = read(envPath(o));
