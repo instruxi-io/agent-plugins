@@ -63,8 +63,50 @@ export function* grokEvents(path) {
   };
 }
 
-export function codexEvents() {
-  throw new Error('codex stream parser: no fixture (no real `codex exec --json` sample ' + 'is recorded); refusing to guess the schema');
+/** `codex exec --json` prints one JSON event per line (fixture: test/fixtures/codex-exec.jsonl):
+ *  thread.started{thread_id}, turn.started, item.started|completed{item:{id,type,...}}, turn.completed{usage}.
+ *  Item types read: agent_message{text}, command_execution{command,aggregated_output,exit_code,status}.
+ *  Anything else (including `error` items, which the fixture shows as warnings) is ignored. */
+export function* codexEvents(path) {
+  const text = read(path);
+  if (text === null) return;
+  let sid = null;
+  let turns = 0;
+  for (const line of text.split('\n')) {
+    let e;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isObj(e)) continue;
+    const item = isObj(e.item) ? e.item : {};
+    if (e.type === 'thread.started') {
+      sid = typeof e.thread_id === 'string' ? e.thread_id : null;
+      yield { type: 'system', subtype: 'init', session_id: sid, message: {} };
+    } else if (e.type === 'item.completed' && item.type === 'agent_message') {
+      turns++;
+      yield { type: 'assistant', message: { content: [{ type: 'text', text: String(item.text ?? '') }] } };
+    } else if (e.type === 'item.completed' && item.type === 'command_execution') {
+      turns++;
+      yield { type: 'assistant', message: { content: [{ type: 'tool_use', id: item.id, name: 'Bash', input: { command: item.command } }] } };
+      yield {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: item.id, is_error: item.exit_code !== 0, content: String(item.aggregated_output ?? '') }] },
+      };
+    } else if (e.type === 'turn.completed') {
+      const u = isObj(e.usage) ? e.usage : {};
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        num_turns: turns,
+        session_id: sid,
+        usage: { input_tokens: u.input_tokens, output_tokens: u.output_tokens, cache_read_input_tokens: u.cached_input_tokens },
+        message: {},
+      };
+    }
+  }
 }
 
 export const HARNESS_PARSERS = { grok: grokEvents, codex: codexEvents };

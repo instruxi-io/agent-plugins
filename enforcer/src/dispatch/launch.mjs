@@ -21,12 +21,7 @@ export const HARNESSES = ['claude', 'codex', 'grok'];
 export const HARNESS_CAPS = {
   claude: { supported: true, experimental: false, models: null },
   grok: { supported: true, experimental: true, models: ['grok'] },
-  codex: {
-    supported: false,
-    experimental: false,
-    models: ['gpt', 'o1', 'o3', 'o4', 'codex'],
-    why: 'its `codex exec --json` event stream has no parser (no recorded sample), so workers would be launched and orphaned at the first reap',
-  },
+  codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'] },
 };
 
 /** Per-launch settings: the installed release is off for the child, so the --plugin-dir checkout is the only copy of the hooks and MCP server. */

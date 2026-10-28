@@ -305,13 +305,14 @@ test('worktree: scratch dir without a repo; include copies ignored files; share 
   assert.equal(git(['status', '--porcelain'], wt).stdout.trim(), '', 'the share does not dirty the worktree');
 });
 
-test('launch command: claude args, one plugin per name, grok needs --experimental, codex refused', () => {
+test('launch command: claude args, one plugin per name, grok needs --experimental, codex experimental', () => {
   const cmd = launchCmd('PROMPT', 'sonnet', { harness: 'claude', agentBin: 'claude' }, 'k', { session: 's1', maxTurns: 40 });
   assert.deepEqual(cmd.slice(0, 3), ['claude', '-p', 'PROMPT']);
   assert.ok(cmd.includes('--session-id') && cmd.includes('--max-turns') && cmd.includes('graph:k'));
   assert.equal(pluginDirs([ROOT]).length, 1);
   assert.match(harnessRefusal('grok', false), /experimental/);
-  assert.match(harnessRefusal('codex', true), /not supported/);
+  assert.match(harnessRefusal('codex', false), /experimental/);
+  assert.equal(harnessRefusal('codex', true), null);
   assert.equal(harnessRefusal('claude', false), null);
 });
 
