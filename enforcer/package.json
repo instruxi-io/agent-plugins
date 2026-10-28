@@ -15,6 +15,7 @@
     "commands",
     "harness",
     "plugin.json",
+    "openclaw.plugin.json",
     ".claude-plugin",
     ".codex-plugin",
     ".cursor-plugin",
@@ -51,5 +52,17 @@
     "openapi-fetch": "0.17.0",
     "openapi-typescript": "7.13.0",
     "typescript": "5.9.3"
+  },
+  "openclaw": {
+    "extensions": [
+      "./harness/openclaw/index.mjs"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.10.8",
+      "minGatewayVersion": "2026.10.8"
+    },
+    "build": {
+      "openclawVersion": "2026.10.8"
+    }
   }
 }

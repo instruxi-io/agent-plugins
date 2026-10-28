@@ -1,0 +1,35 @@
+{
+  "id": "enforcer",
+  "name": "Enforcer",
+  "description": "Enforcer for OpenClaw: the Enforcer MCP server, skills, and telemetry to Enforcer governance.",
+  "categories": ["infrastructure"],
+  "activation": { "onStartup": true },
+  "skills": ["./skills"],
+  "mcpServers": {
+    "enforcer": {
+      "url": "https://api.instruxi.dev/mcp",
+      "transport": "streamable-http",
+      "auth": "oauth"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "telemetry": {
+        "type": "boolean",
+        "default": true,
+        "description": "Send OpenClaw's metrics (cost, tokens, model calls, tools, sessions) to Enforcer governance through diagnostics-otel, with a telemetry-only key for this machine. No prompt or response text."
+      },
+      "telemetryLogs": {
+        "type": "boolean",
+        "default": false,
+        "description": "Also send the Gateway's own log records (bodies withheld). Off by default: they carry no usage or session data."
+      }
+    }
+  },
+  "uiHints": {
+    "telemetry": { "label": "Telemetry to Enforcer" },
+    "telemetryLogs": { "label": "Also send Gateway logs" }
+  }
+}
