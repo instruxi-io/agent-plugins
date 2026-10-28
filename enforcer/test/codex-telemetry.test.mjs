@@ -148,14 +148,14 @@ test('enable asks for the codex ingest key, writes it 0600 and status reports it
   const r = await enable({ centralUrl: ORIGIN }, { env: h.env, ensureIngestKey: async (o) => (asked.push(o), { key: 'ik_secret_1', source: 'minted' }) });
   assert.deepEqual(asked, [{ harness: 'codex' }]);
   assert.equal(r.changed, true);
-  assert.equal(statSync(h.file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(h.file).mode & 0o777, 0o600);
   const s = status({}, { env: h.env });
   assert.equal(s.on, true);
   assert.equal(s.logs, ORIGIN + LOGS_PATH);
   assert.doesNotMatch(JSON.stringify(s), /ik_secret_1/);
   // the pre-Enforcer original is kept once, 0600
   assert.equal(readFileSync(h.file + '.enforcer-backup', 'utf8'), USER);
-  assert.equal(statSync(h.file + '.enforcer-backup').mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(h.file + '.enforcer-backup').mode & 0o777, 0o600);
   // a cached key changes nothing on disk
   const again = await enable({ centralUrl: ORIGIN }, { env: h.env, ensureIngestKey: async () => ({ key: 'ik_secret_1', source: 'cache' }) });
   assert.equal(again.changed, false);
@@ -164,7 +164,7 @@ test('enable asks for the codex ingest key, writes it 0600 and status reports it
 test('CODEX_HOME is respected, and a missing config.toml is created 0600', async () => {
   const h = codexHome(undefined);
   await enable({ centralUrl: ORIGIN }, { env: h.env, ensureIngestKey: async () => ({ key: 'k1' }) });
-  assert.equal(statSync(h.file).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(h.file).mode & 0o777, 0o600);
   assert.match(readFileSync(h.file, 'utf8'), /^\[otel\]\n/);
 });
 
@@ -251,7 +251,7 @@ test('a Codex session start turns it on by default; a Claude Code one does not t
   assert.equal(r.status, 0, r.stderr);
   const text = readFileSync(s.config, 'utf8');
   assert.match(text, /"X-API-Key" = "ik_fake_codex"/);
-  assert.equal(statSync(s.config).mode & 0o777, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(s.config).mode & 0o777, 0o600);
   assert.match(
     s.run(['governor', 'telemetry', 'codex', 'status']).stdout,
     /Codex telemetry: on, exporting events to http:\/\/127\.0\.0\.1:9\/api\/v1\/governance\/otlp\/v1\/logs/,
