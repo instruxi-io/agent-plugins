@@ -10,6 +10,7 @@ import { SHARED_DIR, SHARED_FILE } from './credentials.mjs';
 import { configHome } from './state.mjs';
 import { uninstall as uninstallGrok } from './grok-install.mjs';
 import { uninstall as uninstallCodex } from './codex-install.mjs';
+import { disable as disableGemini, geminiPresent } from './gemini-telemetry.mjs';
 
 const ask = (q) =>
   new Promise((res) => {
@@ -29,6 +30,15 @@ export async function uninstall({ purge = false, yes = false, home = homedir(), 
     removed.push(`OTEL entries in ${r.settings}`);
   } catch (e) {
     left.push(`OTEL entries in Claude settings (${e.message})`);
+  }
+  // Gemini CLI: the enforcer block in its .env and the telemetry keys in its settings.json
+  if (geminiPresent({ home })) {
+    try {
+      const r = disableGemini({ home, record: false });
+      if (r.changed) removed.push(`Gemini CLI telemetry entries in ${r.env} and ${r.settings}`);
+    } catch (e) {
+      left.push(`Gemini CLI telemetry entries (${e.message})`);
+    }
   }
   // Codex's [otel] keys (only the ones its enable wrote); config.toml under this home unless CODEX_HOME says otherwise
   try {

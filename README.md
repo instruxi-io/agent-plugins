@@ -72,6 +72,40 @@ that install's `manifest.json` lists, restores any `.enforcer-bak-*` file it rec
 prints the native command above. With no manifest it writes nothing. `--dry-run` lists what
 would go. `enforcer doctor` flags a leftover copy.
 
+### Gemini CLI
+
+The repo root is a Gemini CLI extension (`gemini-extension.json`, `hooks/hooks.json`): the
+`enforcer` MCP server, and telemetry to Enforcer governance. Gemini installs an extension from
+the root of a repo only, which is why its manifest sits there and runs `enforcer/` from the clone.
+
+```sh
+gemini extensions install https://github.com/instruxi-io/agent-plugins
+# in Gemini: /mcp auth enforcer
+```
+
+**Telemetry is on once you sign in** (`enforcer login` sets it up when `~/.gemini` exists; the
+extension's SessionStart hook sets it up too and refreshes the key, effective from the next session,
+since Gemini starts telemetry before hooks run). Gemini's settings take an endpoint but no header,
+so the X-API-Key header (a telemetry-only ingest key for `gemini-cli@<host>`) goes in a managed
+block of `~/.gemini/.env` (mode 0600; `GEMINI_CLI_HOME` moves it), which only Gemini reads.
+`settings.json` gets the endpoint, `otlpProtocol: http` and `logPrompts: false`; the switch itself
+(`GEMINI_TELEMETRY_ENABLED`) is in the same block, so a directory where a project `.env` shadows
+`~/.gemini/.env` (Gemini reads only the first one it finds) exports nothing rather than exporting
+unauthenticated. Gemini 0.38 exports conversation text in `api_request`/`api_response` and tool
+arguments in `tool_call` even with `logPrompts: false`, so the block also cuts every log attribute
+to 48 characters, drops the process resource detector (argv holds `gemini -p` prompts) and turns
+traces off (governance takes logs and metrics only). A tool call's first ~30 characters of arguments
+still go out.
+
+```sh
+enforcer gemini telemetry status    # where it goes, and whether this directory shadows it
+enforcer gemini telemetry off       # removes the block and the settings keys; sign-in leaves it off
+enforcer gemini telemetry on
+```
+
+There is no governor gating under Gemini yet: Gemini has a blocking `BeforeTool` hook, but no shim
+maps its payloads onto the governor.
+
 ### Cursor (experimental)
 
 Two ways in; use one, not both (both would fire every hook twice):
