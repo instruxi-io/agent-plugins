@@ -5,6 +5,8 @@ import { loadState, loadConfig, saveConfig, saveState, verify, withLock, commit,
 import { readManaged, merge, envReading, envIgnoredLines, ENV_OVERRIDES, decisioningLine } from './managed.mjs';
 import { DEFAULTS, priceOf, dollarsForTokens, burnRate, release } from './policy.mjs';
 import { SETTINGS, GROUPS, RETIRED, validate, parseValue } from './settings.mjs';
+import { seal } from './chain.mjs';
+import { hashVersion, ackedHash } from './outbox.mjs';
 
 // Everything after the subcommand is ONE argument. The slash commands pass
 // $ARGUMENTS unquoted, so `/enforcer-governor:set budgetOn false` arrives as
@@ -35,15 +37,32 @@ const envLine = () =>
 const ID_PREFIXES = ['claude', 'grok', 'codex'];
 const usd = (t, m) => '$' + dollarsForTokens(t, priceOf(m, cfg.model).in).toFixed(2);
 
+// The file, checked against the chain head in state.json and the newest
+// receipt the control plane acknowledged (store.mjs verify()).
+/** @returns {any} the verify() result; its shape varies by outcome */
+const checkRecord = () => verify(RECEIPTS, { acked: ackedHash() });
+
 if (cmd === 'verify') {
-  const v = verify();
-  if (v.missing)
+  const v = checkRecord();
+  if (v.missing && v.truncated)
+    console.log(
+      `The record does NOT check out. ${RECEIPTS} is missing, but the control plane acknowledged receipts from this machine (newest ${v.head.slice(0, 12)}...), so the file has been deleted or moved.\nThe receipts shipped to the server are the only copy outside this machine.`,
+    );
+  else if (v.missing)
     console.log(
       `The record does NOT check out. ${RECEIPTS} is missing, but the governor's state still names a head (${v.head.slice(0, 12)}...), so receipts were written and the file has been deleted or moved.\nThe receipts shipped to the server are the only copy outside this machine.`,
     );
   else if (v.headMismatch)
     console.log(
       `The record does NOT check out. All ${v.receipts} lines chain, but the last one is not the head the governor last recorded: lines are missing from the end.\nFile: ${RECEIPTS}`,
+    );
+  else if (v.truncated)
+    console.log(
+      `The record does NOT check out. All ${v.receipts} lines chain, but the file no longer holds the newest receipt the control plane acknowledged: lines are missing from the end.\nFile: ${RECEIPTS}`,
+    );
+  else if (v.unhashedTail && v.breakCount === 1)
+    console.log(
+      `The record does NOT check out. Line ${v.brokeAt} of ${v.receipts}, the last, carries no hash, so nothing shows it was not edited.${v.blind ? ' It says it was decided while the governor could not read its own chain; if so, the next decision recorded after it makes the record check out again.' : ''}\nFile: ${RECEIPTS}`,
     );
   else if (!v.receipts) console.log('No decisions recorded yet.');
   else if (v.ok)
@@ -192,7 +211,9 @@ if (cmd === 'resume') {
     }
     const id = ids[0];
     const before = s.prevHash;
-    const out = release(s, id);
+    // release() chains its receipt as v1; re-seal it under the version the
+    // governor writes now, from the same prev (chain.mjs).
+    const out = seal(before, release(s, id).entry, hashVersion());
     commit(s, out.entry, out.hash, before);
     const a = s.agents[id];
     return { msg: `${id} is running again, with its limit raised to ${usd(a.budget, a.model)}. Recorded as your decision.` };
@@ -237,7 +258,7 @@ if (agents.some((a) => a.status === 'grounded')) {
 }
 const burn = burnRate(state);
 if (burn > 0) console.log(`\nRight now: $${burn.toFixed(2)}/min across every agent.`);
-const v = verify();
+const v = checkRecord();
 console.log(
-  `\nRecord: ${v.receipts} decisions, ${v.ok ? 'all check out' : v.missing ? 'BROKEN: the receipt file is missing' : `BROKEN at line ${v.brokeAt}`}.`,
+  `\nRecord: ${v.receipts} decisions, ${v.ok ? 'all check out' : v.missing ? 'BROKEN: the receipt file is missing' : v.truncated ? 'BROKEN: lines are missing from the end' : `BROKEN at line ${v.brokeAt}`}.`,
 );

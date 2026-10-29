@@ -1,7 +1,7 @@
 // What v2 adds: no daemon, so the things the daemon used to guarantee have to
 // be proved here instead -- ordering under concurrency, and a transcript read
 // whose cost stops growing with the session.
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -201,7 +201,10 @@ const run = (home, ev) => runFull(home, ev).hookSpecificOutput;
 
 // A blind decision is still recorded, and recording it must not make an honest
 // file look tampered with. verify() counts a line with no hash as unverifiable
-// rather than as a break, so the fallback writes one deliberately unhashed.
+// rather than as a break, so the fallback writes one deliberately unhashed --
+// once a chained decision follows it. As the LAST line it is a break: a hash
+// stripped from the last line looks exactly like it, and verify says which
+// it may be.
 {
   const home = govHome('gov-blindrec-');
   run(home, { session_id: 'b2', tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: '/tmp' });
@@ -222,8 +225,16 @@ const run = (home, ev) => runFull(home, ev).hookSpecificOutput;
   assert(lines[2].rule === 'download a script from the internet and run it straight away (curl | sh)', 'a blind receipt must name the rule that decided');
 
   const { verify } = await import('../src/store.mjs');
+  const tail = verify(join(home, 'receipts.jsonl'));
+  assert(
+    !tail.ok && tail.unhashedTail && tail.blind && tail.brokeAt === 3,
+    `an unhashed LAST line is a break, marked as possibly blind: ${JSON.stringify(tail)}`,
+  );
+
+  unlinkSync(join(home, '.lock'));
+  run(home, { session_id: 'b2', tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: '/tmp' });
   const v = verify(join(home, 'receipts.jsonl'));
-  assert(v.ok, 'an unhashed fallback line must not be reported as tampering');
+  assert(v.ok, `an unhashed fallback line followed by a chained one must not be reported as tampering: ${JSON.stringify(v)}`);
   assert(v.unverifiable === 1, `the unhashed line must be reported as unverifiable, got ${v.unverifiable}`);
   console.log('a blind refusal is recorded without faking a chain link ok');
 }
@@ -276,6 +287,9 @@ const run = (home, ev) => runFull(home, ev).hookSpecificOutput;
     assert(r.client === '?acme-api', `receipt ${i} (${r.verdict}) must name the project, got ${r.client}`);
   }
   const { verify } = await import('../src/store.mjs');
-  assert(verify(join(home, 'receipts.jsonl')).ok, 'and the chain still verifies');
+  // Every chained line verifies; the blind refusal, last, is the open end
+  // verify names (an unhashed last line), not a break in what precedes it.
+  const v = verify(join(home, 'receipts.jsonl'));
+  assert(v.unhashedTail && v.blind && v.brokeAt === 4 && v.breakCount === 1, `and the chain still verifies up to the blind refusal: ${JSON.stringify(v)}`);
   console.log('every receipt names the operator and project, first rule decision included ok');
 }

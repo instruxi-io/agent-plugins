@@ -29,10 +29,11 @@ import {
   readdirSync,
 } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { makeState, DEFAULTS, dropRecent } from './policy.mjs';
 import { normalizeBooleans, isOn } from './bool.mjs';
 import { migrateDir } from './migrate.mjs';
+import { receiptHash, GENESIS } from './chain.mjs';
 
 const HOME = process.env.HOME || process.env.USERPROFILE || '.';
 // Governor records live under ~/.config/enforcer/governor. Before 2.10 they were
@@ -104,7 +105,6 @@ export function hardenPermissions(dirs = [DIR, FIXED_DIR]) {
 }
 hardenPermissions();
 
-const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 const readJSON = (f, fallback) => {
   try {
     return JSON.parse(readFileSync(f, 'utf8'));
@@ -383,22 +383,53 @@ export function commit(state, entry, hash, before = state.prevHash) {
   return true;
 }
 
+/**
+ * The receipt hash version to write: 2 once the control plane has said it
+ * verifies v2 (outbox.json `hashVersions`, written by the shipper from the
+ * Enforcer-Receipt-Hash-Versions header of its last 200), else 1. Until then a
+ * v2 receipt would be refused as altered by a server that only knows v1. Here,
+ * not in outbox.mjs, because the decision path reads it and outbox.mjs is
+ * loaded lazily, off that path.
+ */
+export function hashVersion() {
+  const m = readJSON(join(DIR, 'outbox.json'), null);
+  return m && Array.isArray(m.hashVersions) && m.hashVersions.includes(2) ? 2 : 1;
+}
+
 // Walk the file, not memory: the file is the record. Names the first line
 // that does not add up, so an edit or a deletion anywhere is named -- and
 // still counts every line, so "line 3 of N" says how much of the record
 // sits after the break.
 //
-// What this cannot see: a file truncated AND its state.json deleted (or both
-// rewritten together) chains cleanly from genesis, because everything it is
-// checked against lives on this machine. The receipts shipped to the server
-// are the only copy outside it, and so the only external anchor.
-export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
+// Each line is checked under the hash version it names (chain.mjs): v1 lines,
+// then v2 ones chained onto them, verify as one chain.
+//
+// A LAST line with no hash is a break (unhashedTail), even one that says
+// `chained: false`. Mid-file, a stripped hash shows: the next line no longer
+// follows. At the end there is no next line, and a stripped hash plus an added
+// `chained: false` looks exactly like the blind path's own refusal, so until a
+// chained decision is recorded after it the two cannot be told apart.
+//
+// `acked` is the newest hash the control plane acknowledged (outbox.mjs
+// ackedHash()). A file that no longer holds it ends before what the server
+// has: `truncated`. Unlike state.json's head, which loadState() re-derives
+// from the file's tail on the next decision, nothing on the decision path
+// rewrites it, so a cut-off end stays visible after the governor carries on.
+//
+// What this cannot see: a file truncated AND its state.json and outbox.json
+// deleted (or all rewritten together) chains cleanly from genesis, because
+// everything it is checked against lives on this machine. The receipts shipped
+// to the server are the only copy outside it, and so the only external anchor;
+// receipts not yet shipped were never acknowledged.
+export function verify(file = RECEIPTS, { state, acked } = /** @type {any} */ ({})) {
+  const ackedHead = typeof acked === 'string' && acked && acked !== GENESIS ? acked : null;
   if (!existsSync(file)) {
     // No file is a fresh install only when state never recorded a head.
     const st = state ?? (file === RECEIPTS ? readJSON(STATE, null) : null);
     if (st && typeof st.prevHash === 'string' && st.prevHash && st.prevHash !== 'genesis') {
       return { ok: false, receipts: 0, brokeAt: 0, missing: true, head: st.prevHash };
     }
+    if (ackedHead) return { ok: false, receipts: 0, brokeAt: 0, missing: true, truncated: true, head: ackedHead };
     return { ok: true, receipts: 0, brokeAt: 0 };
   }
   let prev = 'genesis',
@@ -409,6 +440,9 @@ export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
     linked = 0,
     hashed = false;
   const breaks = [];
+  const seen = new Set();
+  // The last line, when it was counted unverifiable rather than checked.
+  let tail = null;
   const broke = () => {
     if (!brokeAt) brokeAt = n;
     breakCount++;
@@ -417,6 +451,7 @@ export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
   for (const line of readFileSync(file, 'utf8').split('\n')) {
     if (!line.trim()) continue;
     n++;
+    tail = null;
     let e;
     try {
       e = JSON.parse(line);
@@ -425,6 +460,7 @@ export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
       continue;
     }
     const { hash, ...body } = e;
+    if (!hash && (hashed || e.chained === false)) tail = { blind: e.chained === false };
     // Lines from before the chain existed may open the file; once a hashed line
     // has been seen, a line without one is a stripped hash, not history.
     if (!hash) {
@@ -440,20 +476,38 @@ export function verify(file = RECEIPTS, { state } = /** @type {any} */ ({})) {
       continue;
     }
     hashed = true;
-    if (sha256(prev + JSON.stringify(body)) !== hash) broke();
+    seen.add(hash);
+    let expect = null;
+    try {
+      expect = receiptHash(prev, body);
+    } catch {
+      /* a version this cannot check is a break */
+    }
+    if (expect !== hash) broke();
     else linked++;
     // Re-anchor on the stored hash, so the walk goes on past a break and counts
     // what still chains. This only adds information: a break stays a failure.
     prev = hash;
   }
+  // An unhashed last line: counted unverifiable above (or already a break, for
+  // one that does not say `chained: false`); at the end it is a break.
+  const unhashedTail = !!tail;
+  if (tail && tail.blind) {
+    legacy--;
+    broke();
+  }
   const st0 = state ?? (file === RECEIPTS ? readJSON(STATE, null) : null);
   const headMatches = !!(st0 && typeof st0.prevHash === 'string' && hashed && st0.prevHash === prev);
-  if (brokeAt) return { ok: false, receipts: n, brokeAt, breaks, breakCount, linked, headMatches };
+  if (brokeAt)
+    return { ok: false, receipts: n, brokeAt, breaks, breakCount, linked, headMatches, ...(unhashedTail ? { unhashedTail, blind: !!tail.blind } : {}) };
   // The head must be the one state last recorded: a truncated tail still chains
   // line by line, and only the head shows that lines are missing.
   const st = state ?? (file === RECEIPTS ? readJSON(STATE, null) : null);
   if (st && typeof st.prevHash === 'string' && hashed && st.prevHash !== prev) {
     return { ok: false, receipts: n, brokeAt: n, headMismatch: true, head: prev, breaks, breakCount, linked, headMatches: false };
+  }
+  if (ackedHead && !seen.has(ackedHead)) {
+    return { ok: false, receipts: n, brokeAt: 0, truncated: true, head: prev, breaks, breakCount, linked, headMatches: true };
   }
   return { ok: true, receipts: n, brokeAt: 0, unverifiable: legacy || undefined, head: prev, breaks, breakCount, linked, headMatches: true };
 }

@@ -12,7 +12,7 @@ import { resolveConfig, envBaseUrl, BASE_URL_VAR, VARS } from './config.mjs';
 import { redact } from './graph/redact.mjs';
 import { runChecks } from './doctor.mjs';
 import { verify, RECEIPTS } from '../lib/governor/core/store.mjs';
-import { stats as outboxStats } from '../lib/governor/core/outbox.mjs';
+import { stats as outboxStats, ackedHash } from '../lib/governor/core/outbox.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const SECTIONS = [
@@ -135,7 +135,7 @@ export async function collect({ network = false, fetchImpl } = /** @type {any} *
   );
   put(
     'receipts.json',
-    safe(() => verify(RECEIPTS)),
+    safe(() => verify(RECEIPTS, { acked: ackedHash() })),
   );
   put(
     'outbox.json',

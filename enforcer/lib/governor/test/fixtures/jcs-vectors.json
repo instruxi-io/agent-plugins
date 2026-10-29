@@ -1,0 +1,244 @@
+{
+  "_comment": [
+    "RFC 8785 (JSON Canonicalization Scheme) vectors and receipt-hash vectors.",
+    "THIS FILE IS SHARED: the same bytes live in agent-plugins (enforcer/lib/governor/test/fixtures/jcs-vectors.json)",
+    "and enforcer-governance (internal/jcs/testdata/jcs-vectors.json). Change both or neither.",
+    "numbers: IEEE 754 bit patterns and their canonical text (RFC 8785 Appendix B); expect null = must be refused.",
+    "canonical: JSON text in, canonical text out. invalid: refused by both sides.",
+    "invalidText: refused only where JSON TEXT is canonicalised (Go); JSON.parse hides duplicate keys.",
+    "receipts: hv 1 = hex(sha256(prev + body)); hv 2 = hex(sha256(\"enforcer-receipt/v2\\n\" + prev + \"\\n\" + JCS(body)))."
+  ],
+  "numbers": [
+    {
+      "bits": "0000000000000000",
+      "expect": "0"
+    },
+    {
+      "bits": "8000000000000000",
+      "expect": "0"
+    },
+    {
+      "bits": "0000000000000001",
+      "expect": "5e-324"
+    },
+    {
+      "bits": "8000000000000001",
+      "expect": "-5e-324"
+    },
+    {
+      "bits": "7fefffffffffffff",
+      "expect": "1.7976931348623157e+308"
+    },
+    {
+      "bits": "ffefffffffffffff",
+      "expect": "-1.7976931348623157e+308"
+    },
+    {
+      "bits": "4340000000000000",
+      "expect": "9007199254740992"
+    },
+    {
+      "bits": "c340000000000000",
+      "expect": "-9007199254740992"
+    },
+    {
+      "bits": "4430000000000000",
+      "expect": "295147905179352830000"
+    },
+    {
+      "bits": "44b52d02c7e14af5",
+      "expect": "9.999999999999997e+22"
+    },
+    {
+      "bits": "44b52d02c7e14af6",
+      "expect": "1e+23"
+    },
+    {
+      "bits": "44b52d02c7e14af7",
+      "expect": "1.0000000000000001e+23"
+    },
+    {
+      "bits": "444b1ae4d6e2ef4e",
+      "expect": "999999999999999700000"
+    },
+    {
+      "bits": "444b1ae4d6e2ef4f",
+      "expect": "999999999999999900000"
+    },
+    {
+      "bits": "444b1ae4d6e2ef50",
+      "expect": "1e+21"
+    },
+    {
+      "bits": "3eb0c6f7a0b5ed8c",
+      "expect": "9.999999999999997e-7"
+    },
+    {
+      "bits": "3eb0c6f7a0b5ed8d",
+      "expect": "0.000001"
+    },
+    {
+      "bits": "41b3de4355555553",
+      "expect": "333333333.3333332"
+    },
+    {
+      "bits": "41b3de4355555554",
+      "expect": "333333333.33333325"
+    },
+    {
+      "bits": "41b3de4355555555",
+      "expect": "333333333.3333333"
+    },
+    {
+      "bits": "41b3de4355555556",
+      "expect": "333333333.3333334"
+    },
+    {
+      "bits": "41b3de4355555557",
+      "expect": "333333333.33333343"
+    },
+    {
+      "bits": "becbf647612f3696",
+      "expect": "-0.0000033333333333333333"
+    },
+    {
+      "bits": "43143ff3c1cb0959",
+      "expect": "1424953923781206.2"
+    },
+    {
+      "bits": "7fffffffffffffff",
+      "expect": null
+    },
+    {
+      "bits": "7ff0000000000000",
+      "expect": null
+    },
+    {
+      "bits": "fff0000000000000",
+      "expect": null
+    }
+  ],
+  "canonical": [
+    {
+      "name": "RFC 8785 section 3.2.2 example",
+      "input": "{\n  \"numbers\": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],\n  \"string\": \"\\u20ac$\\u000F\\u000aA'\\u0042\\u0022\\u005c\\\\\\\"\\/\",\n  \"literals\": [null, true, false]\n}",
+      "expect": "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}"
+    },
+    {
+      "name": "RFC 8785 section 3.2.3 sort by UTF-16 code units",
+      "input": "{\n  \"\\u20ac\": \"Euro Sign\",\n  \"\\r\": \"Carriage Return\",\n  \"\\ufb33\": \"Hebrew Letter Dalet With Dagesh\",\n  \"1\": \"One\",\n  \"\\ud83d\\ude00\": \"Emoji: Grinning Face\",\n  \"\\u0080\": \"Control\",\n  \"\\u00f6\": \"Latin Small Letter O With Diaeresis\"\n}",
+      "expect": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}"
+    },
+    {
+      "name": "nested objects sorted at every level, arrays kept in order",
+      "input": "{\"b\":[{\"z\":1,\"a\":2},[3,1,2]],\"a\":{},\"c\":[]}",
+      "expect": "{\"a\":{},\"b\":[{\"a\":2,\"z\":1},[3,1,2]],\"c\":[]}"
+    },
+    {
+      "name": "whitespace between tokens is dropped",
+      "input": " [ 1 , \"x\" , { } , [ ] , null ] ",
+      "expect": "[1,\"x\",{},[],null]"
+    },
+    {
+      "name": "number spellings that are the same double",
+      "input": "[1.0, -0, -0.0, 1E2, 0.1e1, 100e-2, 123456789012345678901234567890, 9007199254740993, 1e-7, 1e21, 1e20, 0.1, -1.5e-10]",
+      "expect": "[1,0,0,100,1,1,1.2345678901234568e+29,9007199254740992,1e-7,1e+21,100000000000000000000,0.1,-1.5e-10]"
+    },
+    {
+      "name": "string escapes: only the RFC set is escaped",
+      "input": "[\"\\u00e9\", \"é\", \"\\u001f\", \"\\u007f\", \"\\u2028\", \"\\/\", \"\\b\\f\\n\\r\\t\", \"\\ud83d\\ude00\", \"😀\", \"a\\u0000b\"]",
+      "expect": "[\"é\",\"é\",\"\\u001f\",\"\",\" \",\"/\",\"\\b\\f\\n\\r\\t\",\"😀\",\"😀\",\"a\\u0000b\"]"
+    },
+    {
+      "name": "a governor receipt body, keys in the order verdict.mjs builds them",
+      "input": "{\"ts\":\"2026-10-29T12:00:00.000Z\",\"agent\":\"claude:abcd1234\",\"verdict\":\"allow\",\"reason\":\"in budget — 12% used\",\"source\":\"economics\",\"tool\":\"Bash\",\"model\":\"claude-opus-5-5\",\"tokens\":1200,\"operator\":\"ops@example.com\",\"client\":\"acme\",\"meter\":\"statusline\",\"policy\":\"silent\",\"harness\":\"claude-code\",\"adapter_version\":\"2.11.0\",\"spent_usd\":0.034,\"decision\":{\"decision\":\"allow\",\"code\":\"no_rule_matched\",\"rule\":null,\"tool\":\"Bash\",\"summary\":\"in budget\"},\"hv\":2}",
+      "expect": "{\"adapter_version\":\"2.11.0\",\"agent\":\"claude:abcd1234\",\"client\":\"acme\",\"decision\":{\"code\":\"no_rule_matched\",\"decision\":\"allow\",\"rule\":null,\"summary\":\"in budget\",\"tool\":\"Bash\"},\"harness\":\"claude-code\",\"hv\":2,\"meter\":\"statusline\",\"model\":\"claude-opus-5-5\",\"operator\":\"ops@example.com\",\"policy\":\"silent\",\"reason\":\"in budget — 12% used\",\"source\":\"economics\",\"spent_usd\":0.034,\"tokens\":1200,\"tool\":\"Bash\",\"ts\":\"2026-10-29T12:00:00.000Z\",\"verdict\":\"allow\"}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "lone high surrogate",
+      "input": "\"\\ud800\""
+    },
+    {
+      "name": "lone low surrogate as a key",
+      "input": "{\"\\udc00\":1}"
+    },
+    {
+      "name": "surrogates in the wrong order",
+      "input": "\"\\ude00\\ud83d\""
+    },
+    {
+      "name": "number overflows a double",
+      "input": "1e400"
+    },
+    {
+      "name": "negative number overflows a double",
+      "input": "[-1e400]"
+    },
+    {
+      "name": "trailing comma",
+      "input": "[1,]"
+    },
+    {
+      "name": "leading zero",
+      "input": "01"
+    },
+    {
+      "name": "raw control character in a string",
+      "input": "\"a\u0001b\""
+    },
+    {
+      "name": "missing colon",
+      "input": "{\"a\" 1}"
+    },
+    {
+      "name": "two values",
+      "input": "1 2"
+    },
+    {
+      "name": "single-quoted string",
+      "input": "'a'"
+    }
+  ],
+  "invalidText": [
+    {
+      "name": "duplicate key (JSON.parse keeps the last; a text canonicaliser must refuse)",
+      "input": "{\"a\":1,\"a\":2}"
+    },
+    {
+      "name": "duplicate key in a nested object",
+      "input": "{\"x\":{\"k\":true,\"k\":false}}"
+    }
+  ],
+  "receipts": [
+    {
+      "name": "v1 from genesis: sha256(prev + body text)",
+      "prev": "genesis",
+      "body": "{\"ts\":\"2026-10-29T12:00:00.000Z\",\"agent\":\"claude:abcd1234\",\"verdict\":\"deny\",\"reason\":\"not allowed to run a script downloaded from the internet\",\"source\":\"capability\",\"rule\":\"shell.pipe_to_shell\",\"tool\":\"Bash\",\"model\":\"\",\"tokens\":0,\"policy\":\"deny\",\"harness\":\"claude-code\",\"adapter_version\":\"2.11.0\"}",
+      "hv": 1,
+      "hash": "38741b99908ab37cdc7128a4ba3d63fd7c605f7118b4e0c99562645a41f5c0f1"
+    },
+    {
+      "name": "v2 chained onto a v1 hash",
+      "prev": "38741b99908ab37cdc7128a4ba3d63fd7c605f7118b4e0c99562645a41f5c0f1",
+      "body": "{\"ts\":\"2026-10-29T12:00:01.000Z\",\"agent\":\"claude:abcd1234\",\"verdict\":\"allow\",\"reason\":\"in budget\",\"source\":\"economics\",\"tool\":\"Read\",\"model\":\"claude-opus-5-5\",\"tokens\":1200,\"operator\":\"ops@example.com\",\"spent_usd\":0.034,\"hv\":2}",
+      "hv": 2,
+      "hash": "260c1a5d462a7be21bbf9ac147cf836cb3cb8ef9ab5c0e9a29be9175439b77ad"
+    },
+    {
+      "name": "the same v2 value spelled differently hashes the same",
+      "prev": "38741b99908ab37cdc7128a4ba3d63fd7c605f7118b4e0c99562645a41f5c0f1",
+      "body": "{ \"hv\": 2, \"tokens\": 1200.0, \"spent_usd\": 3.4e-2, \"operator\": \"ops@example.com\", \"model\": \"claude-opus-5-5\", \"tool\": \"Read\", \"source\": \"economics\", \"reason\": \"in budget\", \"verdict\": \"allow\", \"agent\": \"claude:abcd1234\", \"ts\": \"2026-10-29T12:00:01.000Z\" }",
+      "hv": 2,
+      "hash": "260c1a5d462a7be21bbf9ac147cf836cb3cb8ef9ab5c0e9a29be9175439b77ad"
+    },
+    {
+      "name": "v2 with non-ASCII text and a nested object",
+      "prev": "260c1a5d462a7be21bbf9ac147cf836cb3cb8ef9ab5c0e9a29be9175439b77ad",
+      "body": "{\"ts\":\"2026-10-29T12:00:02.000Z\",\"agent\":\"claude:abcd1234\",\"verdict\":\"summary\",\"reason\":\"session ended after $1.25 — café ☕ 😀\",\"tokens\":98765,\"meter\":\"statusline\",\"cost_usd\":1.25,\"usage\":{\"input\":1000,\"output\":200,\"cache_read\":0},\"hv\":2}",
+      "hv": 2,
+      "hash": "5eaa92c839efbc27af594cafa7c5121deb5d5b9c8a775919dd73acf09153a012"
+    }
+  ]
+}

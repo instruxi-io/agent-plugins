@@ -30,15 +30,35 @@ import { DIR, RECEIPTS, FILE_MODE } from './store.mjs';
 const MARK = join(DIR, 'outbox.json');
 
 // prevHash is the last CHAINED hash at the watermark: what the next shipped
-// record's hash was computed against. The server verifies each record as
-// sha256(prev + body), so the shipper has to know prev for the first record of
+// record's hash was computed against. The server verifies each record against
+// its prev (chain.mjs), so the shipper has to know prev for the first record of
 // a batch without re-reading everything before it.
+//
+// ackedHash is the newest chained hash the control plane has acknowledged
+// (answered 200 for). verify() reports the record truncated when the file no
+// longer holds it: unlike state.json's head, which loadState() re-derives from
+// the file's own tail, nothing on the decision path rewrites it, and it does
+// not follow a cut-down file backwards (markShipped).
+//
+// hashVersions is what the control plane said it verifies, from the
+// Enforcer-Receipt-Hash-Versions header of its last 200: the governor writes
+// hash v2 only once it includes 2 (hashVersion()).
 const readMark = () => {
   try {
     const m = JSON.parse(readFileSync(MARK, 'utf8'));
-    return { shippedBytes: Number(m.shippedBytes) || 0, shippedAt: m.shippedAt || null, lastError: m.lastError || null, prevHash: m.prevHash || 'genesis' };
+    const prevHash = m.prevHash || 'genesis';
+    return {
+      shippedBytes: Number(m.shippedBytes) || 0,
+      shippedAt: m.shippedAt || null,
+      lastError: m.lastError || null,
+      prevHash,
+      // A mark written before ackedHash existed: its prevHash is exactly that,
+      // the head of what the server acknowledged.
+      ackedHash: typeof m.ackedHash === 'string' ? m.ackedHash : prevHash !== 'genesis' ? prevHash : null,
+      hashVersions: Array.isArray(m.hashVersions) ? m.hashVersions.filter(Number.isInteger) : [1],
+    };
   } catch {
-    return { shippedBytes: 0, shippedAt: null, lastError: null, prevHash: 'genesis' };
+    return { shippedBytes: 0, shippedAt: null, lastError: null, prevHash: 'genesis', ackedHash: null, hashVersions: [1] };
   }
 };
 
@@ -110,8 +130,22 @@ export function pending(limit = 500) {
   return { lines, from, to: from + consumed, prevHash };
 }
 
-/** The control plane has these. Advance the watermark. */
-export function markShipped(to, at = Date.now(), prevHash = undefined) {
+/**
+ * The control plane has these. Advance the watermark.
+ *
+ * `chain` describes the batch, when there was one: `start` the prev its first
+ * record chained from, `hashes` the chained hashes it carried, `hashVersions`
+ * what the server's answer advertised. The acknowledged head moves to the
+ * batch's head only when the batch CONTINUES it (started from it, or carried
+ * it). A batch that does not is the record re-shipped from the top after the
+ * file shrank; moving the acknowledged head then would forget the very
+ * receipts the shrink removed.
+ * @param {number} to
+ * @param {number} [at]
+ * @param {string} [prevHash]
+ * @param {{start?: string, hashes?: string[], hashVersions?: number[]}} [chain]
+ */
+export function markShipped(to, at = Date.now(), prevHash = undefined, chain = undefined) {
   const m = readMark();
   // A watermark past the end of the record describes a file that no longer
   // exists — it was rotated, truncated or replaced. Without this the guard
@@ -123,8 +157,31 @@ export function markShipped(to, at = Date.now(), prevHash = undefined) {
   // Otherwise never move backwards: a late response from a slower batch must
   // not un-ship what a later one already delivered.
   if (!stale && to <= m.shippedBytes) return false;
-  return writeMark({ shippedBytes: to, shippedAt: at, lastError: null, prevHash: prevHash || m.prevHash });
+  let ackedHash = m.ackedHash;
+  if (chain && prevHash && prevHash !== 'genesis' && (!ackedHash || chain.start === ackedHash || (chain.hashes || []).includes(ackedHash)))
+    ackedHash = prevHash;
+  const hashVersions = chain && Array.isArray(chain.hashVersions) ? chain.hashVersions : m.hashVersions;
+  return writeMark({ shippedBytes: to, shippedAt: at, lastError: null, prevHash: prevHash || m.prevHash, ackedHash, hashVersions });
 }
+
+/** The newest chained hash the control plane acknowledged, or null. */
+export const ackedHash = () => readMark().ackedHash;
+
+// The receipt hash version to write lives in store.mjs: the decision path
+// needs it and must not load this module (test/hook-latency.test.mjs).
+export { hashVersion } from './store.mjs';
+
+/**
+ * Parse an Enforcer-Receipt-Hash-Versions header value ("1,2") to [1, 2].
+ * @param {string | null | undefined} header
+ */
+export const parseHashVersions = (header) => {
+  const v = String(header || '')
+    .split(',')
+    .map((x) => Number(x.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  return v.length ? v : [1];
+};
 
 /** Record why shipping failed, without losing the watermark. */
 export function markFailure(message) {
