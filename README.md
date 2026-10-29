@@ -43,8 +43,11 @@ The same `enforcer/` package installs in Codex through `.agents/plugins/marketpl
 `./hooks/codex/hooks.json`, display name). Codex exports `CLAUDE_PLUGIN_ROOT`, so the hook
 commands resolve unchanged. That hooks file is `hooks/hooks.json` with `--harness codex`
 on every command, which is how the governor knows it is running under Codex: receipts
-say `codex`, and the session registers as Codex. Codex asks you to re-trust a plugin's
-hooks when their definition changes, so expect that prompt once after updating.
+say `codex`, and the session registers as Codex. Codex runs a plugin's hooks only while
+your approval matches the installed plugin's contents, so every update needs a fresh
+approval: until then Codex prints `hook: SessionStart Failed` (and the same for each
+event) without starting them. Approve them with `/hooks` in an interactive `codex`;
+`enforcer doctor` says when the approval is missing or stale.
 
 ```sh
 codex plugin marketplace add instruxi-io/agent-plugins
@@ -52,11 +55,13 @@ codex plugin add enforcer@instruxi
 codex mcp login enforcer
 ```
 
-The shims are tested on Codex-shaped hook input (`enforcer/test/fixtures/codex`); events
-the shims do not handle (`PermissionRequest`, `PostCompact`, `Interrupt`) are ignored with
-exit 0 and no output. These fixtures are written from Codex's documented payload, and the
-install commands above have not been run against a live Codex: Codex CLI is not installed
-on the build machine.
+Under `--harness codex` each answer is cut to the keys Codex's parser accepts for that
+event (Codex fails a hook on any unknown key), and a governor `ask` is a deny, since Codex
+cannot ask from a hook. The shims are tested on hook input recorded from codex-cli 0.164.0
+(`enforcer/test/fixtures/codex`); events the shims do not handle (`PermissionRequest`,
+`PostCompact`, `Interrupt`) are ignored with exit 0 and no output. `node
+enforcer/scripts/codex-hooks-e2e.mjs` installs this checkout into a throwaway Codex home
+and runs `codex exec` against a local stub model, passing when every hook is Completed.
 
 ### Grok Build
 

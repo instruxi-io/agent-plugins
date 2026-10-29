@@ -57,9 +57,9 @@ export function onceKey(event, ev) {
 }
 
 /** What a user sees when the governor wanted to ask: Cursor has no ask, so the call was refused. */
-export function approvalMessage(what, why = '') {
+export function approvalMessage(what, why = '', harness = 'Cursor') {
   const r = String(why || '').replace(/[.\s]+$/, '');
-  return `Enforcer needs approval for ${what}${r ? `: ${r}` : ''}. Cursor cannot ask for it here, so it was blocked; approve it in the Enforcer console or adjust the policy, then retry.`;
+  return `Enforcer needs approval for ${what}${r ? `: ${r}` : ''}. ${harness} cannot ask for it here, so it was blocked; approve it in the Enforcer console or adjust the policy, then retry.`;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
