@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.7.2
+
+- Codex: hooks no longer report `Failed` on a codex-cli 0.164 run once approved. Under `--harness codex` every answer is cut to what Codex's parser accepts per event (SessionStart sent Claude Code's `hookSpecificOutput.env`, which Codex rejects), a governor `ask` is a deny (Codex fails an ask and runs the call unasked), and the SessionEnd timeout is Codex's 3s cap. `enforcer doctor` names a missing or stale Codex hook approval (Codex refuses to start a plugin hook whose approval no longer matches the installed plugin, and reports it Failed). Hook fixtures are recorded from a real Codex, and `scripts/codex-hooks-e2e.mjs` checks the hooks end to end against one.
+- `enforcer logout` now clears the harness telemetry keys: it revokes each cached ingest key with Enforcer where the sign-in may (the default sign-in lacks `enforcer:agents-credentials.destructive`, so those are named and left to expire), deletes `~/.enforcer/ingest-keys.json`, and removes the key from the Codex `[otel]` block, the Gemini CLI `.env` block and OpenClaw's `diagnostics.otel`, without recording an opt-out (the next sign-in turns telemetry back on). The dispatcher now reads a minted worker credential's id from v3's `data.credential.id`, so it is revoked when the worker exits instead of living its full day, and warns when the id is missing.
+- Codex and Grok sessions started within about a minute of each other no longer share one governor agent id: their session ids are UUIDv7, whose first 8 characters are a timestamp, so the agent id (receipts, budgets, the brief, the status line) now takes a UUIDv7's last 8 hex characters for those two harnesses, exactly as enforcer-governance's `session_id_key()` keys their telemetry (migrations 040 and 042). Claude Code, Cursor and every UUIDv4 id are unchanged.
+
 ## 1.7.1
 
 - Ingest keys mint against the real enforcer-v3: the agent card sent only `description` (v3 rejects any other card key with 422 invalid_card, which broke every harness key in 1.7.0). The test fake now enforces v3's card rules.

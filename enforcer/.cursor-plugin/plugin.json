@@ -1,7 +1,7 @@
 {
   "name": "enforcer",
   "displayName": "Enforcer",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "description": "Connects Cursor to your Enforcer workspace: the Enforcer MCP server, the skills, and the governor's hooks that gate and record every tool call.",
   "author": {
     "name": "Instruxi",
