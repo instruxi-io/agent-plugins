@@ -7,7 +7,7 @@
 //   login.mjs scopes       list the scopes this Enforcer offers a sign-in
 //   login.mjs api-key -|FILE  use an existing Enforcer API key, read from stdin (-) or a file; never an argument
 //   login.mjs status       who is signed in, and how
-//   login.mjs logout       forget the credential on this machine
+//   login.mjs logout       forget the credential on this machine, and the harness telemetry keys (src/logout-telemetry.mjs)
 //
 // The browser flow is the one Claude Code itself uses for a remote MCP server,
 // done here so the result lands in ~/.enforcer/credentials.json where both
@@ -523,6 +523,13 @@ async function main(rawArgv) {
   }
 
   if (cmd === 'logout') {
+    // Telemetry keys first, while the sign-in can still revoke them: the cache, each harness config holding a key.
+    try {
+      const { forgetTelemetry } = await import('../src/logout-telemetry.mjs');
+      for (const line of await forgetTelemetry()) out(line);
+    } catch (e) {
+      out(`Could not clear the harness telemetry keys (${e.message}); they expire on their own.`);
+    }
     const doc = readCredentials();
     const remaining = [];
     if (doc?.enforcer) {
