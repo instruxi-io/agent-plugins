@@ -53,6 +53,7 @@
         "rule": { "type": ["string", "null"] }
       }
     },
-    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256(previous hash + JSON of this line without hash). Absent on an unhashed line." }
+    "hv": { "const": 2, "description": "Receipt hash version 2: hash is over the line's RFC 8785 canonical JSON (core/chain.mjs). Absent on a version 1 line." },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Version 1: sha256(previous hash + JSON of this line without hash). Version 2 (hv 2): sha256(\"enforcer-receipt/v2\\n\" + previous hash + \"\\n\" + RFC 8785 JSON of this line without hash). Absent on an unhashed line." }
   }
 }

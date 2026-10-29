@@ -14,7 +14,6 @@
 //     and recorded unhashed, when the state cannot be read;
 //   - spend and rate checks need state and FAIL OPEN, saying so;
 //   - a tenant policy that cannot be reached leaves the local rule in charge.
-import { createHash } from 'node:crypto';
 import { gate } from './gate.mjs';
 import { isOn, isOff } from './bool.mjs';
 import { matchRule, DEFAULT_RULES, resolveRules } from './capability.mjs';
@@ -23,11 +22,12 @@ import { matchRule, DEFAULT_RULES, resolveRules } from './capability.mjs';
 const consult = async (...a) => (await import('./central.mjs')).consult(...a);
 import { evaluate as workerEvaluate } from './worker.mjs';
 import { evaluate as economics } from './economics.mjs';
-import { DEFAULTS, priceOf, tokensForDollars, dollarsForTokens, getAgent, setModel, clientFor, sha256 } from './policy.mjs';
+import { DEFAULTS, priceOf, tokensForDollars, dollarsForTokens, getAgent, setModel, clientFor } from './policy.mjs';
 import { sweep } from './sweep.mjs';
-import { withLock, loadState, saveState, loadConfig, writeReceipt, commit } from './store.mjs';
+import { withLock, loadState, saveState, loadConfig, writeReceipt, commit, hashVersion } from './store.mjs';
 import { effective, refresh, stale } from './managed.mjs';
 import { kick, SHIPPER } from './kick.mjs';
+import { seal } from './chain.mjs';
 import { brief as briefFor, markTold } from './brief.mjs';
 import { costUsd, receiptUsage } from './cost.mjs';
 import { signedInOperator, refreshIdentity, identityStale } from './identity.mjs';
@@ -166,8 +166,10 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
           spentUsd: UNKNOWN_SPEND.has(reading.source) ? undefined : costUsd(dollarsForTokens(a.tokens, priceOf(a.model, cfg.model).in)),
         }),
       );
-      const hash = sha256(state.prevHash + JSON.stringify(entry));
-      commit(state, entry, hash);
+      // v2 once the control plane has said it verifies v2, v1 until then
+      // (chain.mjs, store.mjs hashVersion()).
+      const sealed = seal(state.prevHash, entry, hashVersion());
+      commit(state, sealed.entry, sealed.hash);
       return v;
     });
 
@@ -329,10 +331,8 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
           // session's usage without our price table. Last, for the hash.
           ...(counts ? { usage: counts } : {}),
         };
-        const hash = createHash('sha256')
-          .update(state.prevHash + JSON.stringify(entry))
-          .digest('hex');
-        commit(state, entry, hash);
+        const sealed = seal(state.prevHash, entry, hashVersion());
+        commit(state, sealed.entry, sealed.hash);
       });
     },
   };

@@ -11,10 +11,13 @@
 // OTLP/JSON over fetch keeps the plugin dependency-free: no gRPC library, no
 // protobuf runtime, nothing to build.
 //
-// WHAT IS SENT, per receipt: the exact entry text the governor hashed, its hash,
-// and the hash it was chained to. The server recomputes sha256(prev + body) and
+// WHAT IS SENT, per receipt: the entry text, its hash, the hash it was chained
+// to, and (for hash v2) enforcer.receipt.hashv = "2". The server recomputes the
+// hash (chain.mjs: v1 over the exact text, v2 over its RFC 8785 form) and
 // refuses a record that does not match, so an edited line is caught THERE, not
-// just by /enforcer-governor:verify here.
+// just by /enforcer-governor:verify here. Its answer says which versions it
+// verifies (Enforcer-Receipt-Hash-Versions); that is how the governor learns it
+// may write v2 (outbox.mjs hashVersion()).
 //
 // WHEN. Never inside a hook's decision path: the hooks spawn bin/ship.mjs
 // detached (see kick()), so a slow or absent network cannot add latency to a
@@ -22,16 +25,18 @@
 
 import { hookFetch } from './http.mjs';
 import { readFileSync, writeFileSync, openSync, closeSync, unlinkSync, statSync } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DIR, privateDir, FILE_MODE } from './store.mjs';
-import { pending, markShipped, markFailure } from './outbox.mjs';
+import { pending, markShipped, markFailure, parseHashVersions } from './outbox.mjs';
+import { receiptHash, versionOf, GENESIS } from './chain.mjs';
 import { authHeaders, baseUrl, isFederated } from './credentials.mjs';
 
 export const RECEIPT_SCOPE = 'enforcer-governor/receipts';
 export const INGEST_PATH = '/api/v1/governance/otlp/v1/logs';
+/** The ingest response header naming the receipt hash versions it verifies. */
+export const HASH_VERSIONS_HEADER = 'Enforcer-Receipt-Hash-Versions';
 
-const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 const INSTALL = () => join(DIR, 'install.json');
 const LOCK = () => join(DIR, '.ship.lock');
 
@@ -64,7 +69,9 @@ const kv = (key, value) => ({ key, value: typeof value === 'boolean' ? { boolVal
  *
  * `prev` is the chained hash before the first line. Each line's hashed body is
  * the line minus `hash` — writeReceipt appends hash last, so removing it gives
- * back exactly the text that was hashed.
+ * back exactly the text a v1 hash covered. A v2 line (hv: 2) is hashed over
+ * its canonical form, so its text needs no such care, and is sent with
+ * enforcer.receipt.hashv = "2".
  *
  * A line whose hash does not follow from the running prev may still be honest:
  * the governor's state was reset and it chained from 'genesis' again. That
@@ -72,10 +79,18 @@ const kv = (key, value) => ({ key, value: typeof value === 'boolean' ? { boolVal
  * chain break — which is what happened — instead of refusing it as altered.
  * A line that verifies against neither is sent as-is and refused: it WAS altered.
  *
- * @returns {{ body: object, prev: string, count: number }}
+ * @returns {{ body: object, prev: string, count: number, hashes: string[] }}
  */
 export function toOtlp(lines, prev, install, version = '') {
   const records = [];
+  const hashes = [];
+  const hashOf = (p, e) => {
+    try {
+      return receiptHash(p, e);
+    } catch {
+      return null;
+    }
+  };
   for (const line of lines) {
     const { hash, ...entry } = line;
     const text = JSON.stringify(entry);
@@ -89,9 +104,13 @@ export function toOtlp(lines, prev, install, version = '') {
       record.attributes.push(kv('enforcer.receipt.chained', false));
     } else {
       let from = prev;
-      if (sha256(prev + text) !== hash && sha256('genesis' + text) === hash) from = 'genesis';
+      if (hashOf(prev, entry) !== hash && hashOf(GENESIS, entry) === hash) from = GENESIS;
       record.attributes.push(kv('enforcer.receipt.hash', hash), kv('enforcer.receipt.prev', from), kv('enforcer.receipt.chained', true));
+      // Only v2 is labelled: a server without v2 then refuses just these, and
+      // every v1 record is sent exactly as it always was.
+      if (versionOf(entry) !== 1) record.attributes.push(kv('enforcer.receipt.hashv', String(versionOf(entry))));
       prev = hash;
+      hashes.push(hash);
     }
     // Which harness decided this, as attributes a collector can group by
     // without parsing the body. Per RECORD, not on the resource: the resource
@@ -121,6 +140,7 @@ export function toOtlp(lines, prev, install, version = '') {
     },
     prev,
     count: records.length,
+    hashes,
   };
 }
 
@@ -140,7 +160,7 @@ export async function shipOnce(cfg = {}, { fetchImpl = hookFetch, now = Date.now
   const headers = await authHeaders({ fetchImpl, now });
   if (!headers['X-API-Key'] && !headers.Authorization) return { skipped: 'not signed in to Enforcer' };
 
-  const { body, prev, count } = toOtlp(batch.lines, batch.prevHash, installId(), cfg.version || '');
+  const { body, prev, count, hashes } = toOtlp(batch.lines, batch.prevHash, installId(), cfg.version || '');
   const url = (cfg.ingestUrl || baseUrl(cfg)).replace(/\/+$/, '') + INGEST_PATH;
   try {
     const res = await fetchImpl(url, {
@@ -159,7 +179,11 @@ export async function shipOnce(cfg = {}, { fetchImpl = hookFetch, now = Date.now
       // Advance even past refused records: the server will never accept them,
       // and holding the watermark would resend them forever. They are still in
       // the local file, where /enforcer-governor:verify names them.
-      markShipped(batch.to, now(), prev);
+      // What the server verifies rides on the same answer. A 200 without the
+      // header is a server that predates hash v2, and the governor goes back
+      // to writing v1 -- which every server takes.
+      const hashVersions = parseHashVersions(res.headers?.get?.(HASH_VERSIONS_HEADER));
+      markShipped(batch.to, now(), prev, { start: batch.prevHash, hashes, hashVersions });
       if (rejected) markFailure(`${rejected} receipt(s) refused by the control plane as altered or malformed`);
       return { shipped: count - rejected, rejected, pending: batch.lines.length >= limit };
     }
