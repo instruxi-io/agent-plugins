@@ -323,14 +323,34 @@ export async function mintWorkerToken(api, env = process.env, name = 'graph-work
   return (await mintWorkerCredential(api, env, name))?.secret || null;
 }
 
-/** As mintWorkerToken, but returns {secret, id, agent} so the caller can revoke it; throws when the mint answered without a secret. */
-export async function mintWorkerCredential(api, env = process.env, name = 'graph-worker') {
+/**
+ * The new credential's id in an issue response. enforcer-v3 answers `{success, data: {credential: {id, ...}, secret}}`
+ * (IssuedCredential in enforcer-v3 internal/usecase/agents/views.go); a flat `data.id` / `data.credential_id` is still read.
+ */
+export const issuedCredentialId = (r) => {
+  const d = r?.data;
+  const id = d?.credential?.id || d?.id || d?.credential_id;
+  return typeof id === 'string' && id ? id : null;
+};
+
+/**
+ * As mintWorkerToken, but returns {secret, id, agent} so the caller can revoke it; throws when the mint answered without a secret.
+ * A response without the credential's id is warned about: without it the credential cannot be revoked and lives its full day.
+ */
+export async function mintWorkerCredential(
+  api,
+  env = process.env,
+  name = 'graph-worker',
+  { warn = (m) => process.stderr.write(`graph-dispatch: ${m}\n`) } = {},
+) {
   const agent = env.ENFORCER_WORKER_AGENT_ID;
   if (!agent) return null;
   const r = await api.call('POST', `/agents/${agent}/credentials`, { name, scopes: WORKER_SCOPES, expires_in_days: 1 });
   const secret = r?.data?.secret || null;
   if (!secret) throw new Error(`no secret in the mint response (status ${r?.status ?? 'unknown'})`);
-  return { secret, id: r?.data?.id || r?.data?.credential_id || null, agent };
+  const id = issuedCredentialId(r);
+  if (!id) warn(`the worker credential "${name}" came back without an id, so it cannot be revoked when the worker exits; it expires on its own in a day`);
+  return { secret, id, agent };
 }
 
 /** Delete a minted worker credential; best effort, returns true when the call did not throw. */

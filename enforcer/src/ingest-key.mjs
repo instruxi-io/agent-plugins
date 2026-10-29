@@ -16,7 +16,7 @@
 //
 // Nothing here logs. The secret leaves this module only as a return value (and through the CLI's
 // stdout, which is the point of the CLI).
-import { readFileSync, mkdirSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, renameSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname as osHostname } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -179,7 +179,14 @@ async function v3(ctx, method, path, body) {
     res = await apiFetch(
       `${ctx.base}${V3}${path}`,
       { method, headers: { ...ctx.headers, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) },
-      { fetchImpl: ctx.fetchImpl, timeoutMs: HTTP_TIMEOUT_MS, retries: 1, baseDelayMs: 100, maxDelayMs: 500, sleep: ctx.sleep },
+      {
+        fetchImpl: ctx.fetchImpl,
+        timeoutMs: ctx.timeoutMs ?? HTTP_TIMEOUT_MS,
+        retries: ctx.retries ?? 1,
+        baseDelayMs: 100,
+        maxDelayMs: 500,
+        sleep: ctx.sleep,
+      },
     );
   } catch (e) {
     return { status: 0, ok: false, data: null, apiCode: null, message: e?.name || 'network error' };
@@ -499,6 +506,113 @@ export function ingestHeaders(harness) {
   }
   const e = cachedEntry(harness, base, owner);
   return e && msLeft(e, Date.now()) > 0 ? { 'X-API-Key': e.key } : {};
+}
+
+// ---- sign-out --------------------------------------------------------------------------------------
+
+/** Why a cached key was not revoked server-side; `expires` is when it stops working on its own. */
+const REVOKE_WHY = {
+  scope: 'this sign-in lacks enforcer:agents-credentials.destructive',
+  signed_out: 'Enforcer no longer accepts this sign-in',
+  no_sign_in: 'no sign-in to revoke it with',
+  elsewhere: 'it was issued by another Enforcer or another sign-in',
+  error: 'Enforcer did not answer the revoke',
+};
+export { REVOKE_WHY };
+
+/**
+ * For sign-out: revoke every cached telemetry key with v3 where this sign-in may, then delete the cache
+ * (and any temp file a crashed write left), so nothing in ~/.enforcer holds a key any more. Revoking needs
+ * enforcer:agents-credentials.destructive, which the default sign-in does not hold, so it is best effort and
+ * fails open: a key that could not be revoked is reported in `notRevoked` and expires on its own. The key
+ * a rotation replaced (`previousCredentialId`) is revoked too; its secret was never cached.
+ *
+ * Call it BEFORE the sign-in is removed: the revoke uses it. Never throws.
+ * Returns { file, deleted, keys: [secret], revoked: [{harness, credentialId}], notRevoked: [{harness, credentialId, why, expiresAt}] }.
+ */
+export async function forgetIngestKeys(
+  { fetchImpl = globalThis.fetch, now = Date.now, sleep = undefined, timeoutMs = 5_000, lockWaitMs = 5_000 } = /** @type {any} */ ({}),
+) {
+  const file = INGEST_KEYS_FILE();
+  const result = { file, deleted: false, keys: /** @type {string[]} */ ([]), revoked: /** @type {any[]} */ ([]), notRevoked: /** @type {any[]} */ ([]) };
+  // A concurrent mint must not write a fresh key after the cache is gone: hold its lock when it can be had quickly.
+  let release = null;
+  try {
+    release = await acquireRefreshLock(lockWaitMs, { path: lockPath(), staleMs: LOCK_STALE_MS });
+  } catch {
+    /* proceed without it */
+  }
+  try {
+    // Read loosely: a cache written by a newer plugin still holds keys, and sign-out still removes them.
+    const doc = readJson(file);
+    const entries = Object.entries(doc && typeof doc === 'object' && doc.keys && typeof doc.keys === 'object' ? doc.keys : {}).filter(
+      ([, e]) => e && typeof e === 'object',
+    );
+    result.keys = entries.map(([, e]) => e.key).filter((k) => typeof k === 'string' && k);
+    const creds = entries.flatMap(([harness, e]) =>
+      [e.credentialId, e.previousCredentialId]
+        .filter((id) => typeof id === 'string' && id)
+        .map((credentialId) => ({
+          harness,
+          credentialId,
+          agentId: e.agentId,
+          baseUrl: e.baseUrl,
+          expiresAt: credentialId === e.credentialId ? e.expiresAt || null : null,
+        })),
+    );
+    if (creds.length) {
+      let base = null;
+      try {
+        base = trim(resolveConfig().baseUrl);
+      } catch {
+        /* no base: nothing can be revoked */
+      }
+      let headers = {};
+      try {
+        headers = base ? await authHeaders({ fetchImpl, now }) : {};
+      } catch {
+        headers = {};
+      }
+      const signedIn = !!(headers['X-API-Key'] || headers.Authorization);
+      const ctx = { base, headers, fetchImpl, now, sleep, timeoutMs, retries: 0 };
+      for (const c of creds) {
+        const miss = (why) => result.notRevoked.push({ harness: c.harness, credentialId: c.credentialId, why, expiresAt: c.expiresAt });
+        // The sign-in's token goes only to the origin it was made for, never to one named in a file.
+        if (!base || typeof c.baseUrl !== 'string' || trim(c.baseUrl) !== base || typeof c.agentId !== 'string' || !c.agentId) {
+          miss('elsewhere');
+          continue;
+        }
+        if (!signedIn) {
+          miss('no_sign_in');
+          continue;
+        }
+        const r = await v3(ctx, 'POST', `/agents/${encodeURIComponent(c.agentId)}/credentials/${encodeURIComponent(c.credentialId)}/revoke`, {
+          reason: 'signed out: enforcer logout on this machine',
+        });
+        // 404: the credential or its agent is already gone, which is what was wanted.
+        if (r.ok || r.status === 404) result.revoked.push({ harness: c.harness, credentialId: c.credentialId });
+        else if (r.status === 403) miss('scope');
+        else if (r.status === 401) miss('signed_out');
+        else miss('error');
+      }
+    }
+  } catch {
+    /* fail open: the cache is still deleted below */
+  }
+  try {
+    const dir = SHARED_DIR();
+    for (const name of readdirSync(dir)) if (/^\.ingest-keys\..*\.tmp$/.test(name)) rmSync(join(dir, name), { force: true });
+  } catch {
+    /* no dir */
+  }
+  try {
+    rmSync(file, { force: true });
+    result.deleted = true;
+  } catch {
+    /* reported by the caller's leftover scan */
+  }
+  release?.();
+  return result;
 }
 
 // ---- CLI: enforcer ingest-key --harness <h> [--json] --------------------------------------------
