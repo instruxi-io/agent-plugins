@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.8.1
+
+- Dispatch mints and revokes worker credentials on v3 (`/api/v1/enforcer`) instead of the graph service, which has no `/agents` routes: with `ENFORCER_WORKER_AGENT_ID` set, every worker mint had failed closed and the node never launched.
+
 ## 1.8.0
 
 - Gemini CLI is a fourth, experimental dispatch harness: `--harness gemini` launches `gemini -p -o stream-json --approval-mode yolo`, `geminiEvents` parses its stream (from a recorded fixture), and `enforcer harness install gemini` prints the `gemini mcp add` command that wires the graph MCP server; DISPATCHER.md lists what Gemini cannot run (hooks, per-launch MCP config, turn and budget flags).
