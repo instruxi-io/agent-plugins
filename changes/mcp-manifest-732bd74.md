@@ -1,0 +1,1 @@
+- The locked MCP tool list now matches enforcer-v3-mcp 732bd74 (0.10.29): adds `add_task`, `remove_task`, `rename_task`, `rename_plan` and `restore_task` (write) and `gvnr_panel` (read), editing a plan inside the chat and the ChatGPT side panel, all in the gvnr profile.
