@@ -41,10 +41,10 @@
       "repo": "enforcer-v3-mcp",
       "path": "tool-names.json",
       "kind": "json",
-      "ref": "ca3b432847d11d573aaf76b3d784dc787ae3ce77",
+      "ref": "732bd7425cee7f98a6862678a3e665fb9aae07c8",
       "file": "spec/mcp-manifest.json",
-      "upstream_sha256": "b369502d4357dd56ba74d1b0185d0827acab686520730fab101fc48bf97a3f1c",
-      "sha256": "b369502d4357dd56ba74d1b0185d0827acab686520730fab101fc48bf97a3f1c"
+      "upstream_sha256": "94b3a2d1e281490c654cf50c47b66a7913bfe90546e0bbbfcd436a6d40011581",
+      "sha256": "94b3a2d1e281490c654cf50c47b66a7913bfe90546e0bbbfcd436a6d40011581"
     }
   }
 }
