@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.8.0
+
+- Gemini CLI is a fourth, experimental dispatch harness: `--harness gemini` launches `gemini -p -o stream-json --approval-mode yolo`, `geminiEvents` parses its stream (from a recorded fixture), and `enforcer harness install gemini` prints the `gemini mcp add` command that wires the graph MCP server; DISPATCHER.md lists what Gemini cannot run (hooks, per-launch MCP config, turn and budget flags).
+
 ## 1.7.2
 
 - Codex: hooks no longer report `Failed` on a codex-cli 0.164 run once approved. Under `--harness codex` every answer is cut to what Codex's parser accepts per event (SessionStart sent Claude Code's `hookSpecificOutput.env`, which Codex rejects), a governor `ask` is a deny (Codex fails an ask and runs the call unasked), and the SessionEnd timeout is Codex's 3s cap. `enforcer doctor` names a missing or stale Codex hook approval (Codex refuses to start a plugin hook whose approval no longer matches the installed plugin, and reports it Failed). Hook fixtures are recorded from a real Codex, and `scripts/codex-hooks-e2e.mjs` checks the hooks end to end against one.
