@@ -58,7 +58,7 @@ if (area === 'event') {
   // (hooks/codex/hooks.json), and this is how the governor learns it is under
   // Codex: Codex sets no marker of its own. Grok's shim sets the same variable.
   const h = rest[rest.indexOf('--harness') + 1];
-  if (rest.includes('--harness') && ['claude', 'codex', 'grok', 'cursor'].includes(h)) process.env.ENFORCER_HARNESS = h;
+  if (rest.includes('--harness') && ['claude', 'codex', 'grok', 'gemini', 'cursor'].includes(h)) process.env.ENFORCER_HARNESS = h;
   const code = await runEvent(sub, { graphOnly });
   await new Promise((done) => process.stdout.write('', done)); // drain a piped stdout before exiting (macOS cut replies at 8192 bytes)
   process.exit(code);
@@ -161,7 +161,7 @@ if (area === 'harness' && (sub === 'install' || sub === 'status') && rest[0] ===
   const { main: openclawMain } = await import('../src/openclaw.mjs');
   process.exit(openclawMain(sub));
 }
-if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok', 'codex'].includes(rest[0])) {
+if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok', 'codex', 'gemini'].includes(rest[0])) {
   const { migrate } = await import('../src/harness-migrate.mjs');
   const r = migrate(rest[0], { dryRun: rest.includes('--dry-run') });
   process.exit(r.ok ? 0 : 1);

@@ -1,4 +1,4 @@
-// Launching workers: the claude/grok/codex command lines, the worker environment, detached spawn,
+// Launching workers: the claude/grok/codex/gemini command lines, the worker environment, detached spawn,
 // and process-group kill (SIGTERM, a grace period, then SIGKILL) by process.kill(-pid).
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
@@ -17,11 +17,12 @@ export const AGENT = process.env.GRAPH_DISPATCH_AGENT || 'enforcer:graph-worker'
 export const GRAPH_TOOLS = ['graph_next_work', 'graph_heartbeat', 'graph_report', 'graph_remember', 'graph_plan_status'];
 export const PREFIXES = ['mcp__plugin_enforcer_enforcer__', 'mcp__enforcer__', 'mcp__enforcer-graph__'];
 export const BASE_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'ToolSearch'];
-export const HARNESSES = ['claude', 'codex', 'grok'];
+export const HARNESSES = ['claude', 'codex', 'grok', 'gemini'];
 export const HARNESS_CAPS = {
   claude: { supported: true, experimental: false, models: null },
   grok: { supported: true, experimental: true, models: ['grok'] },
   codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'] },
+  gemini: { supported: true, experimental: true, models: ['gemini', 'auto'] },
 };
 
 /** Per-launch settings: the installed release is off for the child, so the --plugin-dir checkout is the only copy of the hooks and MCP server. */
@@ -415,6 +416,12 @@ export function launchCmd(prompt, model, args, key, { session = null, resume = f
     const cmd = [args.codex || process.env.CODEX_BIN || 'codex', 'exec', '--json'];
     if (harnessKnowsModel('codex', model)) cmd.push('--model', model);
     return [...cmd, prompt];
+  }
+  if (harness === 'gemini') {
+    // gemini 0.38 headless: -p prompt, -o stream-json (NDJSON, fixture test/fixtures/gemini-stream.jsonl), yolo approves tools.
+    const cmd = [args.gemini || process.env.GEMINI_BIN || 'gemini', '-p', prompt, '-o', 'stream-json', '--approval-mode', 'yolo'];
+    if (harnessKnowsModel('gemini', model)) cmd.push('-m', model);
+    return cmd;
   }
   const cmd = [args.agentBin || process.env.CLAUDE_BIN || 'claude', '-p', prompt, '--agent', AGENT, '--model', model];
   for (const d of pluginDirs(args.pluginDir)) cmd.push('--plugin-dir', d);
