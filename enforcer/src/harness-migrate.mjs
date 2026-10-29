@@ -1,4 +1,4 @@
-// `enforcer harness install|uninstall <grok|codex>`: both are the same migration off the old runtime copy.
+// `enforcer harness install|uninstall <grok|codex|gemini>`: all three are the same migration off the old runtime copy.
 // Grok and Codex install the plugin natively now, and its hooks run from the plugin root, so the copy at
 // ~/.config/enforcer/<harness>/<version>, the hooks/agent files pointing at it and the ~/.local/bin/enforcer
 // shim are leftovers. This removes exactly what the old install's manifest.json lists, restores the
@@ -7,12 +7,25 @@ import { readFileSync, writeFileSync, existsSync, rmSync, rmdirSync, renameSync 
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { assertSchema } from './schema.mjs';
+import { resolveConfig } from './config.mjs';
 
-export const HARNESSES = ['grok', 'codex'];
+export const HARNESSES = ['grok', 'codex', 'gemini'];
 export const NATIVE = {
   grok: 'grok plugin marketplace add instruxi-io/agent-plugins && grok plugin install enforcer --trust',
   codex: 'codex plugin marketplace add instruxi-io/agent-plugins && codex plugin add enforcer@instruxi',
+  // Gemini has no plugin marketplace for our hooks: only the graph MCP server is wired, at user scope.
+  gemini: 'gemini mcp add --scope user --transport http --trust enforcer <mcp-url> -H "X-API-Key: $ENFORCER_API_KEY"',
 };
+/** The native install command, with gemini's `<mcp-url>` filled in from the resolved config when it resolves. */
+export function nativeCmd(harness) {
+  let url = null;
+  try {
+    url = resolveConfig().mcpUrl;
+  } catch {
+    /* no config: leave the placeholder */
+  }
+  return url ? NATIVE[harness].replace('<mcp-url>', url) : NATIVE[harness];
+}
 export const shimPath = (home = homedir()) => join(home, '.local', 'bin', 'enforcer');
 export const baseDir = (harness, home = homedir()) => join(home, '.config', 'enforcer', harness);
 export const manifestPath = (harness, home = homedir()) => join(baseDir(harness, home), 'manifest.json');
@@ -65,7 +78,7 @@ function ownsShim(harness, man, home) {
 export function migrate(harness, { dryRun = false, home = homedir(), out = (s) => process.stdout.write(s + '\n') } = {}) {
   if (!HARNESSES.includes(harness)) throw new Error(`unknown harness ${harness}`);
   const mp = manifestPath(harness, home);
-  const native = () => out(`install ${harness} natively:\n  ${NATIVE[harness]}`);
+  const native = () => out(`install ${harness} natively:\n  ${nativeCmd(harness)}`);
   if (!existsSync(mp)) {
     out(`no old ${harness} runtime copy (no ${mp}); nothing to remove`);
     native();

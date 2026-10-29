@@ -107,7 +107,8 @@ test('a route naming an experimental harness without the flag fails startup', as
   assert.match(lines.join('\n'), /routes\.mechanical\.harness: --harness codex is experimental/);
   // experimental grok needs --experimental, per route as for the flag
   assert.throws(() => table({ deep: { harness: 'grok' } }), /routes\.deep\.harness: --harness grok is experimental/);
-  assert.throws(() => table({ deep: { harness: 'gemini' } }), /routes\.deep\.harness: must be one of claude, codex, grok/);
+  assert.throws(() => table({ deep: { harness: 'gemini' } }), /routes\.deep\.harness: --harness gemini is experimental/);
+  assert.throws(() => table({ deep: { harness: 'nope' } }), /routes\.deep\.harness: must be one of claude, codex, grok, gemini/);
 });
 
 // ---- validation
