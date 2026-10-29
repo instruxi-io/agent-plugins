@@ -8,6 +8,7 @@ import { logHook, noteFailure } from './graph/hooklog.mjs';
 import { loadRun } from './graph/run.mjs';
 import { LEGACY_PROJECT_CONFIG } from '../hooks/claude/paths.mjs';
 import { cursorPayload, onceKey, once, approvalMessage } from './cursor-once.mjs';
+import { codexOutput } from './codex-output.mjs';
 
 // Cursor runs a preToolUse "ask" (it does not enforce one) and refuses a subagentStart ask, so under
 // Cursor the core's ask is a deny that says approval is what is missing.
@@ -184,6 +185,8 @@ export async function runEvent(name, opts = {}) {
   // Cursor: its own payload, through the shim or through the Claude Code hooks Cursor imports.
   // Both are read the same way, as one Cursor event, and decided once (cursor-once.mjs).
   const cursor = !opts.notCursor && cursorPayload(ev);
+  // `--harness codex` (hooks/codex/hooks.json): bin/enforcer set ENFORCER_HARNESS from it.
+  const codex = !cursor && (opts.harness || process.env.ENFORCER_HARNESS) === 'codex';
   let onceK = null;
   if (cursor) {
     const { normalize, EVENTS: CURSOR_EVENTS } = await import('../hooks/cursor/shim.mjs');
@@ -221,6 +224,8 @@ export async function runEvent(name, opts = {}) {
       code = r.code;
     }
     if (cursor && out) out = cursorAsk(event, out, ev);
+    // Codex rejects any key its schema does not name, and a rejected answer is a Failed hook (src/codex-output.mjs).
+    else if (codex) out = codexOutput(event, out, ev);
     return { out, code };
   };
   let out, code;

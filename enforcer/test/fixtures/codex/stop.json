@@ -1,0 +1,11 @@
+{
+  "session_id": "01a18553-198d-7ad0-b532-ff26b61bb013",
+  "turn_id": "01a18553-1a02-7411-a86d-2326ed120c17",
+  "transcript_path": "/home/dev/.codex/sessions/2026/10/28/rollout-2026-10-28T21-42-58-01a18553-198d-7ad0-b532-ff26b61bb013.jsonl",
+  "cwd": "/home/dev/project",
+  "hook_event_name": "Stop",
+  "model": "gpt-5",
+  "permission_mode": "bypassPermissions",
+  "stop_hook_active": false,
+  "last_assistant_message": "ok"
+}

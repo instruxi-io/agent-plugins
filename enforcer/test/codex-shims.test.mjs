@@ -75,8 +75,11 @@ ok('plugin.json carries extensions.com.openai, with its own hooks file');
 const claudeHooks = JSON.parse(readFileSync(join(root, 'hooks/hooks.json'), 'utf8'));
 const codexHooks = JSON.parse(readFileSync(join(root, 'hooks/codex/hooks.json'), 'utf8'));
 for (const groups of Object.values(claudeHooks.hooks)) for (const g of groups) for (const h of g.hooks) h.command += ' --harness codex';
+// Codex clamps a SessionEnd hook to 3s (codex-rs/hooks/src/events/session_end.rs SESSION_END_MAX_TIMEOUT_SEC)
+// and warns on every start when the file asks for more.
+for (const g of claudeHooks.hooks.SessionEnd) for (const h of g.hooks) h.timeout = 3;
 assert.deepEqual(codexHooks, claudeHooks);
-ok('hooks/codex/hooks.json is hooks/hooks.json with --harness codex on every command');
+ok('hooks/codex/hooks.json is hooks/hooks.json with --harness codex on every command (SessionEnd at Codex 3s cap)');
 
 // Under that flag the decision record names Codex, not Claude Code. The env is
 // cleared of Claude Code's own marker so the suite proves the flag, not its parent.

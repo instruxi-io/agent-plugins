@@ -54,7 +54,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/enforcer\" event session-end --harness codex",
-            "timeout": 10
+            "timeout": 3
           }
         ]
       }

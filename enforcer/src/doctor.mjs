@@ -8,6 +8,7 @@ import { readdirSync } from 'node:fs';
 import { stateBase } from './state.mjs';
 import { readCredentials, enforcerKey } from './credentials.mjs';
 import { resolveConfig, validateEnv } from './config.mjs';
+import { codexHookTrustCheck } from './codex-hook-trust.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -171,6 +172,8 @@ export async function runChecks({ fetchImpl = defaultFetch, network = true, plat
     });
   const grok = grokRuntimeCheck(home);
   if (grok) add('grok runtime copy', grok);
+  const codexTrust = codexHookTrustCheck(home, home === homedir() ? undefined : { codexHome: join(home, '.codex') });
+  if (codexTrust) add('codex hook approval', codexTrust);
   return rows;
 }
 
