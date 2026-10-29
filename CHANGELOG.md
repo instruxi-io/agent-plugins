@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.7.1
+
+- Ingest keys mint against the real enforcer-v3: the agent card sent only `description` (v3 rejects any other card key with 422 invalid_card, which broke every harness key in 1.7.0). The test fake now enforces v3's card rules.
+- The locked MCP tool list now matches enforcer-v3-mcp 732bd74 (0.10.29): adds `add_task`, `remove_task`, `rename_task`, `rename_plan` and `restore_task` (write) and `gvnr_panel` (read), editing a plan inside the chat and the ChatGPT side panel, all in the gvnr profile.
+
 ## 1.7.0
 
 - Codex: the enforcer plugin now turns on Codex's own OpenTelemetry export to Enforcer governance by default (events and metrics with full `/v1/logs` and `/v1/metrics` paths, metrics no longer to OpenAI's statsig, traces off, no prompt text or tool output), authenticated with the machine's Codex ingest key in a 0600 `config.toml`; written at Codex session start and sign-in, shown by `enforcer governor telemetry status`, turned off with `enforcer governor telemetry codex off`. Depends on the ingest-key module (#338).
