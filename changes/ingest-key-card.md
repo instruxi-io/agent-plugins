@@ -1,0 +1,1 @@
+Ingest keys mint against the real enforcer-v3: the agent card sent only `description` (v3 rejects any other card key with 422 invalid_card, which broke every harness key in 1.7.0). The test fake now enforces v3's card rules.

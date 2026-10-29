@@ -292,7 +292,9 @@ async function findOrCreateAgent(ctx) {
       owner: { kind: 'account' },
       role_id,
       scopes: [INGEST_SCOPE],
-      card: { purpose: 'telemetry-ingest', harness: ctx.harness, host: ctx.host },
+      // v3 accepts only description/model/agent_card_url/skills/tools in a card (agent.ValidateCard);
+      // the harness itself rides on the credential, which is where v3 and governance read it.
+      card: { description: `Telemetry-only ingest key holder for ${ctx.harness} on ${ctx.host}` },
     });
     if (r.ok && r.data?.id) return r.data.id;
     if (r.status === 409 && r.apiCode === 'slug_taken') continue;
