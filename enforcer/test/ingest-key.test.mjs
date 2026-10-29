@@ -78,6 +78,14 @@ function fakeV3({ accepts = (h) => h['x-api-key'] === USER_KEY, ttlDays = 30, no
       if (!canCreate) return json(403, { error: 'insufficient_scope' });
       if (s.agents.length >= agentCap) return json(409, { error: 'agent_limit_reached' });
       if (s.agents.some((a) => a.slug === body.slug)) return json(409, { error: 'slug_taken' });
+      // enforcer-v3 agent.ValidateCard: only these card keys exist; any other is 422 invalid_card.
+      const cardKeys = { description: 'string', model: 'string', agent_card_url: 'string', skills: 'array', tools: 'array' };
+      for (const [k, v] of Object.entries(body.card || {})) {
+        const want = cardKeys[k];
+        if (!want || (want === 'array' ? !Array.isArray(v) : typeof v !== want)) {
+          return json(422, { error: 'invalid_card', message: `unknown key "${k}"` });
+        }
+      }
       const a = { id: `agent-${s.agents.length + 1}`, state: 'active', ...body };
       s.agents.push(a);
       return json(201, { success: true, data: a });
