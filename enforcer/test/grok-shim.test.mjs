@@ -56,6 +56,8 @@ ok('harness is grok');
     .map((l) => JSON.parse(l));
   assert.ok(recs.length > 0, 'a receipt was written');
   assert.deepEqual([...new Set(recs.map((x) => x.harness))], ['grok-cli']);
-  assert.deepEqual([...new Set(recs.map((x) => x.agent))], ['grok:01a10c4c']);
+  // The session id is a UUIDv7 (01a10c4c-...-fc83af36a145): keyed by its random tail, as governance's
+  // session_id_key() keys Grok telemetry, not by the timestamp in its first 8.
+  assert.deepEqual([...new Set(recs.map((x) => x.agent))], ['grok:af36a145']);
 }
 ok('a Grok session through the shim: the receipt says grok-cli, agent grok:<session>');
