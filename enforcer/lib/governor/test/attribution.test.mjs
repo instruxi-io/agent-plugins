@@ -267,6 +267,61 @@ await ok('the agent id names the running harness: claude:, grok:, codex:, else c
   assert.equal(agentOf({}, {}), 'claude-code');
 });
 
+// Codex and Grok session ids are UUIDv7: the first 8 hex are a millisecond
+// timestamp's top 32 bits, so two sessions a second apart shared one agent id
+// (receipts, budgets, the brief). Keyed by the random tail instead, exactly as
+// enforcer-governance's session_id_key() keys their telemetry (040, 042).
+await ok('a Codex or Grok UUIDv7 is keyed by its last 8 hex: two sessions 1 s apart stay apart', async () => {
+  const { agentOf } = await import('../adapters/claude-code/events.mjs');
+  const a = '01a18377-5994-7f93-ab8e-f630aa48b62c';
+  const b = '01a18377-5d7c-7a01-9c3e-0b52d1e7a915'; // 1000 ms later, same top 32 bits
+  for (const p of ['codex', 'grok']) {
+    const env = { ENFORCER_HARNESS: p };
+    assert.equal(agentOf({ session_id: a }, env), `${p}:aa48b62c`);
+    assert.equal(agentOf({ session_id: b }, env), `${p}:d1e7a915`);
+    assert.notEqual(agentOf({ session_id: a }, env), agentOf({ session_id: b }, env));
+    assert.equal(agentOf({ session_id: a, agent_id: 'ab12cd34ef' }, env), `${p}:aa48b62c:ab12cd34`, 'a subagent keeps its suffix');
+  }
+  // The recorded Grok fixture's id (harness/grok/fixtures/session-start.json).
+  assert.equal(agentOf({ session_id: '01a10c4c-c5e5-75e0-aaaa-fc83af36a145' }, { ENFORCER_HARNESS: 'grok' }), 'grok:af36a145');
+  // UUIDv4 ids, and every other harness, keep the first 8 (nothing already filed moves).
+  const v4 = '0f3c9a1b-2222-4333-8444-555566667777';
+  assert.equal(agentOf({ session_id: v4 }, { ENFORCER_HARNESS: 'codex' }), 'codex:0f3c9a1b');
+  assert.equal(agentOf({ session_id: v4 }, { ENFORCER_HARNESS: 'grok' }), 'grok:0f3c9a1b');
+  assert.equal(agentOf({ session_id: v4 }, { CLAUDECODE: '1' }), 'claude:0f3c9a1b');
+  assert.equal(agentOf({ session_id: a }, { CLAUDECODE: '1' }), 'claude:01a18377', 'Claude Code: first 8 even for a v7');
+  assert.equal(agentOf({ session_id: a }, { ENFORCER_HARNESS: 'cursor' }), 'cursor:01a18377');
+  assert.equal(agentOf({ session_id: a }, {}), 'claude:01a18377', 'a harness we cannot tell keeps the old id');
+});
+
+// Parity with enforcer-governance session_id_key(session_id, harness): the
+// cases of its TestCodexTelemetry_TwoSessionsInTheSameMinuteStayApart and
+// TestGrokTelemetry_TwoSessionsInTheSameMinuteStayApart (migration 042). A
+// row that differs here files a session's receipts and telemetry apart.
+await ok('sessionKey matches governance session_id_key() case for case', async () => {
+  const { sessionKey } = await import('../adapters/claude-code/events.mjs');
+  const first = '01a18377-5994-7f93-ab8e-f630aa48b62c';
+  const cases = [
+    [first, 'codex', 'aa48b62c'],
+    ['01a18377-5d7c-7a01-9c3e-0b52d1e7a915', 'codex', 'd1e7a915'],
+    ['0f3c9a1b-7d2e-4c11-9a55-3e8b1f0c2d44', 'claude-code', '0f3c9a1b'],
+    ['fb79a116-69d9-4f36-8a2b-1c2d3e4f5a6b', 'gemini-cli', 'fb79a116'],
+    ['0f3c9a1b-7d2e-4c11-9a55-3e8b1f0c2d44', 'codex', '0f3c9a1b'],
+    ['019a-codex-session', 'codex', '019a-cod'],
+    [first, 'grok-cli', 'aa48b62c'],
+    ['0f3c9a1b-7d2e-4c11-9a55-3e8b1f0c2d44', 'grok-cli', '0f3c9a1b'],
+    [first, 'gemini-cli', '01a18377'],
+    [first, 'cursor', '01a18377'],
+    [first, '', '01a18377'],
+    ['01A18377-5994-7F93-AB8E-F630AA48B62C', 'codex', 'aa48b62c'],
+    ['01a18377-5994-6f93-ab8e-f630aa48b62c', 'codex', '01a18377'],
+    ['01a18377-5994-7f93-cb8e-f630aa48b62c', 'codex', '01a18377'],
+    ['01a10c4c-c5e5-75e0-aaaa-fc83af36a145', 'grok-cli', 'af36a145'],
+    ['01a10c4c-c9cd-7b12-8d4e-27e9b0c3f81d', 'grok-cli', 'b0c3f81d'],
+  ];
+  for (const [sid, harness, want] of cases) assert.equal(sessionKey(sid, harness), want, `session_id_key(${sid}, ${harness})`);
+});
+
 // The hook itself: Claude Code's SessionStart JSON in, one attribution out,
 // and the process exits promptly with the usual empty answer.
 const hook = fileURLToPath(new URL('../hooks/session.mjs', import.meta.url));

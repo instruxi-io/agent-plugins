@@ -460,7 +460,10 @@ export class Dispatcher {
     let token = null;
     let minted = null;
     try {
-      minted = typeof this.api.call === 'function' ? await mintWorkerCredential(this.api, process.env, `worker-${n.key}`.slice(0, 60)) : null;
+      minted =
+        typeof this.api.call === 'function'
+          ? await mintWorkerCredential(this.api, process.env, `worker-${n.key}`.slice(0, 60), { warn: (m) => this.say(`${n.key}: ${m}`) })
+          : null;
     } catch (e) {
       // Fail closed: never fall through to the full-power agent key. The node stays on the frontier and the next pass tries again.
       this.say(`worker token mint failed: ${e.status ?? e.code ?? e.message} (${n.key} not launched; retrying next pass)`);
@@ -516,7 +519,8 @@ export class Dispatcher {
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
       if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
-      if (minted) await revokeWorkerCredential(this.api, minted);
+      if (minted && !(await revokeWorkerCredential(this.api, minted)))
+        this.say(`${n.key}: could not revoke its worker credential${minted.id ? ` ${minted.id}` : ''}; it expires on its own in a day`);
     });
     const w = {
       kind: 'agent',

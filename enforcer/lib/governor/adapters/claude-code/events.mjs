@@ -94,12 +94,28 @@ const idPart = (v) =>
   String(v)
     .replace(/[^\w-]/g, '')
     .slice(0, 8);
+
+// The 8 characters of a session id the agent id is built from. Codex's
+// ThreadId and Grok's session ids are UUIDv7, whose first 8 hex characters are
+// the top 32 bits of a millisecond timestamp: two sessions started within ~65 s
+// would share them. For those harnesses a UUIDv7 is keyed by its last 8 hex
+// (random bits), lower-cased; every other id keeps its first 8. This is
+// enforcer-governance's session_id_key() (migrations 040 and 042) exactly --
+// the same harnesses, the same pattern -- so a session's receipts and its
+// telemetry land under one session_ref. Claude Code and Gemini CLI ids are
+// UUIDv4: unchanged.
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TAIL_KEYED = new Set(['codex', 'grok-cli']);
+export const sessionKey = (sessionId, harness) => {
+  const id = String(sessionId);
+  return TAIL_KEYED.has(harness) && UUID_V7.test(id) ? id.slice(-8).toLowerCase() : id.slice(0, 8);
+};
 //
 // The session's id names the harness running it -- 'claude:0f3c9a1b',
 // 'grok:0f3c9a1b', 'codex:0f3c9a1b' -- so a Grok or Codex session is not
 // filed as a Claude one. Without a session id it is the harness's own name.
 export const agentOf = (ev, env = process.env) => {
-  const base = ev.session_id ? agentPrefix(env) + ':' + String(ev.session_id).slice(0, 8) : runningHarness(env) || HARNESS_NAME;
+  const base = ev.session_id ? agentPrefix(env) + ':' + sessionKey(ev.session_id, runningHarness(env)) : runningHarness(env) || HARNESS_NAME;
   return ev.agent_id && idPart(ev.agent_id) ? base + ':' + idPart(ev.agent_id) : base;
 };
 
