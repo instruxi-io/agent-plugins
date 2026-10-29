@@ -168,9 +168,19 @@ export function defaultArgs(o = {}) {
   };
 }
 
+/** The graph client for the plan, and the v3 client for worker credentials (POST/DELETE /agents/{id}/credentials live only in v3). */
+export async function dispatchClients(env, headers) {
+  const { resolveConfig } = await import('../config.mjs');
+  const cfg = resolveConfig({ env });
+  const o = { headers: () => headers(env) };
+  return { api: new API(cfg.graphUrl, o), credApi: new API(cfg.enforcerUrl, o) };
+}
+
 export class Dispatcher {
-  constructor(api, args, out = (s) => process.stdout.write(s)) {
+  // credApi is v3: worker credentials are minted and revoked there, the graph service has no /agents routes.
+  constructor(api, args, out = (s) => process.stdout.write(s), credApi = api) {
     this.api = api;
+    this.credApi = credApi;
     this.args = args;
     this.out = out;
     this.g = args.graph;
@@ -461,8 +471,8 @@ export class Dispatcher {
     let minted = null;
     try {
       minted =
-        typeof this.api.call === 'function'
-          ? await mintWorkerCredential(this.api, process.env, `worker-${n.key}`.slice(0, 60), { warn: (m) => this.say(`${n.key}: ${m}`) })
+        typeof this.credApi.call === 'function'
+          ? await mintWorkerCredential(this.credApi, process.env, `worker-${n.key}`.slice(0, 60), { warn: (m) => this.say(`${n.key}: ${m}`) })
           : null;
     } catch (e) {
       // Fail closed: never fall through to the full-power agent key. The node stays on the frontier and the next pass tries again.
@@ -486,7 +496,7 @@ export class Dispatcher {
       } catch (e) {
         this.say(`refuse ${n.key}: could not prepare its governor record: ${e.message}`);
         rmSync(enforcerHome, { recursive: true, force: true });
-        if (minted) await revokeWorkerCredential(this.api, minted);
+        if (minted) await revokeWorkerCredential(this.credApi, minted);
         return;
       }
     }
@@ -519,7 +529,7 @@ export class Dispatcher {
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
       if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
-      if (minted && !(await revokeWorkerCredential(this.api, minted)))
+      if (minted && !(await revokeWorkerCredential(this.credApi, minted)))
         this.say(`${n.key}: could not revoke its worker credential${minted.id ? ` ${minted.id}` : ''}; it expires on its own in a day`);
     });
     const w = {
@@ -1283,10 +1293,10 @@ export async function main(argv, env = process.env) {
     args.mcpUrl = resolveConfig({ env }).mcpUrl;
   }
   const { headers } = await import('../preflight.mjs');
-  const api = new API(resolveConfig({ env }).graphUrl, { headers: () => headers(env) });
+  const { api, credApi } = await dispatchClients(env, headers);
   if (!args.dryRun) mkdirSync(args.stateDir, { recursive: true, mode: 0o700 });
   try {
-    return await new Dispatcher(api, args).run();
+    return await new Dispatcher(api, args, undefined, credApi).run();
   } catch (e) {
     process.stderr.write(`graph-dispatch: ${e.message}\n`);
     return e instanceof APIError ? 1 : 2;

@@ -95,3 +95,10 @@ test('the older flat shapes are still read', () => {
   assert.equal(issuedCredentialId({ data: { secret: 's' } }), null);
   assert.equal(issuedCredentialId(null), null);
 });
+
+test('dispatch mints worker credentials on v3, not on the graph service (graph has no /agents routes)', async () => {
+  const { dispatchClients } = await import('../../src/dispatch/run.mjs');
+  const { api, credApi } = await dispatchClients({ ENFORCER_BASE_URL: 'https://api.example.test' }, async () => ({}));
+  assert.equal(api.base, 'https://api.example.test/api/v1/graph');
+  assert.equal(credApi.base, 'https://api.example.test/api/v1/enforcer');
+});

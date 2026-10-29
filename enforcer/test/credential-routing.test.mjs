@@ -88,6 +88,42 @@ test('a failed token mint does not launch the worker', async () => {
   );
 });
 
+test('the worker token is minted on the v3 client, never the graph client', async () => {
+  const state = tmp();
+  const logs = [];
+  const args = defaultArgs({ graph: 'g', stateDir: state, stopFile: join(state, 'STOP'), repoRoot: join(state, 'none'), agentKey: 'ag_FULLPOWER0123456789' });
+  const graphCalls = [];
+  const v3Calls = [];
+  const graph = {
+    call: async (m, p) => {
+      graphCalls.push(`${m} ${p}`);
+      return {};
+    },
+  };
+  const v3 = {
+    call: async (m, p) => {
+      v3Calls.push(`${m} ${p}`);
+      throw Object.assign(new Error('boom'), { status: 503 });
+    },
+  };
+  const d = new Dispatcher(graph, args, (m) => logs.push(m), v3);
+  d.say = (m) => logs.push(m);
+  const keep = process.env.ENFORCER_WORKER_AGENT_ID;
+  process.env.ENFORCER_WORKER_AGENT_ID = 'agent-1';
+  try {
+    try {
+      await d.launch?.({ key: 'n1', id: 'id1', type: 'task', title: 't', data: {} }, {});
+    } catch {
+      /* as above: the assertion is on which client was called */
+    }
+  } finally {
+    if (keep === undefined) delete process.env.ENFORCER_WORKER_AGENT_ID;
+    else process.env.ENFORCER_WORKER_AGENT_ID = keep;
+  }
+  assert.deepEqual(v3Calls, ['POST /agents/agent-1/credentials'], logs.join('\n'));
+  assert.equal(graphCalls.filter((c) => c.includes('/agents/')).length, 0, graphCalls.join('\n'));
+});
+
 test('workers get an empty ENFORCER_HOME and a .log is redacted', () => {
   const home = tmp();
   mkdirSync(join(home, '.enforcer'));
