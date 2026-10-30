@@ -7,7 +7,7 @@ const BIN = fileURLToPath(new URL('../bin/enforcer', import.meta.url));
 const r = spawnSync(process.execPath, [BIN, 'conformance', '--help'], { encoding: 'utf8' });
 assert.equal(r.status, 0);
 assert.match(r.stdout, /PROTOCOL/);
-const p = plan('codex');
+const p = plan('codex', undefined, 42);
 assert.equal(p.nodes.length, 1);
 assert.equal(p.nodes[0].key, 'conf-codex');
 assert.equal(p.nodes[0].data.repo, 'enforcer-smoke');
@@ -15,7 +15,7 @@ assert.equal(p.nodes[0].data.harness, 'codex');
 assert.equal(p.nodes[0].data.tier, 'standard');
 const acc = p.nodes[0].data.acceptance;
 assert.deepEqual(acc.slice(0, 2), [{ check: 'repo.tests' }, { check: 'github.pr_merged' }]);
-assert.match(acc[2], /git grep -c 'harness: codex' -- smoke\/conformance-codex.md` prints `smoke\/conformance-codex.md:1`/);
+assert.match(acc[2], /git grep -c 'harness: codex' -- smoke\/conformance-codex-42.md` prints `smoke\/conformance-codex-42.md:1`/);
 const all = resultsOf(
   {
     verdict: {
@@ -60,6 +60,11 @@ assert.ok(create, 'conformance creates its graph');
 assert.match(create.body.slug, /^conformance-claude-\d+$/);
 assert.equal(create.body.slug, create.body.name);
 assert.match(filed.join('\n'), /claude: filed graph g-1/);
+// Each run writes its own file, so a second run on the same repo still has a change to land.
+const a = plan('claude', undefined, 111);
+const b = plan('claude', undefined, 222);
+assert.notEqual(a.nodes[0].data.acceptance[2], b.nodes[0].data.acceptance[2]);
+assert.match(a.nodes[0].description, /smoke\/conformance-claude-111\.md/);
 console.log('ok - conformance');
 
 // Runner-check rows are not prose: the preflight lint skips them (it used to stringify them to "[object Object]").

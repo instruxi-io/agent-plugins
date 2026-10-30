@@ -1,0 +1,1 @@
+- `enforcer conformance` writes one file per run (`smoke/conformance-<harness>-<stamp>.md`): a fixed path was already on master after the first run, so every later run had nothing to land.
