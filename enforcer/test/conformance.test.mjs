@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { PROTOCOL, plan, table, harnessProblem, main, STEPS } from '../src/conformance.mjs';
+const BIN = fileURLToPath(new URL('../bin/enforcer', import.meta.url));
+
+const r = spawnSync(process.execPath, [BIN, 'conformance', '--help'], { encoding: 'utf8' });
+assert.equal(r.status, 0);
+assert.match(r.stdout, /PROTOCOL/);
+const p = plan('codex');
+assert.equal(p.nodes.length, STEPS.length);
+assert.equal(p.edges.length, STEPS.length - 1);
+assert.ok(p.nodes.some((n) => n.data.acceptance.some((a) => a.check === 'repo.tests')));
+assert.match(harnessProblem('grok', { problem: () => 'no credentials' }), /not signed in: no credentials/);
+assert.match(harnessProblem('vim'), /unknown harness/);
+const lines = [];
+const code = await main(['--harnesses', 'codex'], { out: (s) => lines.push(s), problem: () => 'signed out' });
+assert.equal(code, 1);
+const o = lines.join('\n');
+assert.match(o, new RegExp(`PROTOCOL ${PROTOCOL}`));
+assert.match(o, /codex: not signed in: signed out/);
+assert.match(table([{ harness: 'x', results: { claim: true } }]), /pass/);
+console.log('ok - conformance');
