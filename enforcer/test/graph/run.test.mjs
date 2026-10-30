@@ -152,10 +152,13 @@ test('track_run: a wait card writes nothing', async () => {
 });
 
 // --- heartbeat cadence and control channel -------------------------------------------------------------------------------
-test('heartbeat: nine tool calls within the lease, no HTTP', async () => {
+test('heartbeat: the first tool call after a claim beats once, the next eight within the lease send no HTTP', async () => {
   await claim();
   stub.clear();
-  for (let i = 0; i < 9; i++) await hook('heartbeat', hbIn('Bash'));
+  await hook('heartbeat', hbIn('Bash'));
+  assert.equal(stub.logText().split('/runs/r1/heartbeat').length - 1, 1);
+  stub.clear();
+  for (let i = 0; i < 8; i++) await hook('heartbeat', hbIn('Bash'));
   assert.ok(!stub.logText().includes('heartbeat'));
 });
 let hbOut, hbMs;

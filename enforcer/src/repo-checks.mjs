@@ -48,9 +48,14 @@ export function loadManifest(root, { env = process.env } = {}) {
     return { error: `${MANIFEST} is not valid JSON: ${e.message}` };
   }
   if (!m || typeof m !== 'object' || Array.isArray(m)) return { error: `${MANIFEST} must be an object of {name: argv[]}` };
+  // The nested form the server and `enforcer conformance` write, {"checks": {name: {"argv": [...]}}, "env": ...}, is the
+  // same manifest: unwrap it, so a repo carrying it is not refused as "check \"checks\" must be ... argv" (2026-10-30:
+  // enforcer-smoke's manifest was refused that way and repo.tests came back no_runner_record).
+  const nested = m.checks && typeof m.checks === 'object' && !Array.isArray(m.checks);
+  const entries = nested ? Object.entries(m.checks) : Object.entries(m).filter(([k]) => k !== 'env');
   const checks = {};
-  for (const [k, v] of Object.entries(m)) {
-    if (k === 'env') continue;
+  for (const [k, v0] of entries) {
+    const v = v0 && typeof v0 === 'object' && !Array.isArray(v0) ? v0.argv : v0;
     if (!NAME_RE.test(k)) return { error: `${MANIFEST}: bad check name ${JSON.stringify(k)}` };
     if (!Array.isArray(v) || !v.length || !v.every((a) => typeof a === 'string' && a.length && !a.includes('\0')))
       return { error: `${MANIFEST}: check ${JSON.stringify(k)} must be a non-empty array of strings (argv, no shell)` };

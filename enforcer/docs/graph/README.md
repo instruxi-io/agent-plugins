@@ -330,7 +330,8 @@ wrote. `.enforcer/checks.json` at the checkout root maps names to argv:
 { "test": ["npm", "test"], "lint": ["npm", "run", "lint"], "env": { "PATH": "node_modules/.bin" } }
 ```
 
-Every value must be a non-empty array of strings, or the whole manifest is
+The nested form `{"checks": {"test": {"argv": ["npm", "test"]}}}` loads the
+same. Every value must be a non-empty array of strings, or the whole manifest is
 refused; there is never a shell. `env.PATH` (optional, the only `env` key) is
 a list of directories, each inside the checkout or under `$HOME/.cache`, put
 in front of PATH. The argv runs in the checkout with the same minimal
