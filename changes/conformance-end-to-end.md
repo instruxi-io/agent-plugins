@@ -1,0 +1,1 @@
+- `enforcer conformance` files one node per harness (`conf-<harness>`, repo `enforcer-smoke`, runnable acceptance) and `--status` reads the six columns from the node's latest run and verdict.
