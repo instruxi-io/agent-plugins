@@ -1,9 +1,22 @@
 // Worktree setup: base resolution, `git worktree add`, .worktreeinclude copies and .worktreeshare symlinks.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, statSync, lstatSync, copyFileSync, realpathSync, readFileSync, symlinkSync, appendFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  unlinkSync,
+  statSync,
+  lstatSync,
+  copyFileSync,
+  realpathSync,
+  readFileSync,
+  symlinkSync,
+  appendFileSync,
+} from 'node:fs';
 import { join, dirname, normalize, isAbsolute, sep, resolve } from 'node:path';
 import { git, originRef, ghPrState } from './prune.mjs';
-import { assertIdent } from './ident.mjs';
+import { assertIdent, safeIdent } from './ident.mjs';
 
 export class BaseMissing extends Error {}
 
@@ -73,12 +86,62 @@ export function checkBase(ref, source, cwd) {
   if (git(['rev-parse', '--verify', '-q', ref], cwd).returncode !== 0) throw new BaseMissing(`base ${ref} (from ${source}) does not exist on origin`);
 }
 
-/** [path, branch, note]. A node with a data.repo checkout under repoRoot gets <repoRoot>/<repo>-<key> on graph/<key>. */
-export function worktreeFor(node, repoRoot, stateDir, { dry = false, graphBases = null, registry = null } = {}) {
+/** The plan code in a worktree directory name: the graph id's first 8 characters, sanitized ('' when unknown). */
+export const planCode = (graphId) =>
+  String(graphId || '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .slice(0, 8);
+
+/** The branch a worker uses: the claim card's `branch` (node.branch or data.branch) when it is a safe ref, else graph/<key>. */
+export function branchFor(node) {
+  const b = node.branch ?? (node.data || {}).branch;
+  if (typeof b === 'string' && b.split('/').every((p) => safeIdent(p))) return b;
+  return 'graph/' + node.key;
+}
+
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** Run fn holding a lock file in the repo's git dir, so two dispatchers never race `git worktree add` in one repo.
+ *  A lock older than staleSec is a dead holder's and is taken over. */
+export function withRepoLock(src, fn, { timeoutMs = 120000, staleSec = 120 } = {}) {
+  const gd = git(['rev-parse', '--git-common-dir'], src).stdout.trim();
+  const dir = gd ? resolve(src, gd) : join(src, '.git');
+  const lock = join(dir, 'graph-dispatch-worktree.lock');
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      closeSync(openSync(lock, 'wx'));
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > staleSec * 1000) unlinkSync(lock);
+      } catch {
+        /* gone already */
+      }
+      if (Date.now() - t0 > timeoutMs) throw new Error('timed out waiting for the worktree lock ' + lock);
+      sleepSync(50 + Math.floor(Math.random() * 100));
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      unlinkSync(lock);
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** [path, branch, note]. A node with a data.repo checkout under repoRoot gets <repoRoot>/<repo>-<plan code>-<key> on the
+ *  card's branch (else graph/<key>); the plan code is the graph id's first 8 characters. */
+export function worktreeFor(node, repoRoot, stateDir, { dry = false, graphBases = null, registry = null, graphId = null } = {}) {
   const key = assertIdent(node.key, 'node key'); // the key and repo become paths and a branch: never trust a caller to have checked
   const repo = (node.data || {}).repo;
   if (repo !== undefined && repo !== null) assertIdent(repo, 'data.repo');
-  const branch = 'graph/' + key;
+  const branch = branchFor(node);
+  const code = planCode(graphId);
   const gitMarker = repo && repoRoot ? join(repoRoot, repo, '.git') : null;
   if (!repo || !repoRoot || !(isDir(gitMarker) || isFile(gitMarker))) {
     const path = join(stateDir, 'work', key);
@@ -86,7 +149,7 @@ export function worktreeFor(node, repoRoot, stateDir, { dry = false, graphBases 
     return [path, null, `scratch dir (${!repo ? 'no data.repo' : `no checkout of ${repo} under ${repoRoot}`})`];
   }
   const src = join(repoRoot, repo);
-  const path = join(repoRoot, `${repo}-${key}`);
+  const path = join(repoRoot, code ? `${repo}-${code}-${key}` : `${repo}-${key}`);
   if (isDir(path)) return [path, branch, 'reused'];
   let [base, source] = resolveBase(node, graphBases, registry, null);
   if (source === 'origin/HEAD') {
@@ -99,9 +162,15 @@ export function worktreeFor(node, repoRoot, stateDir, { dry = false, graphBases 
   }
   checkBase(base, source, src);
   if (dry) return [path, branch, 'would add off ' + base];
+  return withRepoLock(src, () => addWorktree(src, path, branch, base));
+}
+
+function addWorktree(src, path, branch, base) {
+  if (isDir(path)) return [path, branch, 'reused'];
   let r = git(['worktree', 'add', path, '-b', branch, base], src);
   if (r.returncode === 0) return [path, branch, 'added off ' + base];
-  let note = 'reused branch'; // the branch exists from an earlier attempt
+  git(['worktree', 'prune'], src);
+  let note = 'reused branch'; // the branch exists from an earlier attempt; no commits ahead of base means it is stale and is recreated
   if (git(['merge-base', '--is-ancestor', branch, base], src).returncode === 0 || ghPrState(branch, src) === 'MERGED') {
     git(['branch', '-D', branch], src);
     r = git(['worktree', 'add', path, '-b', branch, base], src);
