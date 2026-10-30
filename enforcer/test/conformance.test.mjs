@@ -24,7 +24,10 @@ assert.match(table([{ harness: 'x', results: { claim: true } }]), /pass/);
 // The filing body carries the slug the server requires (POST /graphs: name and slug, 400 `slug is required` otherwise).
 const calls = [];
 const fake = {
-  call: async (method, path, body) => { calls.push({ method, path, body }); return { data: { id: 'g-1' } }; },
+  call: async (method, path, body) => {
+    calls.push({ method, path, body });
+    return { data: { id: 'g-1' } };
+  },
   createNode: async () => ({}),
   createEdge: async () => ({}),
 };
