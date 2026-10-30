@@ -22,6 +22,9 @@ export function leaseSeconds(run) {
   return a && b && b > a ? b - a : DEFAULT_LEASE;
 }
 export function due(run, now, longCall = false) {
+  // The first tool call after a claim beats at once: a run shorter than a third of its lease (the 44 s conformance worker
+  // on 2026-10-30) otherwise ended with no heartbeat at all, and conformance read heartbeat FAIL.
+  if (!run.last_hb && !run.heartbeats) return true;
   const last = run.last_hb || ts(run.claimed_at) || 0;
   if (now - last < minGap()) return false;
   return longCall || now - last >= leaseSeconds(run) / 3;
@@ -50,6 +53,10 @@ export async function beat(inp, run, sid, now = Date.now() / 1000, post = httpRe
     return 'reclaimed';
   }
   const d = (r && r.data) || {};
+  if (status >= 200 && status < 300 && (!d.state || d.state === 'ok')) {
+    run.heartbeats = (Number.isInteger(run.heartbeats) ? run.heartbeats : 0) + 1;
+    run.last_heartbeat_at = new Date(now * 1000).toISOString();
+  }
   if (d.lease_expires_at) {
     run.lease_expires_at = d.lease_expires_at;
     run.claimed_at = run.claimed_at || d.started_at;

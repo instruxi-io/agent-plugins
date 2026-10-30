@@ -306,6 +306,13 @@ export async function decide(inp, deps = {}) {
     return usage && mode() !== 'context' ? { hookEventName: 'PreToolUse', updatedInput: withUsage(inp.tool_input, usage, false) } : null;
   }
   if (isReport) usage = transcriptUsage(actorTranscript(inp), run.claimed_at);
+  // The heartbeats this run sent ride on the report (data.heartbeats, data.last_heartbeat_at): the server's run row has
+  // no heartbeat field, so `enforcer conformance --status` reads them here.
+  const beats = isReport && Number.isInteger(run.heartbeats) && run.heartbeats > 0 && isObj(inp.tool_input);
+  if (beats) {
+    const ti = inp.tool_input;
+    inp = { ...inp, tool_input: { ...ti, data: { ...(isObj(ti.data) ? ti.data : {}), heartbeats: run.heartbeats, last_heartbeat_at: run.last_heartbeat_at } } };
+  }
   // A gate is decided by a person through graph_decide, not judged: run no acceptance line, attach one note, pass the report through.
   if (isReport && run.type === 'gate') {
     const a = usage ? withUsage(inp.tool_input, usage) : inp.tool_input;
@@ -317,8 +324,11 @@ export async function decide(inp, deps = {}) {
   }
   const have = new Set(records.filter(isFinal).map((r) => r.line - 1));
   const acc = isReport && (inp.tool_input || {}).status === 'succeeded' ? acceptanceRecords(inp, run, { ...deps, have }) : [];
-  if (!records.length && !acc.length)
-    return usage && mode() !== 'context' ? { hookEventName: 'PreToolUse', updatedInput: withUsage(inp.tool_input, usage) } : null;
+  if (!records.length && !acc.length) {
+    if (mode() === 'context') return null;
+    if (usage) return { hookEventName: 'PreToolUse', updatedInput: withUsage(inp.tool_input, usage) };
+    return beats ? { hookEventName: 'PreToolUse', updatedInput: inp.tool_input } : null;
+  }
   let evidence = isRemember
     ? selectEvidence(records.slice(-REMEMBER_RECENT).map(stripInternal), REMEMBER_RECENT)
     : selectEvidence([...acc, ...records.map(stripInternal).map(stripRunner).filter(Boolean)]);

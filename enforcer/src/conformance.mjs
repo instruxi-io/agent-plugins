@@ -94,7 +94,16 @@ export function resultsOf(node, runs = []) {
   // The server puts the verdict on the run (`run.verification`: state + checks [{check, passed}]).
   const v = run?.verification || run?.verdict || node.verification || node.verdict || {};
   const state = v.state || v.verdict;
-  const beat = run && (run.heartbeat_at || run.data?.heartbeat_at || run.last_heartbeat_at || run.heartbeats > 0 || run.heartbeat_count > 0);
+  // The server's run row carries no heartbeat field; the plugin's report hook puts the count in data.heartbeats.
+  const beat =
+    run &&
+    (run.heartbeat_at ||
+      run.data?.heartbeat_at ||
+      run.last_heartbeat_at ||
+      run.data?.last_heartbeat_at ||
+      run.heartbeats > 0 ||
+      run.data?.heartbeats > 0 ||
+      run.heartbeat_count > 0);
   const done =
     run &&
     ['succeeded', 'completed', 'done'].includes(run.status) &&

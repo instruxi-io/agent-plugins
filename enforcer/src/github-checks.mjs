@@ -6,6 +6,7 @@
 //   checks_green:            pr, sha (PR head commit), checks [{name, conclusion, required}]
 // A gh failure (no token, no PR, network, bad JSON) yields {skip: reason}: no record, which the server reads as
 // no_runner_record, an error and never a pass. The report hook strips `source: runner` from worker evidence.
+import { spawnSync } from 'node:child_process';
 import { spawnAllowed } from './acceptance-allowlist.mjs';
 
 export const GITHUB_CHECKS = Object.freeze(['github.pr_merged', 'github.checks_green', 'github.pr_untouched']);
@@ -26,11 +27,31 @@ export function slugOf(url) {
   return m ? `${m[1]}/${m[2]}` : '';
 }
 
+/** The operator's gh token when the environment carries none: `gh auth token` in the real environment (its keyring or
+ *  hosts.yml), read once per process. spawnAllowed gives `gh` a temporary HOME, so a gh signed in through
+ *  `gh auth login` was not signed in there and every github.* check skipped as "no gh auth" (2026-10-30, conformance:
+ *  land FAIL with no_runner_record for github.pr_merged). '' when gh is absent or signed out. */
+let ghAuthCache;
+export function ghAuthToken(env = process.env) {
+  if (ghAuthCache !== undefined) return ghAuthCache;
+  try {
+    const r = spawnSync('gh', ['auth', 'token'], { env, encoding: 'utf8', timeout: 5000, shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
+    ghAuthCache = r.status === 0 ? String(r.stdout || '').trim() : '';
+  } catch {
+    ghAuthCache = '';
+  }
+  return ghAuthCache;
+}
+
 /** Run the check for `name` in `cwd`. Returns the runner record or {skip: reason}.
  *  @param {string} name
- *  @param {{cwd?: string, env?: any, timeoutMs?: number, run?: any, branch?: string, repo?: string}} opts */
-export function runGithubCheck(name, { cwd, env = process.env, timeoutMs = 60000, run, branch, repo } = {}) {
+ *  @param {{cwd?: string, env?: any, timeoutMs?: number, run?: any, branch?: string, repo?: string, token?: (env: any) => string}} opts */
+export function runGithubCheck(name, { cwd, env = process.env, timeoutMs = 60000, run, branch, repo, token = ghAuthToken } = {}) {
   if (!GITHUB_CHECKS.includes(name)) return { skip: `unknown check ${name}` };
+  if (!env?.GH_TOKEN && !env?.GITHUB_TOKEN) {
+    const t = token(env);
+    if (t) env = { ...env, GH_TOKEN: t };
+  }
   const exec = (argv) => spawnAllowed(argv, { cwd, env, timeoutMs, ...(run ? { run } : {}) });
   const git = (...a) => {
     const r = exec(['git', ...a]);
