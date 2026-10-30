@@ -8,6 +8,11 @@ const home = mkdtempSync(join(tmpdir(), 'gov-cred-'));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 delete process.env.ENFORCER_API_KEY;
+// Hermetic: a worker or CI shell may export these, and they would point the
+// credential lookup outside the temp HOME this test builds.
+delete process.env.GOVERNOR_HOME;
+delete process.env.ENFORCER_HOME;
+delete process.env.ENFORCER_PROFILE;
 mkdirSync(join(home, '.enforcer-governor'), { recursive: true });
 
 let pass = 0;
