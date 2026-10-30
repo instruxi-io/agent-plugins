@@ -209,6 +209,7 @@ export class Dispatcher {
     this.leaseAt = 0;
     this.notFoundSince = 0; // epoch seconds of the first 404 in the current run of them; 0 = none
     this.verdictNoted = 0;
+    this.sessions = new Map(); // node key -> claude session that ended with a clean report, for a --resume remediation
     this.attendNoted = 0;
     this.terminating = null; // the signal name once SIGTERM/SIGINT arrived: an explicit state flag, not an exception
     this.wake = null;
@@ -425,7 +426,12 @@ export class Dispatcher {
     let branch;
     let note;
     try {
-      [path, branch, note] = worktreeFor(n, a.repoRoot, this.state, { dry: a.dryRun, graphBases: await this.graphBases(), registry: this.registry() });
+      [path, branch, note] = worktreeFor(n, a.repoRoot, this.state, {
+        dry: a.dryRun,
+        graphBases: await this.graphBases(),
+        registry: this.registry(),
+        graphId: this.g,
+      });
     } catch (e) {
       if (e instanceof BaseMissing) {
         this.say(`refuse ${n.key}: ${e.message}; fix the repo's remote, or set data.base / the registry`);
@@ -450,11 +456,14 @@ export class Dispatcher {
       prompt = remediationPrompt(this.g, n, path, branch, failures);
       t2 += ` (remediation after ${failures.length} failed attempt(s))`;
     } else prompt = workerPrompt(this.g, n, path, branch);
-    const session = randomUUID();
+    // a remediation launch whose previous session reported cleanly continues that session instead of starting cold
+    const prior = failures.length && harness === 'claude' && !a.dryRun ? this.sessions.get(n.key) : null;
+    const session = prior || randomUUID();
+    if (prior) this.sessions.delete(n.key);
     // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
     const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
     const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    const cmd = launchCmd(prompt, model, a, n.key, { session, maxTurns: turnsCap, mcpConfig, harness });
+    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
@@ -556,7 +565,7 @@ export class Dispatcher {
     const acNote = a.autocompact && (a.autocompact !== 'auto' || !this.acSaid) ? ` autocompact=${a.autocompact}` : '';
     this.acSaid = true;
     this.say(
-      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model}${rnote} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
+      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model}${rnote} mode=${prior ? 'warm --resume' : 'cold'} session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
     );
   }
 
@@ -581,6 +590,11 @@ export class Dispatcher {
       card = await this.api.claim(this.g, n.id, 'graph-dispatch');
     } catch (e) {
       this.say(`claim ${n.key} refused: ${e.message}`);
+      return;
+    }
+    if (card?.over_cap) {
+      this.say(`over cap: ${n.key} (${typeof card.over_cap === 'string' ? clip(card.over_cap, 120) : 'claim carried over_cap'}); not launching it`);
+      this.attempts.set(n.key, Math.max(0, (this.attempts.get(n.key) || 0) - 1));
       return;
     }
     const logPath = join(this.logs, `${n.key}.${this.attempts.get(n.key)}.log`);
@@ -627,12 +641,21 @@ export class Dispatcher {
   // ---- supervision
   async heartbeatWorker(w) {
     try {
-      const st = (await this.api.heartbeat(this.g, w.node.id, w.runId)).state;
+      const hb = await this.api.heartbeat(this.g, w.node.id, w.runId);
+      const st = hb.state;
       w.lastHb = now();
       if (st && st !== 'ok') this.say(`heartbeat ${w.key}: ${st}`);
+      if (hb.over_cap) await this.stopOverCap(w, hb.over_cap);
     } catch (e) {
       this.say(`heartbeat ${w.key} failed: ${e.message}`);
     }
+  }
+
+  /** The server says this worker is over its cap: stop it cleanly, spend no attempt on it. */
+  async stopOverCap(w, why) {
+    w.overCap = true;
+    this.say(`over cap: ${w.key}${typeof why === 'string' ? ` (${clip(why, 120)})` : ''}; stopping it`);
+    if (alive(w.proc)) await killGroup(w.proc, this.args.killGrace * 1000);
   }
 
   async finishMerge(w) {
@@ -662,6 +685,17 @@ export class Dispatcher {
       this.say(`land ${w.key} exit=${rc} -> run ${w.runId} ${body.status}`);
     } catch (e) {
       this.say(`complete ${w.key} failed: ${e.message}`);
+    }
+  }
+
+  /** Left for a person: complete the run failed with data.needs_person and the reason (a closed run may refuse; best effort). */
+  async flagNeedsPerson(w, s, outcome) {
+    const reason = `graph-dispatch: ${this.args.maxAttempts} attempt(s) spent; left for a person: ${clip(outcome.error || 'no error recorded', 300)}`;
+    try {
+      await this.api.complete(this.g, w.node.id, s.run_id, { status: 'failed', error: reason, data: { runner: 'graph-dispatch', needs_person: true, reason } });
+      this.say(`needs_person ${w.key}: run ${s.run_id} flagged`);
+    } catch (e) {
+      this.say(`needs_person ${w.key}: could not flag run ${s.run_id}: ${e.message}`);
     }
   }
 
@@ -696,6 +730,8 @@ export class Dispatcher {
         const v = mine?.verification ?? mine?.data?.verification ?? mine?.verdict;
         const state = typeof v === 'string' ? v : v?.state;
         if (state === 'verified') return null;
+        // a server rejudge flipped the verdict to verified: the work is accepted, never relaunch it
+        if (state === 'rejudged' && (v?.verdict === 'verified' || v?.to === 'verified' || v?.verified === true)) return null;
         if (state && state !== 'pending') return outcome;
         if (!mine) return outcome;
       } catch {
@@ -724,6 +760,13 @@ export class Dispatcher {
       }
       if (alive(w.proc)) continue;
       const s = summarize(w.logPath, harness);
+      if (w.overCap) {
+        this.workers.delete(key);
+        this.attempts.set(key, Math.max(0, (this.attempts.get(key) || 0) - 1));
+        this.say(`over cap: ${key} stopped; not relaunched this session`);
+        this.denied.set(key, w.path || '-');
+        continue;
+      }
       // a worker that lost its endpoint: probe it again before the next launch instead of trusting the cached answer
       if (w.endpoint && ENDPOINT_LOST.test(String(s?.error || ''))) this.probes.clear(w.endpoint.url);
       const limitText = harnessLimitText(s);
@@ -771,13 +814,17 @@ export class Dispatcher {
         this.say(`DENIED ${key}: ${rec?.code || '-'}; not relaunching it this session. Worktree: ${w.path} (a person can land it)`);
         outcome = null;
       }
+      if (!outcome && s.reported && w.session && harness === 'claude') this.sessions.set(key, w.session);
       if (outcome && !graphDenied.length) {
         const list = this.failures.get(key) || [];
         list.push(outcome);
         this.failures.set(key, list);
+        const exhausted = (this.attempts.get(key) || 0) >= this.args.maxAttempts;
+        if (s.reported && w.session && harness === 'claude' && !exhausted) this.sessions.set(key, w.session);
         this.say(
-          `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: ${(this.attempts.get(key) || 0) < this.args.maxAttempts ? 'remediation launch' : 'left for a person'}`,
+          `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: ${exhausted ? 'left for a person' : 'remediation launch'}`,
         );
+        if (exhausted && s.run_id) await this.flagNeedsPerson(w, s, outcome);
       }
       this.workers.delete(key);
     }

@@ -155,9 +155,22 @@ A repo may not work off origin's default branch (`enforcer-v3-portal` works off 
 
 The worktree, the commits-ahead count and the PR base all use the resolved base, and the launch line logs `base=<ref>`. A declared base (steps 1 to 3) that does not exist on origin is refused with `refuse <key>: base origin/<b> (from <source>) does not exist on origin`; the node is not launched.
 
+### Branch, worktree name and concurrency
+
+- The worker checks out the claim card's `branch` (`node.branch`, or `data.branch`) when it is a safe ref; otherwise `graph/<key>`.
+- The worktree directory is `<repo>-<plan code>-<node key>` under the repo root; the plan code is the graph id's first 8 characters, so two graphs with the same node key never share a directory.
+- `git worktree add` and branch creation in one repo run under a lock file (`graph-dispatch-worktree.lock` in the repo's git dir), so several dispatchers can share a repo. A lock older than 120 s is taken over. A stale branch with no commits ahead of its base is recreated, not fatal.
+
+### Flags the server sets
+
+- **needs_person**: when a node's attempts are spent ("left for a person"), the dispatcher completes the run `failed` with `data.needs_person: true` and the reason in `data.reason` (best effort: a run the worker already closed may refuse it).
+- **over_cap**: a heartbeat answer or claim card carrying `over_cap` stops that worker cleanly (logged `over cap: <key>`), spends no attempt, and the node is not relaunched this session.
+- **Rejudge**: a verdict that a server rejudge (`rejudged`) flipped to verified is accepted: no relaunch.
+- **Warm retry**: a remediation launch of a claude node whose previous session reported cleanly resumes it (`--resume <session>`, logged `mode=warm --resume`) instead of starting cold.
+
 ### Pruning worktrees safely
 
-The pruning logic (`src/dispatch/prune.mjs`; the old `graph-dispatch prune` command went with the Python dispatcher and has no CLI front end yet) looks at every `<repo>-<key>` worktree (branch `graph/<key>`) under the repo root. It removes one only when (a) its tree is clean and (b) its branch head is an ancestor of origin's default branch (or the repo's registered base), or its PR is MERGED (`gh`). Everything else is kept and listed under `Review N branches` with the reason: `uncommitted changes`, `unmerged commits` or `open PR`. Without `--yes` it is a dry run and prints `would remove ...`.
+The pruning logic (`src/dispatch/prune.mjs`; the old `graph-dispatch prune` command went with the Python dispatcher and has no CLI front end yet) looks at every `<repo>-<plan code>-<key>` (or older `<repo>-<key>`) worktree (branch `graph/<key>`) under the repo root. It removes one only when (a) its tree is clean and (b) its branch head is an ancestor of origin's default branch (or the repo's registered base), or its PR is MERGED (`gh`). Everything else is kept and listed under `Review N branches` with the reason: `uncommitted changes`, `unmerged commits` or `open PR`. Without `--yes` it is a dry run and prints `would remove ...`.
 
 ### Per-repo worktree setup (`.worktreeinclude`, `.worktreeshare`)
 

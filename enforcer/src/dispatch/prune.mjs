@@ -1,7 +1,7 @@
 // Worktree pruning: only a clean tree whose branch is merged (or whose PR is MERGED) may go; live workers never.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync, realpathSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { isObj } from './util.mjs';
 
@@ -124,7 +124,8 @@ export function pruneWorktrees(
       const br = f.branch || '';
       if (!path || !br.startsWith('refs/heads/graph/')) continue;
       const key = br.slice('refs/heads/graph/'.length);
-      if (real(path) !== real(join(repoRoot, `${repo}-${key}`))) continue;
+      const pb = basename(path);
+      if (real(dirname(path)) !== real(repoRoot) || !(pb === `${repo}-${key}` || (pb.startsWith(repo + '-') && pb.endsWith('-' + key)))) continue;
       if (liveKeys && (liveKeys instanceof Set ? liveKeys.has(key) : liveKeys.includes(key))) {
         kept.push([path, 'live worker (pids.json)']);
         continue;
