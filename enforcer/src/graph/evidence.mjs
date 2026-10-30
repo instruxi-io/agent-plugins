@@ -169,6 +169,15 @@ export const PR_RE = /https?:\/\/github\.com\/[^/\s"')]+\/[^/\s"')]+\/pull\/\d+/
 
 export const isGate = (r) => r.kind === 'command' && GATE_RE.test(r.cmd || '');
 /** The internal run marker leaves as `run_id`, so every evidence item names the run it was captured under. */
+/** Only the runner (src/repo-checks.mjs, run by the report hook) writes `source: 'runner'`. A record from anywhere else
+ *  that claims it is a forgery: a `check` record is dropped (null), any other loses its `source`. */
+export function stripRunner(rec) {
+  if (!rec || typeof rec !== 'object' || rec.source !== 'runner') return rec;
+  if (rec.kind === 'check') return null;
+  const { source, ...rest } = rec;
+  return rest;
+}
+
 export function stripInternal(rec) {
   const { _run, ...rest } = rec;
   return _run ? { ...rest, run_id: _run } : rest;
@@ -181,7 +190,7 @@ const failedCmd = (r) => r.kind === 'command' && r.exit !== 0 && r.exit !== null
 
 /** A final record: the run of acceptance line `line` (1-based) made for the report, by `enforcer evidence run` or the
  *  report hook. The judge reads these as the result; everything captured before them is how the work got there. */
-export const isFinal = (r) => !!r && r.kind === 'command' && Number.isInteger(r.line) && r.line > 0;
+export const isFinal = (r) => !!r && (r.kind === 'command' || (r.kind === 'check' && r.source === 'runner')) && Number.isInteger(r.line) && r.line > 0;
 
 function ekey(r) {
   if (r.kind === 'command') return JSON.stringify(['command', r.cmd ?? null, r.exit ?? null]);
@@ -241,7 +250,8 @@ export function selectEvidence(records, cap = EVIDENCE_CAP) {
 export function mergeEvidence(captured, passed, cap = EVIDENCE_CAP) {
   const seen = new Set(captured.map(ekey).filter(Boolean));
   let extra = [];
-  for (const r of Array.isArray(passed) ? passed : []) {
+  for (const r0 of Array.isArray(passed) ? passed : []) {
+    const r = stripRunner(r0);
     if (!r || typeof r !== 'object' || !['command', 'file', 'artifact'].includes(r.kind)) continue;
     if (!(r.cmd || r.path || r.url)) continue;
     const k = ekey(r);

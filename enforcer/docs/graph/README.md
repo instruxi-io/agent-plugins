@@ -322,6 +322,30 @@ run `enforcer evidence run` itself before `graph_report`: the hook's budget is
 which left the judge only the worker's earlier, mixed runs (three good runs
 rejected on 2026-10-13 that way).
 
+**Named repository checks.** An acceptance row `{"check": "repo.<name>"}`
+(an object, not a line) runs what the repository declares, not what the plan
+wrote. `.enforcer/checks.json` at the checkout root maps names to argv:
+
+```json
+{ "test": ["npm", "test"], "lint": ["npm", "run", "lint"], "env": { "PATH": "node_modules/.bin" } }
+```
+
+Every value must be a non-empty array of strings, or the whole manifest is
+refused; there is never a shell. `env.PATH` (optional, the only `env` key) is
+a list of directories, each inside the checkout or under `$HOME/.cache`, put
+in front of PATH. The argv runs in the checkout with the same minimal
+environment and temporary HOME as an allowed line, and the result is a
+runner record `{kind: "check", source: "runner", name, exit, output}` with
+the last 4 KB of output (`src/repo-checks.mjs`). The report hook runs these
+rows itself and attaches the records as final records; it strips
+`source: "runner"` from any evidence the worker passed or the capture hook
+recorded (a forged `check` record is dropped), so the model cannot write one.
+A missing or invalid manifest, or a name it does not declare, is a note
+saying why, not a record. `enforcer evidence run` prints
+`MANIFEST CHECK line <i>: repo.<name> ... exited <n>` on stderr for each such
+row, and counts it as one literal, found when it exits 0. Free-text lines keep
+the allowlist.
+
 Everything else is reported as `not run: not an allowed command shape` and
 the judge reads the worker's own captured output instead. The cases that must
 never run, and ten real acceptance lines that must still run, are in
