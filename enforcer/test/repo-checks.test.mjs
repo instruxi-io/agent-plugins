@@ -130,6 +130,13 @@ test('stripped forgery: worker-supplied runner records never reach the report', 
   assert.equal(recs.length, 1);
   assert.deepEqual([recs[0].kind, recs[0].source, recs[0].exit, recs[0].line], ['check', 'runner', 0, 1]);
   assert.ok(selectEvidence([...recs, ...Array.from({ length: 30 }, (_, i) => ({ kind: 'command', cmd: `c${i}`, exit: 0 }))]).includes(recs[0]));
+  // the worker already ran `enforcer evidence run` (line 1 is in `have`): a check row is still run and recorded here
+  const again = acceptanceRecords(
+    { cwd: d },
+    { key: 'k', node_id: 'n', graph_id: 'g', acceptance: [{ check: 'repo.pass' }] },
+    { acceptanceBudgetMs: 30000, acceptanceTimeoutMs: 30000, have: new Set([0]) },
+  );
+  assert.deepEqual([again[0].kind, again[0].source, again[0].exit], ['check', 'runner', 0]);
   // a missing manifest becomes a note, not a record
   const none = acceptanceRecords({ cwd: repo() }, { key: 'k', node_id: 'n', acceptance: [{ check: 'repo.pass' }] });
   assert.equal(none[0].kind, 'note');
