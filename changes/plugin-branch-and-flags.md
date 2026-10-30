@@ -1,1 +1,0 @@
-Dispatcher: workers use the claim card's branch; worktrees are `<repo>-<plan code>-<key>` and created under a repo lock; exhausted nodes are completed `failed` with `data.needs_person`; `over_cap` stops a worker; a rejudge-verified verdict is not relaunched; remediation resumes the prior clean claude session (#360).

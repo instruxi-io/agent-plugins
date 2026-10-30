@@ -1,1 +1,0 @@
-Named GitHub checks: an acceptance row `{"check": "github.pr_merged" | "github.checks_green" | "github.pr_untouched"}` runs `gh pr view` / `gh pr checks` as argv (read-only GH_TOKEN) and posts a runner record with the fields the server decides from; a gh failure posts no record.

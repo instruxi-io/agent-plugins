@@ -9,7 +9,7 @@
         "source": "local",
         "path": "./enforcer"
       },
-      "version": "1.8.2",
+      "version": "1.9.0",
       "policy": {
         "installation": "AVAILABLE",
         "authentication": "ON_INSTALL"
