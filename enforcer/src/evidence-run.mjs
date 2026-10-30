@@ -12,6 +12,9 @@
 //   - run from --cwd (the checkout); `cd` is never allowed, a line names its directory (`npm --prefix`, `go -C`);
 //   - retry a suite once when it collides with a concurrent run (port in use, locked database);
 //   - skip the PR (gh) and prose lines: those are proved by the delivery step, not by a command here.
+//   - a row `{"check": "repo.<name>"}` runs the argv `.enforcer/checks.json` at the checkout root declares for <name>
+//     (src/repo-checks.mjs: argv only, no shell, the same minimal environment) and yields a runner record
+//     {kind:'check', source:'runner', name, exit, output}; it counts as one literal, found when it exits 0.
 // Output: one JSON evidence item per command run ({kind:'command', cmd, exit, output, line_index}), skipped lines on
 // stderr, then `literals found: <k>/<n>`. Exit 0 when every quoted literal was found, 1 when one was not, 2 on usage or
 // a node that cannot be loaded. `line_index` is the 0-based position in the node's acceptance list.
@@ -23,16 +26,17 @@ import { literalIn, matchingLine } from './literal-match.mjs';
 import { spawnSync } from 'node:child_process';
 import { headers, allNodes } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
+import { checkName, runCheck } from './repo-checks.mjs';
 
 /** The shared allow list (src/acceptance-allowlist.mjs): the only commands an acceptance line can run as. */
 export { ACCEPTANCE_SHAPES };
 export const COLLISION =
   /EADDRINUSE|address already in use|database is locked|SQLITE_BUSY|deadlock detected|could not obtain lock|resource temporarily unavailable|text file busy|ETXTBSY|port is already allocated|being accessed by other users/i;
 
-/** The node's acceptance lines as an array of strings. */
+/** The node's acceptance lines: strings, and `{check: "repo.<name>"}` rows kept as objects. */
 export const acceptanceOf = (node) => {
   const a = node?.data?.acceptance;
-  return (Array.isArray(a) ? a : a ? [a] : []).map(String);
+  return (Array.isArray(a) ? a : a ? [a] : []).map((l) => (checkName(l) ? l : String(l)));
 };
 
 /** Add the flags a Go test line needs for `--- PASS: <Name>` to appear. */
@@ -176,11 +180,25 @@ export function runEvidence(
 ) {
   const items = [],
     skipped = [],
-    retried = [];
+    retried = [],
+    checks = [];
   let found = 0,
     total = 0;
   acceptanceOf(node).forEach((line, i) => {
     if (only !== null && i !== only) return;
+    const name = checkName(line);
+    if (name) {
+      const rec = runCheck(name, { root: cwd, env, timeoutMs, run });
+      if (rec.skip) {
+        skipped.push({ line_index: i, reason: rec.skip });
+        return;
+      }
+      checks.push({ line_index: i, name: rec.name, exit: rec.exit });
+      total += 1;
+      if (rec.exit === 0) found += 1;
+      items.push({ ...rec, line_index: i });
+      return;
+    }
     const p = prepareLine(line, { cwd, graph, nodeKey: node.key, nodeId: node.node_id ?? node.id, testDb, pr, env, lookup });
     if (p.skip) {
       skipped.push({ line_index: i, reason: p.skip });
@@ -196,7 +214,7 @@ export function runEvidence(
     found += p.literals.filter((l) => literalIn(r.out, l)).length;
     items.push({ kind: 'command', cmd: p.cmd, exit: r.exit, output: clipEvidence(r.out, p.literals), line_index: i });
   });
-  return { items, skipped, found, total, retried };
+  return { items, skipped, found, total, retried, checks };
 }
 
 /** Find a node by key or id in a graph. */
@@ -253,6 +271,7 @@ export async function main(argv, env = process.env) {
     });
     for (const it of r.items) process.stdout.write(JSON.stringify(it) + '\n');
     for (const s of r.skipped) process.stderr.write(`SKIPPED line ${s.line_index}: ${s.reason}\n`);
+    for (const c of r.checks) process.stderr.write(`MANIFEST CHECK line ${c.line_index}: ${c.name} (.enforcer/checks.json) exited ${c.exit}\n`);
     for (const i of r.retried) process.stderr.write(`line ${i} collided with a concurrent run and was retried once\n`);
     process.stdout.write(`literals found: ${r.found}/${r.total}\n`);
     return r.found < r.total ? 1 : 0;

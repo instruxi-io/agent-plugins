@@ -1,4 +1,5 @@
 // PostToolUse on the graph MCP tools: records the run a session holds.
+import { isCheckRow } from '../../repo-checks.mjs';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { actorKey, dataDir, privateWrite } from '../state.mjs';
@@ -27,7 +28,7 @@ export async function trackRun(inp) {
           type: typeof node.type === 'string' ? node.type : undefined,
           lease_expires_at: run.lease_expires_at,
           acceptance_evidence: (Array.isArray(hints) ? hints : []).filter(isObj),
-          acceptance: (Array.isArray(out.acceptance) ? out.acceptance : []).filter((l) => typeof l === 'string'),
+          acceptance: (Array.isArray(out.acceptance) ? out.acceptance : []).filter((l) => typeof l === 'string' || isCheckRow(l)),
           claimed_at: new Date().toISOString(),
         });
         if (inp.session_id && sid !== inp.session_id) {

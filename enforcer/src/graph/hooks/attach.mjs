@@ -9,12 +9,13 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { actorKey, stateBase } from '../state.mjs';
 import { loadRun } from '../run.mjs';
-import { loadEvidence, stripInternal, selectEvidence, mergeEvidence, isFinal, EVIDENCE_CAP } from '../evidence.mjs';
+import { loadEvidence, stripInternal, stripRunner, selectEvidence, mergeEvidence, isFinal, EVIDENCE_CAP } from '../evidence.mjs';
 import { redact } from '../redact.mjs';
 import { OUTPUT_CLIP } from '../clip.mjs';
 import { apiFetch } from '../../../lib/api/client.mjs';
 import { authHeaders } from '../../credentials.mjs';
 import { runEvidence } from '../../evidence-run.mjs';
+import { isCheckRow, rowLabel } from '../../repo-checks.mjs';
 // Which lines run is decided by the one shared allow list (src/acceptance-allowlist.mjs), through runEvidence.
 export { ACCEPTANCE_SHAPES } from '../../acceptance-allowlist.mjs';
 import { findConfig, isGraphTool, isObj, actorTranscript, transcriptUsage, typedUsage } from './common.mjs';
@@ -152,7 +153,7 @@ const NOTE_REASONS = /not an allowed command shape/;
  *  already proved cost three good runs their verdict on 2026-10-13. Never throws. */
 export function acceptanceRecords(inp, run, deps = {}) {
   try {
-    const lines = Array.isArray(run && run.acceptance) ? run.acceptance.filter((l) => typeof l === 'string') : [];
+    const lines = Array.isArray(run && run.acceptance) ? run.acceptance.filter((l) => typeof l === 'string' || isCheckRow(l)) : [];
     if (!lines.length || !inp.cwd || !existsSync(inp.cwd)) return [];
     const have = deps.have instanceof Set ? deps.have : new Set();
     let cwd = inp.cwd;
@@ -163,7 +164,8 @@ export function acceptanceRecords(inp, run, deps = {}) {
     const lineMs = deps.acceptanceTimeoutMs ?? ACCEPT_LINE_MS;
     let deadline = Date.now() + (deps.acceptanceBudgetMs ?? ACCEPT_BUDGET_MS);
     if (Number.isFinite(deps.deadline)) deadline = Math.min(deadline, deps.deadline - ACCEPT_HEADROOM_MS); // the hook's shared deadline
-    const order = lines.map((l, i) => i).sort((a, b) => (FAST.test(lines[b]) ? 1 : 0) - (FAST.test(lines[a]) ? 1 : 0));
+    const fast = (l) => typeof l === 'string' && FAST.test(l);
+    const order = lines.map((l, i) => i).sort((a, b) => (fast(lines[b]) ? 1 : 0) - (fast(lines[a]) ? 1 : 0));
     const node = { key: run.key, node_id: run.node_id, data: { acceptance: lines } };
     const items = [],
       notes = [];
@@ -171,7 +173,7 @@ export function acceptanceRecords(inp, run, deps = {}) {
       if (have.has(i)) continue;
       const left = deadline - Date.now();
       if (left < ACCEPT_MIN_MS) {
-        notes.push({ kind: 'note', text: `acceptance line ${i + 1} was not run (time budget of the report hook): ${lines[i].slice(0, 200)}` });
+        notes.push({ kind: 'note', text: `acceptance line ${i + 1} was not run (time budget of the report hook): ${rowLabel(lines[i]).slice(0, 200)}` });
         continue;
       }
       const r = runEvidence(node, {
@@ -188,13 +190,13 @@ export function acceptanceRecords(inp, run, deps = {}) {
         if (rec.exit === 124)
           notes.push({
             kind: 'note',
-            text: `acceptance line ${line_index + 1} did not finish within the report hook's ${Math.round(Math.min(lineMs, left) / 1000)} s; judge it from the worker's own captured run: ${lines[line_index].slice(0, 200)}`,
+            text: `acceptance line ${line_index + 1} did not finish within the report hook's ${Math.round(Math.min(lineMs, left) / 1000)} s; judge it from the worker's own captured run: ${rowLabel(lines[line_index]).slice(0, 200)}`,
           });
         else items.push({ ...rec, line: line_index + 1 });
       }
       for (const s of r.skipped)
-        if (NOTE_REASONS.test(s.reason))
-          notes.push({ kind: 'note', text: `acceptance line ${s.line_index + 1} was not run (${s.reason}): ${lines[s.line_index].slice(0, 200)}` });
+        if (NOTE_REASONS.test(s.reason) || isCheckRow(lines[s.line_index]))
+          notes.push({ kind: 'note', text: `acceptance line ${s.line_index + 1} was not run (${s.reason}): ${rowLabel(lines[s.line_index]).slice(0, 200)}` });
     }
     return [...items, ...notes];
   } catch {
@@ -319,7 +321,7 @@ export async function decide(inp, deps = {}) {
     return usage && mode() !== 'context' ? { hookEventName: 'PreToolUse', updatedInput: withUsage(inp.tool_input, usage) } : null;
   let evidence = isRemember
     ? selectEvidence(records.slice(-REMEMBER_RECENT).map(stripInternal), REMEMBER_RECENT)
-    : selectEvidence([...acc, ...records.map(stripInternal)]);
+    : selectEvidence([...acc, ...records.map(stripInternal).map(stripRunner).filter(Boolean)]);
   // A claimed PR is the one externally checkable claim: resolve it with gh, never trust the URL.
   const pr = isReport ? (inp.tool_input || {}).pr : null;
   const checked = typeof pr === 'string' && pr.trim() ? checkPr(pr, deps.gh) : null;
