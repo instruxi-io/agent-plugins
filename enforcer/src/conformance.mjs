@@ -120,13 +120,15 @@ export async function main(
     const row = { harness, reason, results: {} };
     if (!reason) {
       const p = plan(harness, repo);
+      const stamp = Date.now();
       if (dry) {
         out(JSON.stringify(p));
       } else {
         try {
           const g = (
             await client.call('POST', '/graphs', {
-              name: `conformance-${harness}-${Date.now()}`,
+              name: `conformance-${harness}-${stamp}`,
+              slug: `conformance-${harness}-${stamp}`,
               mode: 'dag',
               data: { protocol: PROTOCOL, harness, repo, checks: CHECKS_JSON },
             })
