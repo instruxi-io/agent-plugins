@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.9.0
+
+- New `enforcer conformance` command and docs/CONFORMANCE.md: files a per-harness conformance graph in the smoke repo and prints a pass/fail table against the PROTOCOL version.
+- Tests: `test/credentials` clears `GOVERNOR_HOME`, `ENFORCER_HOME` and `ENFORCER_PROFILE`, so `npm test` passes in a shell that exports them.
+- Dispatcher: the CLI header documents `data.needs_person` on exhausted nodes (#361).
+- Dispatcher: workers use the claim card's branch; worktrees are `<repo>-<plan code>-<key>` and created under a repo lock; exhausted nodes are completed `failed` with `data.needs_person`; `over_cap` stops a worker; a rejudge-verified verdict is not relaunched; remediation resumes the prior clean claude session (#360).
+- Named GitHub checks: an acceptance row `{"check": "github.pr_merged" | "github.checks_green" | "github.pr_untouched"}` runs `gh pr view` / `gh pr checks` as argv (read-only GH_TOKEN) and posts a runner record with the fields the server decides from; a gh failure posts no record.
+- Named repository checks: an acceptance row `{"check": "repo.<name>"}` runs the argv `.enforcer/checks.json` declares (no shell, minimal environment, optional `env.PATH` prefix inside the checkout or `$HOME/.cache`) and posts a runner record `{kind: "check", source: "runner", name, exit, output}`; the report hook strips `source: "runner"` from worker-supplied evidence, and `enforcer evidence run` prints which rows were manifest checks.
+
 ## 1.8.2
 
 - Receipt hash v2: once the control plane's receipt ingest answers with `Enforcer-Receipt-Hash-Versions: 1,2` (enforcer-governance#77), new receipts carry `"hv": 2` and are hashed as `sha256("enforcer-receipt/v2\n" + prev + "\n" + JCS(receipt))` over RFC 8785 canonical JSON (`core/jcs.mjs`, `core/chain.mjs`), so any language can recompute them; until then, and again if an answer drops the header, the governor writes v1 exactly as before, and v1 and v2 lines verify as one chain. The shipper labels v2 records `enforcer.receipt.hashv = "2"`. `enforcer governor verify` now also reports lines missing from the end against the newest receipt the control plane acknowledged (`outbox.json` `ackedHash`, which survives the governor carrying on after a cut), and treats an unhashed last line as a break, even one marked `chained: false`. The receipt schema gains `hv`.
