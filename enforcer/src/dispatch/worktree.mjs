@@ -93,9 +93,17 @@ export const planCode = (graphId) =>
     .slice(0, 8);
 
 /** The branch a worker uses: the claim card's `branch` (node.branch or data.branch) when it is a safe ref, else graph/<key>. */
-export function branchFor(node) {
+export function branchFor(node, { code = null, epoch = null } = {}) {
   const b = node.branch ?? (node.data || {}).branch;
   if (typeof b === 'string' && b.split('/').every((p) => safeIdent(p))) return b;
+  // The frontier row carries no branch (the server stamps it on the claim card), so compute the server's own name:
+  // graph/<graphs.code>/<key>/e<epoch>, -a<attempt> when attempt > 1.
+  const c = String(code || '');
+  const e = Number(epoch ?? node.epoch ?? (node.data || {}).epoch ?? 1);
+  if (c && safeIdent(c) && Number.isInteger(e) && e >= 0) {
+    const at = Number(node.attempt ?? (node.data || {}).attempt ?? 1);
+    return `graph/${c}/${node.key}/e${e}` + (Number.isInteger(at) && at > 1 ? `-a${at}` : '');
+  }
   return 'graph/' + node.key;
 }
 
@@ -136,11 +144,16 @@ export function withRepoLock(src, fn, { timeoutMs = 120000, staleSec = 120 } = {
 
 /** [path, branch, note]. A node with a data.repo checkout under repoRoot gets <repoRoot>/<repo>-<plan code>-<key> on the
  *  card's branch (else graph/<key>); the plan code is the graph id's first 8 characters. */
-export function worktreeFor(node, repoRoot, stateDir, { dry = false, graphBases = null, registry = null, graphId = null } = {}) {
+export function worktreeFor(
+  node,
+  repoRoot,
+  stateDir,
+  { dry = false, graphBases = null, registry = null, graphId = null, graphCode = null, graphEpoch = null } = {},
+) {
   const key = assertIdent(node.key, 'node key'); // the key and repo become paths and a branch: never trust a caller to have checked
   const repo = (node.data || {}).repo;
   if (repo !== undefined && repo !== null) assertIdent(repo, 'data.repo');
-  const branch = branchFor(node);
+  const branch = branchFor(node, { code: graphCode, epoch: graphEpoch });
   const code = planCode(graphId);
   const gitMarker = repo && repoRoot ? join(repoRoot, repo, '.git') : null;
   if (!repo || !repoRoot || !(isDir(gitMarker) || isFile(gitMarker))) {
@@ -170,18 +183,22 @@ function addWorktree(src, path, branch, base) {
   let r = git(['worktree', 'add', path, '-b', branch, base], src);
   if (r.returncode === 0) return [path, branch, 'added off ' + base];
   git(['worktree', 'prune'], src);
-  let note = 'reused branch'; // the branch exists from an earlier attempt; no commits ahead of base means it is stale and is recreated
+  let note = 'reused branch'; // the branch exists from an earlier attempt
   if (git(['merge-base', '--is-ancestor', branch, base], src).returncode === 0 || ghPrState(branch, src) === 'MERGED') {
-    git(['branch', '-D', branch], src);
-    r = git(['worktree', 'add', path, '-b', branch, base], src);
-    note = 'recreated off ' + base;
-  } else {
+    // no commits ahead of base (or already merged): stale, check it out into the new worktree
+    git(['branch', '-f', branch, base], src);
     r = git(['worktree', 'add', path, branch], src);
-    if (r.returncode === 0) {
-      if (git(['rebase', base], path).returncode !== 0) {
-        git(['rebase', '--abort'], path);
-        note = `reused branch (rebase onto ${base} failed)`;
-      } else note = 'reused branch, rebased onto ' + base;
+    note = 'reused stale branch, reset to ' + base;
+  } else {
+    // it has commits: leave it alone and take the next -a<attempt> name
+    const stem = branch.replace(/-a\d+$/, '');
+    for (let n = Math.max(2, Number((/-a(\d+)$/.exec(branch) || [])[1] || 1) + 1); n < 50; n++) {
+      const alt = `${stem}-a${n}`;
+      if (git(['rev-parse', '--verify', '-q', 'refs/heads/' + alt], src).returncode === 0) continue;
+      branch = alt;
+      r = git(['worktree', 'add', path, '-b', branch, base], src);
+      note = `branch has commits; new branch ${alt} off ${base}`;
+      break;
     }
   }
   if (r.returncode !== 0) throw new Error('worktree add failed: ' + (r.stderr || r.stdout).trim().slice(0, 300));

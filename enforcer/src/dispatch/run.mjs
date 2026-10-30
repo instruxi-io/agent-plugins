@@ -426,11 +426,14 @@ export class Dispatcher {
     let branch;
     let note;
     try {
+      const g0 = (await this.api.graph?.(this.g).catch(() => null)) || {};
       [path, branch, note] = worktreeFor(n, a.repoRoot, this.state, {
         dry: a.dryRun,
         graphBases: await this.graphBases(),
         registry: this.registry(),
         graphId: this.g,
+        graphCode: g0.code ?? null,
+        graphEpoch: g0.epoch ?? null,
       });
     } catch (e) {
       if (e instanceof BaseMissing) {
