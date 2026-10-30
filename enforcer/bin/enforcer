@@ -6,6 +6,7 @@
 //   enforcer event <name> [--graph-only]                     one process per hook event: governor + graph handlers, merged
 //   enforcer hook <event> [handler]                          alias of: event <event> --graph-only
 //   enforcer ingest-key --harness <h> [--json]               telemetry-only key for a harness (src/ingest-key.mjs)
+//   enforcer dispatch ...                                    graph dispatcher (src/dispatch-command.mjs); an exhausted node is completed failed with data.needs_person
 // V8 compile cache (node >= 22.1): the governor's module graph loads in a few ms instead of tens.
 try { process.getBuiltinModule?.('node:module')?.enableCompileCache?.(join(process.getBuiltinModule('node:os').tmpdir(), `enforcer-v8-${process.getuid?.() ?? 0}`)); } catch {}
 // A hook runs each capability pattern once or twice and exits: compiling a pattern straight to
