@@ -1,16 +1,38 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { PROTOCOL, plan, table, harnessProblem, main, STEPS } from '../src/conformance.mjs';
+import { PROTOCOL, plan, table, harnessProblem, main, STEPS, resultsOf } from '../src/conformance.mjs';
 const BIN = fileURLToPath(new URL('../bin/enforcer', import.meta.url));
 
 const r = spawnSync(process.execPath, [BIN, 'conformance', '--help'], { encoding: 'utf8' });
 assert.equal(r.status, 0);
 assert.match(r.stdout, /PROTOCOL/);
 const p = plan('codex');
-assert.equal(p.nodes.length, STEPS.length);
-assert.equal(p.edges.length, STEPS.length - 1);
-assert.ok(p.nodes.some((n) => n.data.acceptance.some((a) => a.check === 'repo.tests')));
+assert.equal(p.nodes.length, 1);
+assert.equal(p.nodes[0].key, 'conf-codex');
+assert.equal(p.nodes[0].data.repo, 'enforcer-smoke');
+assert.equal(p.nodes[0].data.harness, 'codex');
+assert.equal(p.nodes[0].data.tier, 'standard');
+const acc = p.nodes[0].data.acceptance;
+assert.deepEqual(acc.slice(0, 2), [{ check: 'repo.tests' }, { check: 'github.pr_merged' }]);
+assert.match(acc[2], /git grep -c 'harness: codex' -- smoke\/conformance-codex.md` prints `smoke\/conformance-codex.md:1`/);
+const all = resultsOf(
+  {
+    verdict: {
+      state: 'verified',
+      checks: [
+        { check: 'repo.tests', passed: true },
+        { check: 'github.pr_merged', passed: true },
+      ],
+    },
+  },
+  [{ status: 'succeeded', heartbeat_at: 'x', evidence: [{}] }],
+);
+assert.deepEqual(
+  Object.values(all),
+  STEPS.map(() => true),
+);
+assert.equal(resultsOf({}, []).claim, false);
 assert.match(harnessProblem('grok', { problem: () => 'no credentials' }), /not signed in: no credentials/);
 assert.match(harnessProblem('vim'), /unknown harness/);
 const lines = [];

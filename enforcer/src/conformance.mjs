@@ -14,7 +14,7 @@ export const CHECKS_JSON = { checks: { tests: { argv: ['node', '--test'] } } };
 export const USAGE = `usage: enforcer conformance [--harnesses claude,codex,grok,gemini] [--repo owner/repo] [--dry-run] [--json]
        enforcer conformance --status <graph>   (pass/fail table from the node verdicts)
 
-Files one conformance graph per harness in ${SMOKE_REPO} (targets PROTOCOL ${PROTOCOL}). Its nodes prove:
+Files one conformance graph per harness in ${SMOKE_REPO} (targets PROTOCOL ${PROTOCOL}), one node \`conf-<harness>\`. Its run proves:
   claim       the harness claims the node through graph_next_work
   heartbeat   it keeps the lease with graph_heartbeat
   check       the \`repo.tests\` runner check (.enforcer/checks.json in the smoke repo) passes
@@ -27,26 +27,29 @@ claude green before a release and every harness green before a tag is marked sta
 
 export const STEPS = ['claim', 'heartbeat', 'check', 'land', 'report', 'verified'];
 
-/** The nodes (and chain edges) one harness's graph carries. */
+/** The one node a harness's graph carries: it makes a tiny change in the smoke repo and lands it. */
 export function plan(harness, repo = SMOKE_REPO) {
-  const accept = {
-    claim: ['the run was claimed by this harness (run.runner names it)'],
-    heartbeat: ['`graph_heartbeat` answered state ok at least once before the report'],
-    check: [{ check: 'repo.tests' }],
-    land: ['the change is on branch graph/<key> (or the card branch) in ' + repo],
-    report: ['the report lists each criterion MET with the command that shows it'],
-    verified: ['the judge verdict for the previous node is verified'],
-  };
-  const nodes = STEPS.map((s) => ({
-    key: `conf-${harness}-${s}`,
+  const file = `smoke/conformance-${harness}.md`;
+  const node = {
+    key: `conf-${harness}`,
     type: 'task',
-    title: `conformance ${harness}: ${s}`,
-    description: `Protocol ${PROTOCOL} conformance step "${s}" for the ${harness} plugin.`,
-    data: { repo, harness, step: s, protocol: PROTOCOL, acceptance: accept[s] },
-  }));
-  const edges = nodes.slice(1).map((n, i) => ({ from_key: n.key, to_key: nodes[i].key, type: 'requires' }));
-  return { nodes, edges };
+    title: `conformance ${harness}: claim, change, check, land, report`,
+    description:
+      `Protocol ${PROTOCOL} conformance for the ${harness} plugin. Create \`${file}\` with exactly two lines: ` +
+      `\`harness: ${harness}\` and \`protocol: ${PROTOCOL}\`. Commit it and land it on the claim card's branch.`,
+    data: {
+      repo: localName(repo),
+      harness,
+      protocol: PROTOCOL,
+      tier: 'standard',
+      acceptance: [{ check: 'repo.tests' }, { check: 'github.pr_merged' }, `\`git grep -c 'harness: ${harness}' -- ${file}\` prints \`${file}:1\``],
+    },
+  };
+  return { nodes: [node], edges: [] };
 }
+
+/** The dispatcher wants the local directory name, not owner/repo. */
+const localName = (repo) => String(repo).split('/').pop();
 
 /** Why this harness cannot run at all, else null. */
 export function harnessProblem(harness, { problem = signInProblem } = {}) {
@@ -72,11 +75,35 @@ export function table(rows) {
   return out.join('\n');
 }
 
-const verdictOf = (n) => {
-  if (n.status === 'done') return true;
-  if (n.status === 'failed') return false;
-  return null;
+const checkPassed = (v, name) => {
+  const list = v?.checks;
+  const items = Array.isArray(list)
+    ? list
+    : list && typeof list === 'object'
+      ? Object.entries(list).map(([k, x]) => ({ ...(typeof x === 'object' ? x : { passed: x }), check: k }))
+      : [];
+  const c = items.find((x) => (x.check || x.name || x.id) === name);
+  if (!c) return null;
+  const r = c.passed ?? c.ok ?? c.status ?? c.result;
+  return r === true || r === 'passed' || r === 'pass';
 };
+
+/** The six columns from a node's latest run and verdict. */
+export function resultsOf(node, runs = []) {
+  const run = [...runs].sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || ''))).pop();
+  const v = node.verdict || node.verification || run?.verdict || run?.verification || {};
+  const state = v.state || v.verdict;
+  const beat = run && (run.heartbeat_at || run.last_heartbeat_at || run.heartbeats > 0 || run.heartbeat_count > 0);
+  const done = run && ['succeeded', 'completed', 'done'].includes(run.status) && (run.evidence?.length > 0 || run.evidence_count > 0 || !!run.report);
+  return {
+    claim: !!run,
+    heartbeat: !!beat,
+    check: checkPassed(v, 'repo.tests') === true,
+    land: checkPassed(v, 'github.pr_merged') === true,
+    report: !!done,
+    verified: state === 'verified',
+  };
+}
 
 export async function main(
   argv,
@@ -104,11 +131,12 @@ export async function main(
 
   if (opt('--status')) {
     const g = opt('--status');
-    const nodes = await (api || new API(resolveConfig({}).graphUrl, { headers: authHeaders })).nodes(g);
+    const c = api || new API(resolveConfig({}).graphUrl, { headers: authHeaders });
+    const nodes = await c.nodes(g);
     const by = {};
     for (const n of nodes) {
-      const m = /^conf-(.+?)-(\w+)$/.exec(n.key || '');
-      if (m) (by[m[1]] ||= {})[m[2]] = verdictOf(n);
+      const m = /^conf-(.+)$/.exec(n.key || '');
+      if (m) by[m[1]] = resultsOf(await c.node(g, n.id || n.node_id).catch(() => n), await c.runs(g, n.id || n.node_id).catch(() => []));
     }
     const rows = Object.entries(by).map(([harness, results]) => ({ harness, results }));
     out(json ? JSON.stringify({ protocol: PROTOCOL, rows }) : table(rows));
@@ -135,7 +163,6 @@ export async function main(
           ).data;
           const id = Array.isArray(g) ? g[0].id : g.id;
           for (const n of p.nodes) await client.createNode(id, n);
-          for (const e of p.edges) await client.createEdge(id, e);
           row.graph = id;
           out(`${harness}: filed graph ${id}; run its worker, then: enforcer conformance --status ${id}`);
         } catch (e) {
