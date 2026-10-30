@@ -70,3 +70,20 @@ assert.deepEqual(
   ]),
   [],
 );
+
+// The real shape: the verdict is on the run, a succeeded run carries data.report and evidence.
+const real = resultsOf({ status: 'verifying' }, [
+  {
+    status: 'succeeded',
+    data: { report: 'r' },
+    evidence: [{}],
+    verification: {
+      state: 'unverified',
+      checks: [
+        { check: 'repo.tests', passed: false },
+        { check: 'github.pr_merged', passed: true },
+      ],
+    },
+  },
+]);
+assert.deepEqual([real.claim, real.check, real.land, real.report, real.verified], [true, false, true, true, false]);

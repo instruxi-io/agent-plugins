@@ -91,10 +91,14 @@ const checkPassed = (v, name) => {
 /** The six columns from a node's latest run and verdict. */
 export function resultsOf(node, runs = []) {
   const run = [...runs].sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || ''))).pop();
-  const v = node.verdict || node.verification || run?.verdict || run?.verification || {};
+  // The server puts the verdict on the run (`run.verification`: state + checks [{check, passed}]).
+  const v = run?.verification || run?.verdict || node.verification || node.verdict || {};
   const state = v.state || v.verdict;
-  const beat = run && (run.heartbeat_at || run.last_heartbeat_at || run.heartbeats > 0 || run.heartbeat_count > 0);
-  const done = run && ['succeeded', 'completed', 'done'].includes(run.status) && (run.evidence?.length > 0 || run.evidence_count > 0 || !!run.report);
+  const beat = run && (run.heartbeat_at || run.data?.heartbeat_at || run.last_heartbeat_at || run.heartbeats > 0 || run.heartbeat_count > 0);
+  const done =
+    run &&
+    ['succeeded', 'completed', 'done'].includes(run.status) &&
+    (run.evidence?.length > 0 || run.evidence_count > 0 || !!run.report || !!run.data?.report);
   return {
     claim: !!run,
     heartbeat: !!beat,

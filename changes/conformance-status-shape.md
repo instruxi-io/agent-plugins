@@ -1,0 +1,1 @@
+- `enforcer conformance --status` reads the verdict from the run (`run.verification`), where the server puts it.
