@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.9.1
+
+- `enforcer conformance` files one node per harness (`conf-<harness>`, repo `enforcer-smoke`, runnable acceptance) and `--status` reads the six columns from the node's latest run and verdict.
+- Conformance on claude: `.enforcer/checks.json` also loads in the nested form `{"checks": {name: {"argv": [...]}}}` (enforcer-smoke's, which was refused, so `repo.tests` had no runner record); `github.*` checks fall back to the operator's `gh auth token` when the environment carries no GH_TOKEN; on a claim the worktree's fallback `graph/<key>` branch is renamed to the card's branch (`graph/<code>/<key>/e<epoch>`); the first tool call after a claim heartbeats, the report carries `data.heartbeats`, and `enforcer conformance --status` reads it.
+- `enforcer conformance` files its graph with the `slug` the server requires (it failed with `HTTP 400 slug is required` against prod).
+- `enforcer conformance --status` reads the verdict from the run (`run.verification`), where the server puts it.
+- the dispatch preflight acceptance lint skips `{"check": ...}` rows instead of stringifying them to `[object Object]` and refusing the graph.
+
 ## 1.9.0
 
 - New `enforcer conformance` command and docs/CONFORMANCE.md: files a per-harness conformance graph in the smoke repo and prints a pass/fail table against the PROTOCOL version.
