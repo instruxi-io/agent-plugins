@@ -2,6 +2,7 @@
 // enforcer CLI.
 //   enforcer governor <decide|status|config|limit|verify|set|enable|disable|telemetry>   the governor core
 //   enforcer login|logout|status|workspace                   sign in (wraps bin/login.mjs, bin/enforcer-workspace.mjs)
+//   enforcer conformance [--harnesses a,b]                   file the conformance graph for harnesses (src/conformance.mjs)
 //   enforcer event <name> [--graph-only]                     one process per hook event: governor + graph handlers, merged
 //   enforcer hook <event> [handler]                          alias of: event <event> --graph-only
 //   enforcer ingest-key --harness <h> [--json]               telemetry-only key for a harness (src/ingest-key.mjs)
@@ -105,6 +106,11 @@ if (area === 'evidence') {
   process.exit(await evidenceMain([sub, ...rest].filter((x) => x !== undefined)));
 }
 
+if (area === 'conformance') {
+  const { main: conformanceMain } = await import('../src/conformance.mjs');
+  process.exit(await conformanceMain([sub, ...rest].filter((x) => x !== undefined)));
+}
+
 if (area === 'land') {
   if (sub === undefined) { process.stderr.write('usage: enforcer land <pr> [-R owner/repo] [--timeout <s>]   waits for green, then merges\n'); process.exit(2); }
   const { main: landMain } = await import('../src/land.mjs');
@@ -167,5 +173,5 @@ if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok',
   process.exit(r.ok ? 0 : 1);
 }
 
-process.stderr.write(`usage: enforcer doctor\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer gemini telemetry [on|off|status]   (Gemini CLI telemetry to governance; on after sign-in)\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer harness <install|status> openclaw   (prints the OpenClaw install; shows its telemetry state)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
+process.stderr.write(`usage: enforcer doctor\n       enforcer conformance [--harnesses claude,codex,grok,gemini] [--status <graph>]\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer gemini telemetry [on|off|status]   (Gemini CLI telemetry to governance; on after sign-in)\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer harness <install|status> openclaw   (prints the OpenClaw install; shows its telemetry state)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
 process.exit(2);
