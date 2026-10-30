@@ -72,3 +72,22 @@ test('two dispatcher processes adding worktrees in one repo both succeed', async
   for (const r of rs) assert.equal(r.rc, 0, r.err);
   for (const r of rs) assert.ok(existsSync(r.out.trim()));
 });
+
+test('branchFor computes the server name from the plan code and epoch', () => {
+  assert.equal(branchFor({ key: 'k' }, { code: 'K7M2QX', epoch: 2 }), 'graph/K7M2QX/k/e2');
+  assert.equal(branchFor({ key: 'k', attempt: 3 }, { code: 'K7M2QX', epoch: 1 }), 'graph/K7M2QX/k/e1-a3');
+  assert.equal(branchFor({ key: 'k' }, { code: 'K7M2QX' }), 'graph/K7M2QX/k/e1');
+});
+
+test('a branch with commits ahead is left alone; the next -a name is used', () => {
+  const { root, src, state } = repo();
+  sh(['branch', 'graph/busy', 'main'], src);
+  const w = join(root, 'tmpwt');
+  sh(['worktree', 'add', w, 'graph/busy'], src);
+  sh(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'work'], w);
+  sh(['worktree', 'remove', '--force', w], src);
+  const [p, b] = worktreeFor(node('busy'), root, state, { graphId: 'dddddddd' });
+  assert.equal(b, 'graph/busy-a2');
+  assert.ok(existsSync(p));
+  assert.equal(sh(['rev-list', '--count', 'main..graph/busy'], src).stdout.trim(), '1');
+});
