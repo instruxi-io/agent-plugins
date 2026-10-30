@@ -442,7 +442,7 @@ export function spawnAllowed(argv, { cwd, env = process.env, timeoutMs = 600000,
     const [bin, args] = binFor(argv);
     const r = run(bin, args, {
       cwd,
-      env: isolatedEnv(env, home, { gh: argv[0] === 'gh' && argv[1] === 'pr' && argv[2] === 'view' }),
+      env: isolatedEnv(env, home, { gh: argv[0] === 'gh' && argv[1] === 'pr' && (argv[2] === 'view' || argv[2] === 'checks') }),
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],

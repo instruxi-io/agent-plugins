@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawnAllowed } from './acceptance-allowlist.mjs';
+import { githubCheckName } from './github-checks.mjs';
 
 export const MANIFEST = join('.enforcer', 'checks.json');
 export const OUTPUT_TAIL = 4096;
@@ -26,7 +27,7 @@ export function checkName(row) {
 }
 
 /** True for an acceptance row that is a manifest check. */
-export const isCheckRow = (row) => checkName(row) !== null;
+export const isCheckRow = (row) => checkName(row) !== null || githubCheckName(row) !== null;
 
 /** A short label for an acceptance row (string or check row) for notes and logs. */
 export const rowLabel = (row) => (typeof row === 'string' ? row : isCheckRow(row) ? `check ${row.check}` : JSON.stringify(row));

@@ -27,6 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { headers, allNodes } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
 import { checkName, runCheck } from './repo-checks.mjs';
+import { githubCheckName, runGithubCheck } from './github-checks.mjs';
 
 /** The shared allow list (src/acceptance-allowlist.mjs): the only commands an acceptance line can run as. */
 export { ACCEPTANCE_SHAPES };
@@ -36,7 +37,7 @@ export const COLLISION =
 /** The node's acceptance lines: strings, and `{check: "repo.<name>"}` rows kept as objects. */
 export const acceptanceOf = (node) => {
   const a = node?.data?.acceptance;
-  return (Array.isArray(a) ? a : a ? [a] : []).map((l) => (checkName(l) ? l : String(l)));
+  return (Array.isArray(a) ? a : a ? [a] : []).map((l) => (checkName(l) || githubCheckName(l) ? l : String(l)));
 };
 
 /** Add the flags a Go test line needs for `--- PASS: <Name>` to appear. */
@@ -186,9 +187,10 @@ export function runEvidence(
     total = 0;
   acceptanceOf(node).forEach((line, i) => {
     if (only !== null && i !== only) return;
-    const name = checkName(line);
-    if (name) {
-      const rec = runCheck(name, { root: cwd, env, timeoutMs, run });
+    const gname = githubCheckName(line);
+    const name = gname ? null : checkName(line);
+    if (gname || name) {
+      const rec = gname ? runGithubCheck(gname, { cwd, env, timeoutMs, run }) : runCheck(name, { root: cwd, env, timeoutMs, run });
       if (rec.skip) {
         skipped.push({ line_index: i, reason: rec.skip });
         return;
