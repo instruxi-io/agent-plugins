@@ -1,0 +1,1 @@
+- The report hook always runs `{"check": ...}` rows, even when the worker already ran `enforcer evidence run`: those records reached the server only as text, so every check row came back `no_runner_record`.

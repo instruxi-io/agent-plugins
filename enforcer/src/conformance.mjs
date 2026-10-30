@@ -28,8 +28,9 @@ claude green before a release and every harness green before a tag is marked sta
 export const STEPS = ['claim', 'heartbeat', 'check', 'land', 'report', 'verified'];
 
 /** The one node a harness's graph carries: it makes a tiny change in the smoke repo and lands it. */
-export function plan(harness, repo = SMOKE_REPO) {
-  const file = `smoke/conformance-${harness}.md`;
+export function plan(harness, repo = SMOKE_REPO, stamp = Date.now()) {
+  // One file per run: a fixed path is already on master after the first run, so a later run has nothing to land.
+  const file = `smoke/conformance-${harness}-${stamp}.md`;
   const node = {
     key: `conf-${harness}`,
     type: 'task',
@@ -160,8 +161,8 @@ export async function main(
   for (const [harness, reason] of bad) {
     const row = { harness, reason, results: {} };
     if (!reason) {
-      const p = plan(harness, repo);
       const stamp = Date.now();
+      const p = plan(harness, repo, stamp);
       if (dry) {
         out(JSON.stringify(p));
       } else {

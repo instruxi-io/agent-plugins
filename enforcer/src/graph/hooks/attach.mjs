@@ -170,7 +170,11 @@ export function acceptanceRecords(inp, run, deps = {}) {
     const items = [],
       notes = [];
     for (const i of order) {
-      if (have.has(i)) continue;
+      // A check row is always run here, even if the worker already ran `enforcer evidence run`: that run's records reach the
+      // server only as text inside a command's output, and the server trusts only the structured source:'runner' records this
+      // hook writes (src/graph/evidence.mjs strips the label from anything else). Skipping it left every check row
+      // no_runner_record on conformance graph 731d5e61 (2026-10-30). Prose lines keep the skip (see above).
+      if (have.has(i) && !isCheckRow(lines[i])) continue;
       const left = deadline - Date.now();
       if (left < ACCEPT_MIN_MS) {
         notes.push({ kind: 'note', text: `acceptance line ${i + 1} was not run (time budget of the report hook): ${rowLabel(lines[i]).slice(0, 200)}` });
