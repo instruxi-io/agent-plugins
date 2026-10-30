@@ -108,9 +108,11 @@ export async function acceptanceLint(base, graph, h, nodes, types = DISPATCH_TYP
     if (['done', 'cancelled', 'succeeded'].includes(n.status)) continue;
     if (types !== null && !types.includes(n.type)) continue;
     const a = n.data?.acceptance;
-    const lines = (Array.isArray(a) ? a : a ? [a] : []).map(String);
+    // A runner-check row ({"check": "repo.tests"}) is runnable by construction; the prose lint is for text lines.
+    const lines = (Array.isArray(a) ? a : a ? [a] : []).filter((x) => !(x && typeof x === 'object' && typeof x.check === 'string')).map(String);
     const key = n.key || n.id;
     if (!lines.length) {
+      if (Array.isArray(a) && a.length) continue;
       if (['task', 'bug', 'chore'].includes(n.type)) found.push(`${key}: acceptance_missing — no acceptance lines`);
       continue;
     }

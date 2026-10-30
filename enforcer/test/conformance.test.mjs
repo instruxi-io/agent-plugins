@@ -61,3 +61,12 @@ assert.match(create.body.slug, /^conformance-claude-\d+$/);
 assert.equal(create.body.slug, create.body.name);
 assert.match(filed.join('\n'), /claude: filed graph g-1/);
 console.log('ok - conformance');
+
+// Runner-check rows are not prose: the preflight lint skips them (it used to stringify them to "[object Object]").
+const { acceptanceLint } = await import('../src/preflight.mjs');
+assert.deepEqual(
+  await acceptanceLint('http://unused.invalid', 'g', {}, [
+    { key: 'k', type: 'task', status: 'open', data: { acceptance: [{ check: 'repo.tests' }, { check: 'github.pr_merged' }] } },
+  ]),
+  [],
+);
