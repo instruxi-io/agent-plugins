@@ -61,7 +61,7 @@ export function loadManifest(root, { env = process.env } = {}) {
       return { error: `${MANIFEST}: env may only hold PATH` };
     if (m.env.PATH !== undefined) {
       if (typeof m.env.PATH !== 'string') return { error: `${MANIFEST}: env.PATH must be a string` };
-      const cache = join(env.HOME || homedir(), '.cache');
+      const cache = join(env.HOME || env.USERPROFILE || homedir(), '.cache');
       const dirs = m.env.PATH.split(delimiter).filter(Boolean);
       const abs = [];
       for (const d of dirs) {

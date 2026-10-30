@@ -105,10 +105,11 @@ test('bad manifest: anything not {name: string[]} is refused whole', () => {
   }
   // env.PATH inside the checkout or $HOME/.cache is accepted and prefixed
   const d = repo({ pass: ['node', 'ok.mjs'], env: { PATH: 'node_modules/.bin' } });
-  const m = loadManifest(d, { env: { HOME: '/home/x' } });
+  const fakeHome = join(tmpdir(), 'repo-checks-home');
+  const m = loadManifest(d, { env: { HOME: fakeHome } });
   assert.equal(m.error, undefined);
   assert.equal(m.pathPrefix, join(d, 'node_modules', '.bin'));
-  assert.equal(loadManifest(repo({ env: { PATH: '/home/x/.cache/tool/bin' } }), { env: { HOME: '/home/x' } }).error, undefined);
+  assert.equal(loadManifest(repo({ env: { PATH: join(fakeHome, '.cache', 'tool', 'bin') } }), { env: { HOME: fakeHome } }).error, undefined);
 });
 
 test('stripped forgery: worker-supplied runner records never reach the report', () => {
