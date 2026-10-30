@@ -1,0 +1,1 @@
+- the dispatch preflight acceptance lint skips `{"check": ...}` rows instead of stringifying them to `[object Object]` and refusing the graph.
