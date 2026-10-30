@@ -45,6 +45,18 @@ export function adoptCardBranch(cwd, branch, { git = (args) => spawnSync('git', 
   }
 }
 
+/** The acceptance lines the report hook runs, from a claim card. The node's own list (`node.data.acceptance`) comes first:
+ *  the card's top-level `acceptance` holds only the judged lines and drops every `{"check": ...}` row, so a hook that read it
+ *  ran no check row and attached no runner record, and every check came back no_runner_record (conformance 7d162fcc,
+ *  2026-10-30). The node's list also numbers lines the way `enforcer evidence run` does, so a line the worker already ran
+ *  is recognised by its index. */
+export function cardAcceptance(out) {
+  const o = isObj(out) ? out : {};
+  const data = isObj(o.node) && isObj(o.node.data) ? o.node.data : {};
+  const list = Array.isArray(data.acceptance) && data.acceptance.length ? data.acceptance : Array.isArray(o.acceptance) ? o.acceptance : [];
+  return list.filter((l) => typeof l === 'string' || isCheckRow(l));
+}
+
 export async function trackRun(inp) {
   try {
     const name = inp.tool_name || '';
@@ -66,7 +78,7 @@ export async function trackRun(inp) {
           type: typeof node.type === 'string' ? node.type : undefined,
           lease_expires_at: run.lease_expires_at,
           acceptance_evidence: (Array.isArray(hints) ? hints : []).filter(isObj),
-          acceptance: (Array.isArray(out.acceptance) ? out.acceptance : []).filter((l) => typeof l === 'string' || isCheckRow(l)),
+          acceptance: cardAcceptance(out),
           branch: cardBranch(out) || undefined,
           claimed_at: new Date().toISOString(),
         });
