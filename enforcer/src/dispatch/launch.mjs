@@ -410,7 +410,22 @@ export function removeAgentMcpConfigs(stateDir, key = null) {
 }
 
 /** The argv of a worker launch. `session` names (or with `resume`, continues) a claude session. */
-export function launchCmd(prompt, model, args, key, { session = null, resume = false, maxTurns = null, mcpConfig = null, harness = null } = {}) {
+/** A checkout's git common dir, absolute (`<repo>/.git` for a linked worktree), or null when cwd is not in a git checkout.
+ *  A linked worktree's index, refs and objects live there, outside the worktree itself. */
+export function gitCommonDir(cwd) {
+  if (!cwd) return null;
+  const r = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, encoding: 'utf8', timeout: 10_000 });
+  const out = r.status === 0 ? String(r.stdout || '').trim() : '';
+  return out || null;
+}
+
+export function launchCmd(
+  prompt,
+  model,
+  args,
+  key,
+  { session = null, resume = false, maxTurns = null, mcpConfig = null, harness = null, cwd = null, gitDir = undefined } = {},
+) {
   harness = harness || args.harness || 'claude';
   if (harness === 'grok') {
     const cmd = [args.grok || process.env.GROK_BIN || 'grok', '-p', prompt, '--output-format', 'streaming-messages-json'];
@@ -430,9 +445,13 @@ export function launchCmd(prompt, model, args, key, { session = null, resume = f
       'workspace-write',
       '-c',
       'sandbox_workspace_write.network_access=true',
-      '-c',
-      `mcp_servers.enforcer={url=${JSON.stringify(url)}, default_tools_approval_mode="approve"}`,
     ];
+    // workspace-write covers the worktree but not its git metadata, which a linked worktree keeps in the main checkout's
+    // .git (worktrees/<name>, objects, refs): without it `git add` fails and a worker improvised an empty GIT_INDEX_FILE
+    // (incident 2026-10-31, PR 57 deleted 377 lines). `--add-dir` makes the common dir writable alongside the worktree.
+    const common = gitDir === undefined ? gitCommonDir(cwd) : gitDir;
+    if (common) cmd.push('--add-dir', common);
+    cmd.push('-c', `mcp_servers.enforcer={url=${JSON.stringify(url)}, default_tools_approval_mode="approve"}`);
     if (harnessKnowsModel('codex', model)) cmd.push('--model', model);
     return [...cmd, prompt];
   }
