@@ -42,7 +42,7 @@ import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinit
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
-import { needsRunnerRecords, attachRunnerRecords, latestRun } from './check-records.mjs';
+import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
 import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
@@ -845,10 +845,18 @@ export class Dispatcher {
       );
       // gemini/codex/grok run no report hook, so their reports carry no runner records: attach them here
       // the run state comes from the API: the stream parser sees no graph_report for gemini and grok
+      let apiDone = false;
+      if (harness !== 'claude') {
+        try {
+          apiDone = runDone(await latestRun(this.api, this.g, w.node));
+        } catch {
+          apiDone = false;
+        }
+      }
       if (needsRunnerRecords(harness, w.node) && w.path) {
         try {
           const run = await latestRun(this.api, this.g, w.node);
-          if (run && run.status === 'succeeded') {
+          if (run && run.status === 'succeeded' && !run.verified) {
             await attachRunnerRecords({ api: this.api, graph: this.g, node: w.node, runId: run.runId, cwd: w.path, say: (m) => this.say(m) });
           }
         } catch (e) {
@@ -857,8 +865,13 @@ export class Dispatcher {
       }
       const destructive = harness !== 'claude' ? await this.destructiveGuard(w, s) : null;
       for (const ln of judgeLines(key, s.verification)) this.say(ln);
-      let outcome = destructive ? { error: destructive.reason, rejection: null } : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
-      if (s.run_id && !s.reported) await this.failOrphan(w, s);
+      let outcome = destructive
+        ? { error: destructive.reason, rejection: null }
+        : apiDone
+          ? null
+          : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
+      if (apiDone) this.say(`${key}: API shows a succeeded run; not relaunching`);
+      if (s.run_id && !s.reported && !apiDone) await this.failOrphan(w, s);
       const down = Object.entries(s.mcp).filter(([k, v]) => k.startsWith('plugin:enforcer') && v !== 'connected');
       if (down.length && !s.run_id) {
         // never reached the graph (a needs-auth flake): not the node's fault; three in a row is an outage
