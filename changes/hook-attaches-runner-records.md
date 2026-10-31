@@ -1,1 +1,0 @@
-- The report hook attaches runner records for `{"check": ...}` rows on dispatched workers: it read the claim card's top-level `acceptance`, which omits check rows, so it ran none and every check came back `no_runner_record`. It now reads `node.data.acceptance`, numbered as `enforcer evidence run` numbers it.

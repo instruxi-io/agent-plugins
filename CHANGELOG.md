@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.9.2
+
+- `enforcer conformance` writes one file per run (`smoke/conformance-<harness>-<stamp>.md`): a fixed path was already on master after the first run, so every later run had nothing to land.
+- The report hook attaches runner records for `{"check": ...}` rows on dispatched workers: it read the claim card's top-level `acceptance`, which omits check rows, so it ran none and every check came back `no_runner_record`. It now reads `node.data.acceptance`, numbered as `enforcer evidence run` numbers it.
+- The report hook always runs `{"check": ...}` rows, even when the worker already ran `enforcer evidence run`: those records reached the server only as text, so every check row came back `no_runner_record`.
+- Repo check runner records carry the contract's bare name (`"name": "tests"`, OUTPUTS_AND_LINKS_CONTRACT §8), not `repo.tests`: the server matched the bare name, so a passing `repo.tests` was judged `no_runner_record`.
+- Dispatcher creates the worktree on the server's own card branch name (graph/<code>/<key>/e<epoch>), and a stale branch is reused while one with commits gets the next -a<attempt> name.
+
 ## 1.9.1
 
 - `enforcer conformance` files one node per harness (`conf-<harness>`, repo `enforcer-smoke`, runnable acceptance) and `--status` reads the six columns from the node's latest run and verdict.
