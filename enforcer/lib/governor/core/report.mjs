@@ -6,6 +6,7 @@ import { readManaged, merge, envReading, envIgnoredLines, ENV_OVERRIDES, decisio
 import { DEFAULTS, priceOf, dollarsForTokens, burnRate, release } from './policy.mjs';
 import { SETTINGS, GROUPS, RETIRED, validate, parseValue } from './settings.mjs';
 import { seal } from './chain.mjs';
+import { fromConfig as complianceFrom } from './compliance.mjs';
 import { hashVersion, ackedHash } from './outbox.mjs';
 
 // Everything after the subcommand is ONE argument. The slash commands pass
@@ -212,8 +213,9 @@ if (cmd === 'resume') {
     const id = ids[0];
     const before = s.prevHash;
     // release() chains its receipt as v1; re-seal it under the version the
-    // governor writes now, from the same prev (chain.mjs).
-    const out = seal(before, release(s, id).entry, hashVersion());
+    // governor writes now, from the same prev (chain.mjs). The operator's
+    // compliance settings go last, as on every other receipt (compliance.mjs).
+    const out = seal(before, { ...release(s, id).entry, ...complianceFrom(cfg) }, hashVersion());
     commit(s, out.entry, out.hash, before);
     const a = s.agents[id];
     return { msg: `${id} is running again, with its limit raised to ${usd(a.budget, a.model)}. Recorded as your decision.` };

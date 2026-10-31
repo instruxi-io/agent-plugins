@@ -17,6 +17,7 @@
 import { gate } from './gate.mjs';
 import { isOn, isOff } from './bool.mjs';
 import { matchRule, DEFAULT_RULES, resolveRules } from './capability.mjs';
+import { fromConfig as complianceFrom } from './compliance.mjs';
 // Network-facing modules load lazily, only when a call needs them: a tool call with no rule matched
 // (always, with decisioning off) never asks the tenant, so a hook does not pay to load them.
 const consult = async (...a) => (await import('./central.mjs')).consult(...a);
@@ -97,7 +98,8 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
     const cfg = config();
     // The run this session holds, when the adapter knows one: it rides on the
     // decision record so a parent can tie a refusal to its run.
-    const st = { ...stamp, runId: event.runId, graphId: event.worker?.graphId || undefined };
+    // The operator's compliance settings ride on every receipt too (compliance.mjs).
+    const st = { ...stamp, runId: event.runId, graphId: event.worker?.graphId || undefined, compliance: complianceFrom(cfg) };
     // The tenant's policy is asked BEFORE taking the lock, and only when a
     // local rule matched: the network must never sit inside the lock, and an
     // unmatched call has nothing to ask about.
@@ -330,6 +332,9 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
           // The token counts the cost was priced from, as measured: the
           // session's usage without our price table. Last, for the hash.
           ...(counts ? { usage: counts } : {}),
+          // The operator's compliance settings (compliance.mjs), last for the
+          // same reason. No policy_id: no rule decides a summary.
+          ...complianceFrom(config()),
         };
         const sealed = seal(state.prevHash, entry, hashVersion());
         commit(state, sealed.entry, sealed.hash);

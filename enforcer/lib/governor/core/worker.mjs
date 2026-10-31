@@ -27,6 +27,7 @@
 
 import { Verdict, CAPABILITY } from './verdict.mjs';
 import { allow as ALLOW, deny as DENY } from './headless-worker-profile.mjs';
+import { rulesetOf, WORKER_RULESET } from './compliance.mjs';
 
 export const WORKER_RULES = Object.freeze([
   { id: 'graph.push', name: 'push a graph/<key> branch' },
@@ -73,8 +74,10 @@ const trustedLand = (path, root) => {
 };
 const META = /[;&|`\n<>]|\$\(/;
 
+// These rules as data -- the rule list and the profile they read -- versioned by content for the receipt.
+const WORKER_DATA = Object.freeze({ rules: WORKER_RULES, allow: ALLOW, deny: DENY });
 const verdict = (action, ruleId, code, reason) => {
-  const of = { source: CAPABILITY, rule: RULE[ruleId].name, ruleId, checked: [CAPABILITY], code };
+  const of = { source: CAPABILITY, rule: RULE[ruleId].name, ruleId, checked: [CAPABILITY], code, ruleset: rulesetOf(WORKER_RULESET, WORKER_DATA) };
   return action === 'allow' ? Verdict.allow(reason, of) : action === 'deny' ? Verdict.deny(reason, of) : Verdict.ask(reason, of);
 };
 
