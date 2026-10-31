@@ -1,0 +1,1 @@
+The pinned enforcer-governance spec moves to ca0c37f (past #95), so the contract test now checks the server-side approvals poll (`GET /approvals`) and `GET /chain-heads/public-keys` against the real spec. Their two known-drift entries are gone, and the generated governance types are regenerated.
