@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { API, APIError } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
-import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch } from './worktree.mjs';
+import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
   launchCmd,
   workerEnv,
@@ -399,6 +399,23 @@ export class Dispatcher {
     return routeFor(n, this.routes, this.args).harness;
   }
 
+  /** The resolved inputs the worktree is built from. A frontier row has no claim card yet: its data.inputs holds bindings
+   *  (`test-author.tests_branch`), so resolve the branch-like ones from the upstream runs' outputs here. */
+  async launchInputs(n) {
+    const plain = n.inputs && typeof n.inputs === 'object' && !Array.isArray(n.inputs) && n.inputs !== n.data?.inputs ? n.inputs : null;
+    const given = n.input_values ?? plain;
+    if (given) return given;
+    if (!inputBindings(n).length || !this.api.nodes || !this.api.runs) return null;
+    try {
+      const { values, missing } = await resolveInputBindings(n, { nodes: () => this.api.nodes(this.g), runs: (id) => this.api.runs(this.g, id) });
+      if (missing.length) this.say(`${n.key}: worktree-base: input binding unresolved (${missing.join(', ')})`);
+      return values && Object.keys(values).length ? values : null;
+    } catch (e) {
+      this.say(`${n.key}: worktree-base: could not resolve input bindings (${e.message})`);
+      return null;
+    }
+  }
+
   async launch(n) {
     const a = this.args;
     const bad = unsafeIdent(n);
@@ -430,6 +447,7 @@ export class Dispatcher {
     let note;
     try {
       const g0 = (await this.api.graph?.(this.g).catch(() => null)) || {};
+      const inputs = await this.launchInputs(n);
       [path, branch, note] = worktreeFor(n, a.repoRoot, this.state, {
         dry: a.dryRun,
         graphBases: await this.graphBases(),
@@ -437,7 +455,7 @@ export class Dispatcher {
         graphId: this.g,
         graphCode: g0.code ?? null,
         graphEpoch: g0.epoch ?? null,
-        inputs: n.input_values ?? n.inputs ?? null,
+        inputs,
         say: (m) => this.say(`${n.key}: ${m}`),
       });
     } catch (e) {
