@@ -32,7 +32,7 @@ test('the latest run comes from the API, newest first by start time', async () =
       { run_id: 'a', status: 'failed', started_at: '2026-01' },
     ],
   };
-  assert.deepEqual(await latestRun(api, 'g', node), { runId: 'b', status: 'succeeded' });
+  assert.deepEqual(await latestRun(api, 'g', node), { runId: 'b', status: 'succeeded', verified: false });
   assert.equal(await latestRun({ runs: async () => [] }, 'g', node), null);
 });
 
@@ -67,4 +67,19 @@ test('command lines are run and posted with source runner and their line number'
   assert.equal(rec.source, 'runner');
   assert.equal(rec.line, 2);
   assert.match(rec.output, /hi/);
+});
+
+test('runDone decides from the API run: verified, unverified, none', async () => {
+  const { latestRun, runDone } = await import('../src/dispatch/check-records.mjs');
+  const mk = (runs) => ({ runs: async () => runs });
+  const node = { id: 'n' };
+  const verified = await latestRun(mk([{ run_id: 'r1', status: 'succeeded', started_at: '1', verification: { state: 'verified' } }]), 'g', node);
+  assert.equal(runDone(verified), true);
+  assert.equal(verified.verified, true);
+  const unverified = await latestRun(mk([{ run_id: 'r1', status: 'succeeded', started_at: '1' }]), 'g', node);
+  assert.equal(runDone(unverified), true);
+  assert.equal(unverified.verified, false);
+  const failed = await latestRun(mk([{ run_id: 'r1', status: 'failed', started_at: '1' }]), 'g', node);
+  assert.equal(runDone(failed), false);
+  assert.equal(runDone(await latestRun(mk([]), 'g', node)), false);
 });

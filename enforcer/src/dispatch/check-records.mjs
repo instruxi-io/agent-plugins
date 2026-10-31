@@ -19,8 +19,14 @@ export async function latestRun(api, graph, node) {
   const runs = typeof api.runs === 'function' ? await api.runs(graph, node.id ?? node.node_id) : [];
   const stamp = (r) => String(r.started_at ?? r.created_at ?? '');
   const last = [...runs].sort((a, b) => stamp(a).localeCompare(stamp(b))).pop();
-  return last ? { runId: last.run_id ?? last.id, status: last.status } : null;
+  if (!last) return null;
+  const v = last.verification ?? last.data?.verification ?? last.verdict;
+  const state = typeof v === 'string' ? v : v?.state;
+  return { runId: last.run_id ?? last.id, status: last.status, verified: state === 'verified' || last.status === 'verified' };
 }
+
+/** Did a finished non-Claude worker's run succeed, per the API (succeeded or verified)? Never throws. */
+export const runDone = (run) => !!run && (run.status === 'succeeded' || run.status === 'verified' || run.verified === true);
 
 /** Run every runnable acceptance line (check rows and command lines; prose is skipped) in cwd; returns the records
  * tagged with their 1-based acceptance line. Command lines give the judge real output (gemini conformance, 0.45). */
