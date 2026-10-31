@@ -18,6 +18,7 @@
 // who refused without the reader parsing English.
 
 import { decisionRecord } from './codes.mjs';
+import { fit } from './compliance.mjs';
 
 export const ALLOW = 'allow';
 export const DENY = 'deny';
@@ -37,7 +38,7 @@ export const ECONOMICS = 'economics';
 export const OPERATOR = 'operator';
 
 export class Verdict {
-  constructor({ action, reason, source, rule = null, input = null, checked = [], advice = null, policy = null, code = null, ruleId = null }) {
+  constructor({ action, reason, source, rule = null, input = null, checked = [], advice = null, policy = null, code = null, ruleId = null, ruleset = null }) {
     this.action = action;
     this.reason = reason;
     this.source = source;
@@ -53,6 +54,10 @@ export class Verdict {
     this.code = code;
     // The rule's policy id ('git.force_push'), beside its display name in `rule`.
     this.ruleId = ruleId;
+    // The local ruleset the deciding rule belongs to, { id, version }
+    // (compliance.mjs rulesetOf). Null when no local rule decided -- spend, or
+    // the tenant's own policy, whose id and version the governor is not told.
+    this.ruleset = ruleset;
     Object.freeze(this);
   }
 
@@ -94,7 +99,12 @@ export class Verdict {
     spentUsd = undefined,
     runId = undefined,
     graphId = undefined,
+    compliance = {},
   } = {}) {
+    // A tenant-policy verdict was decided by the tenant's policy, not the local
+    // ruleset its rule belongs to, so it never names the local one.
+    const ruleset = this.source === POLICY ? null : this.ruleset;
+    const c = compliance || {};
     return {
       ts,
       agent,
@@ -133,6 +143,14 @@ export class Verdict {
       decision: decisionRecord(this, { tool, run_id: runId }),
       // The graph the run belongs to, last for the same reason; absent outside a graph worker.
       graph_id: graphId || undefined,
+      // The compliance fields (compliance.mjs), last for the same reason; each
+      // absent unless known and within the bound the edge enforces.
+      data_classification: fit('data_classification', c.data_classification),
+      purpose: fit('purpose', c.purpose),
+      legal_basis: fit('legal_basis', c.legal_basis),
+      policy_id: fit('policy_id', ruleset?.id),
+      policy_version: fit('policy_version', ruleset?.version),
+      retention_class: fit('retention_class', c.retention_class),
     };
   }
 

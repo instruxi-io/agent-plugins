@@ -63,7 +63,10 @@ ok('they are the LAST keys (before the hash), so every earlier field keeps its p
     // spent_usd was added after them, for the same reason: it may only ever
     // come last, so it must not appear anywhere before these two.
     // The decision record (2.9) came after spent_usd, and is always last.
-    let keys = Object.keys(r).filter((k) => k !== 'hash');
+    // The compliance fields (049) came after it, and go after the decision record.
+    const LATER = ['graph_id', 'data_classification', 'purpose', 'legal_basis', 'policy_id', 'policy_version', 'retention_class'];
+    let keys = Object.keys(r).filter((k) => k !== 'hash' && k !== 'hv');
+    while (LATER.includes(keys.at(-1))) keys = keys.slice(0, -1);
     if (keys.at(-1) === 'decision') keys = keys.slice(0, -1);
     const tail = keys.at(-1) === 'spent_usd' ? keys.slice(0, -1) : keys;
     assert.deepEqual(tail.slice(-2), ['harness', 'adapter_version'], `order: ${keys.join(',')}`);

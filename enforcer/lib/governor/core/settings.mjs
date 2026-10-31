@@ -18,7 +18,7 @@
 // on every tool call, and the failure that matters is silent: a soft mark of
 // 75 instead of 0.75 means the warn never fires, and nothing tells you.
 
-export const GROUPS = ['limits', 'rates', 'checks', 'attribution', 'identity'];
+export const GROUPS = ['limits', 'rates', 'checks', 'attribution', 'compliance', 'identity'];
 
 const num = (min, max) => (v) => {
   const n = Number(v);
@@ -26,6 +26,8 @@ const num = (min, max) => (v) => {
   if (n < min || n > max) return `must be between ${min} and ${max}`;
   return null;
 };
+// A string within the bound the control plane enforces, in UTF-8 bytes.
+const bytes = (max) => (v) => (Buffer.byteLength(String(v).trim(), 'utf8') > max ? `at most ${max} bytes` : null);
 const bool = () => (v) => (['true', 'false', 'on', 'off', 'yes', 'no', '1', '0'].includes(String(v).toLowerCase()) ? null : `expected true or false, got ${v}`);
 const oneOf =
   (...ok) =>
@@ -173,6 +175,38 @@ export const SETTINGS = {
 
   // ── attribution ───────────────────────────────────────────────────────────
   model: { group: 'attribution', type: 'string', describe: 'Which model prices dollars into tokens when the harness figure is unavailable.' },
+
+  // ── compliance ────────────────────────────────────────────────────────────
+  // Stamped on every receipt when set, for an audit (compliance.mjs). The
+  // governor cannot know these about an action, so nothing fills them but you.
+  dataClassification: {
+    group: 'compliance',
+    type: 'string',
+    check: bytes(64),
+    describe: 'How sensitive the data agents here touch is: public, internal, confidential, restricted.',
+    hint: "Your organisation's own vocabulary; a short word. Empty leaves it off receipts.",
+  },
+  purpose: {
+    group: 'compliance',
+    type: 'string',
+    check: bytes(512),
+    describe: 'What the agents here are working for, on every receipt.',
+    hint: 'One sentence an auditor can read: "maintain the billing service". Empty leaves it off.',
+  },
+  legalBasis: {
+    group: 'compliance',
+    type: 'string',
+    check: bytes(256),
+    describe: 'The basis the work is done under: consent, contract, legitimate_interests, or a policy reference.',
+    hint: 'GDPR Art. 6 bases or a contract/policy id. Empty leaves it off.',
+  },
+  retentionClass: {
+    group: 'compliance',
+    type: 'string',
+    check: bytes(64),
+    describe: 'The retention schedule these receipts fall under. Recorded, not acted on.',
+    hint: 'Nothing is deleted on its account; the control plane stores it beside the record.',
+  },
 
   // ── identity ──────────────────────────────────────────────────────────────
   centralUrl: {

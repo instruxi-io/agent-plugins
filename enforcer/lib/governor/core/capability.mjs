@@ -17,6 +17,7 @@ import { isOn, isOff } from './bool.mjs';
 import { toolMatches, nativeField } from './tools.mjs';
 import { ruleCode } from './codes.mjs';
 import { SETTINGS_PATHS } from './worker.mjs';
+import { rulesetOf, DEFAULT_RULESET, CONFIG_RULESET } from './compliance.mjs';
 
 // PowerShell-native spellings. Parameters may be abbreviated to any unambiguous
 // prefix (-r, -rec, -fo), so the flags are matched as prefixes.
@@ -621,10 +622,13 @@ function rewriteInput(rule, ev, segs) {
  *   is finished, and economics still gets its turn.
  */
 export function evaluate(rules, ev) {
-  const found = scan(rules || DEFAULT_RULES, ev);
+  const inForce = rules || DEFAULT_RULES;
+  const found = scan(inForce, ev);
   if (!found) return null;
   const hit = found.rule;
-  const of = { source: CAPABILITY, rule: hit.name, checked: [CAPABILITY], code: ruleCode(hit), ruleId: ruleId(hit) };
+  // Which ruleset decided, for the receipt: the built-in rules, or the operator's own config.rules.
+  const ruleset = rulesetOf(inForce === DEFAULT_RULES ? DEFAULT_RULESET : CONFIG_RULESET, inForce);
+  const of = { source: CAPABILITY, rule: hit.name, checked: [CAPABILITY], code: ruleCode(hit), ruleId: ruleId(hit), ruleset };
 
   if (hit.action === 'deny') {
     // Refuse the ACTION, do not stop the agent. A capability check says "not

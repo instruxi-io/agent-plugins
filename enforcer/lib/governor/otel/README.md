@@ -35,6 +35,8 @@ Each line is a JSON object, appended, never rewritten. Only `ts`, `agent` and `v
 | `policy` | What the tenant policy said, when it was asked. |
 | `harness`, `adapter_version` | Which harness asked, and its adapter version. |
 | `graph_id` | The graph a worker run belongs to. |
+| `data_classification`, `purpose`, `legal_basis`, `retention_class` | The operator's compliance settings (`/enforcer:governor set purpose ...`); absent when unset. |
+| `policy_id`, `policy_version` | The local ruleset whose rule decided, and a sha256 of its rules; absent when spend or the tenant's policy decided. |
 | `decision` | `{decision, code, rule, tool, summary, run_id?}`: the machine-readable decision. `code` comes from `core/codes.mjs`; `rule` is the rule id, such as `fs.delete_tree`. |
 | `would` | `{decision, code, rule}`: what the capability rules would have decided while they are off (shadow mode). Absent when they are on. |
 | `hash` | sha256 of the previous hash plus this line's JSON without `hash`. Absent on an unhashed line. |
