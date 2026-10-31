@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
 import { needsRunnerRecords, checkRows, attachRunnerRecords, latestRun } from '../src/dispatch/check-records.mjs';
 
 const node = { id: 'n1', key: 'k', data: { acceptance: ['`ls` prints x', { check: 'repo.tests' }] } };
@@ -57,7 +58,7 @@ test('command lines are run and posted with source runner and their line number'
     graph: 'g',
     node: { id: 'n1', key: 'k', data: { acceptance: ['prose only', '`ls` prints `hi`'] } },
     runId: 'r',
-    cwd: '/tmp',
+    cwd: tmpdir(),
     deps: { run: () => ({ status: 0, stdout: 'hi\n', stderr: '' }), retryDelayMs: 0 },
   });
   assert.equal(n, 1);
