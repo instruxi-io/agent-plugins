@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.9.3
+
+- Codex workers now launch with the worktree's git common dir as an extra writable root (`codex exec --add-dir`), so `git add`, commit and push work inside the sandbox. Every non-Claude worker's prompt now says to land only with land-pr.sh, never `gh pr merge`, never to override GIT_INDEX_FILE or GIT_OBJECT_DIRECTORY, and to report failed on a git error. After a non-Claude worker exits, the dispatcher checks its branch's PR: a merge with zero additions that deletes files outside the node's stated paths is logged as `destructive_merge` and the run is reported failed.
+- Codex dispatched workers can call the enforcer MCP server's tools without an approval prompt (per-server default_tools_approval_mode override).
+- The dispatcher now reads a gemini, codex or grok worker's latest run from the API and posts its check records to the run's evidence route, and codex workers launch with a workspace-write sandbox (network on) so they can commit and land.
+- Governor receipts carry the compliance fields enforcer-governance accepts since migration 049: `policy_id` and `policy_version` name the local ruleset whose rule decided (built-in, config.rules or graph-worker rules, versioned by a sha256 of the rules), and four new settings (`dataClassification`, `purpose`, `legalBasis`, `retentionClass`) stamp the operator's values on every receipt when set. Unknown or over-bound values are left off, so a receipt is never refused for them.
+- A dispatched grok worker no longer gets CLAUDE_PLUGIN_ROOT, which made another plugin's (jev-hooks) prompt gate fail and cancel every grok worker at 0 turns.
+- Preflight acceptance lint fails only on the server's errors, prints its warnings, and falls back to the local allowlist (warnings) when the server is unreachable.
+- Preflight: the server's acceptance-lint warnings print as warnings and never fail a dispatch, even when the reply has no `errors` key.
+- The dispatcher now runs every runnable acceptance line (command lines as well as check rows) after a non-Claude worker reports succeeded, and posts the output as runner records, so the judge sees real command output for gemini, codex and grok.
+- The dispatcher runs a node's check rows and posts the `source:runner` records itself after a gemini, codex or grok worker reports succeeded, so those runs no longer come back `no_runner_record`.
+
 ## 1.9.2
 
 - `enforcer conformance` writes one file per run (`smoke/conformance-<harness>-<stamp>.md`): a fixed path was already on master after the first run, so every later run had nothing to land.

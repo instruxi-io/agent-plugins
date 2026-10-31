@@ -1,7 +1,7 @@
 {
   "name": "@instruxi-io/enforcer",
   "license": "FSL-1.1-ALv2",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "bin": {
     "enforcer": "bin/enforcer"
   },
