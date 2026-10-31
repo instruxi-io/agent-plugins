@@ -91,7 +91,7 @@ async function get(base, path, h) {
   return { status: r.status, body };
 }
 
-/** The server's verdict on lines: {errors, warnings}. A server that sends no `errors` key (older) has every finding treated as an error. */
+/** The server's verdict on lines: {errors, warnings}. Server warnings are never errors, even when the reply has no `errors` key. */
 async function lintPost(base, graph, h, acceptance) {
   const r = await defaultFetch(`${base.replace(/\/$/, '')}/graphs/${graph}/acceptance/lint`, {
     method: 'POST',
@@ -102,7 +102,7 @@ async function lintPost(base, graph, h, acceptance) {
   const b = await r.json();
   const d = b.errors !== undefined || b.warnings !== undefined ? b : (b.data ?? {});
   const warnings = d.warnings || [];
-  return d.errors === undefined ? { errors: warnings, warnings: [] } : { errors: d.errors || [], warnings };
+  return { errors: d.errors || [], warnings };
 }
 
 /** Offline fallback when the server cannot be reached: lines that name a backticked command outside the local allowlist, as warnings only. */

@@ -188,6 +188,19 @@ await t('server warnings print but do not fail preflight', () =>
   }),
 );
 
+await t('a warnings-only reply with no errors key does not fail preflight', async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ success: true, warnings: [{ code: 'no_command', index: 0, line: 'x' }] }), { status: 200 });
+  try {
+    const { acceptanceLintReport } = await import('../src/preflight.mjs');
+    const r = await acceptanceLintReport('http://x', 'g1', {}, [{ key: 'rv', type: 'task', data: { acceptance: ['review it'] } }]);
+    assert.deepEqual(r.errors, []);
+    assert.match(r.warnings[0], /rv: line 0 no_command/);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
 await t('an unreachable lint endpoint falls back to the local list as warnings', async () => {
   const saved = planNodes;
   planNodes = [{ key: 'off', type: 'task', data: { acceptance: ['`rm -rf x` exits 0'] } }];
