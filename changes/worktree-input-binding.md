@@ -1,0 +1,1 @@
+Dispatcher: the worktree is built off the input branch in a real dispatch: a frontier row carries `data.inputs` bindings (`test-author.tests_branch`), not the claim card's resolved values, so the dispatcher now resolves branch-like bindings from the upstream node's latest succeeded run outputs before `git worktree add` (and warns when one is unresolved).

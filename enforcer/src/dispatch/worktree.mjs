@@ -96,6 +96,50 @@ export function inputBase(inputs) {
   return null;
 }
 
+/** The branch-like inputs a node binds in data.inputs (`{tests_branch: "test-author.tests_branch"}`), as
+ *  [[name, upstreamKey, output]]. A frontier row carries these bindings, never the resolved values. */
+export function inputBindings(node) {
+  const b = (node && node.data && node.data.inputs) || null;
+  if (!b || typeof b !== 'object') return [];
+  const out = [];
+  for (const k of INPUT_BRANCH_KEYS) {
+    const v = typeof b[k] === 'string' ? b[k].trim() : '';
+    const m = /^([A-Za-z0-9._-]+)\.([A-Za-z0-9_-]+)$/.exec(v);
+    if (m) out.push([k, m[1], m[2]]);
+  }
+  return out;
+}
+
+/** Resolve a node's branch-like input bindings the way the claim card would: each upstream node's latest succeeded
+ *  run's data.outputs[<output>]. The dispatcher builds the worktree BEFORE the worker claims, from the frontier row,
+ *  so without this the card's input branch never reaches worktreeFor. Returns {values, missing}; values is null when
+ *  the node binds no branch-like input. */
+export async function resolveInputBindings(node, { nodes, runs }) {
+  const binds = inputBindings(node);
+  if (!binds.length) return { values: null, missing: [] };
+  const all = await nodes();
+  const values = {};
+  const missing = [];
+  for (const [name, key, output] of binds) {
+    const up = all.find((x) => x.key === key);
+    let v = null;
+    if (up) {
+      const rs = (await runs(up.id)) || [];
+      const ok = rs.filter((r) => r.status === 'succeeded').sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')));
+      for (const r of ok) {
+        const o = (r.data || {}).outputs || {};
+        if (typeof o[output] === 'string' && o[output].trim()) {
+          v = o[output].trim();
+          break;
+        }
+      }
+    }
+    if (v) values[name] = v;
+    else missing.push(`${name}=${key}.${output}`);
+  }
+  return { values, missing };
+}
+
 export function checkBase(ref, source, cwd) {
   if (source === 'origin/HEAD') return;
   if (git(['rev-parse', '--verify', '-q', ref], cwd).returncode !== 0) throw new BaseMissing(`base ${ref} (from ${source}) does not exist on origin`);
@@ -195,7 +239,7 @@ export function worktreeFor(
     say(`worktree-base: from ${source} ${base.replace(/^origin\//, '')}`);
   } else if (inputs && typeof inputs === 'object') {
     // inputs present but none names a branch: ordinary node, the base applies
-  } else if (node.data && node.data.needs_input_branch) {
+  } else if (node.data && (node.data.needs_input_branch || inputBindings(node).length)) {
     say('worktree-base: WARNING input branch absent; falling back to ' + base);
   }
   if (source === 'origin/HEAD') {
