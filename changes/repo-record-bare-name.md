@@ -1,1 +1,0 @@
-- Repo check runner records carry the contract's bare name (`"name": "tests"`, OUTPUTS_AND_LINKS_CONTRACT §8), not `repo.tests`: the server matched the bare name, so a passing `repo.tests` was judged `no_runner_record`.
