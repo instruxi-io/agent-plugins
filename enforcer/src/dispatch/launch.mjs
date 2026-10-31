@@ -413,7 +413,15 @@ export function launchCmd(prompt, model, args, key, { session = null, resume = f
     return cmd;
   }
   if (harness === 'codex') {
-    const cmd = [args.codex || process.env.CODEX_BIN || 'codex', 'exec', '--json'];
+    // Headless exec cannot answer an MCP approval prompt ("approval policy is never"): approve only the enforcer server's tools, not shell or other servers.
+    const url = process.env.ENFORCER_MCP_URL || 'https://api.instruxi.dev/mcp';
+    const cmd = [
+      args.codex || process.env.CODEX_BIN || 'codex',
+      'exec',
+      '--json',
+      '-c',
+      `mcp_servers.enforcer={url=${JSON.stringify(url)}, default_tools_approval_mode="approve"}`,
+    ];
     if (harnessKnowsModel('codex', model)) cmd.push('--model', model);
     return [...cmd, prompt];
   }
