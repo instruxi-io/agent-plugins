@@ -10,6 +10,7 @@ import { authHeaders, signInProblem } from './credentials.mjs';
 import { DEFAULT_WORKER_RULES, workerRulesLine } from './dispatch/launch.mjs';
 import { identityCheck, readAgentKey } from './dispatch/agent.mjs';
 import { DOT } from '../hooks/claude/paths.mjs';
+import { allowedCommand } from './acceptance-allowlist.mjs';
 import { safeIdent, pyRepr, unsafeIdent } from './dispatch/ident.mjs';
 
 const OWN_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -90,6 +91,7 @@ async function get(base, path, h) {
   return { status: r.status, body };
 }
 
+/** The server's verdict on lines: {errors, warnings}. A server that sends no `errors` key (older) has every finding treated as an error. */
 async function lintPost(base, graph, h, acceptance) {
   const r = await defaultFetch(`${base.replace(/\/$/, '')}/graphs/${graph}/acceptance/lint`, {
     method: 'POST',
@@ -98,12 +100,31 @@ async function lintPost(base, graph, h, acceptance) {
   });
   if (r.status !== 200) throw new Error(`HTTP ${r.status}`);
   const b = await r.json();
-  return b.warnings || b.data?.warnings || [];
+  const d = b.errors !== undefined || b.warnings !== undefined ? b : (b.data ?? {});
+  const warnings = d.warnings || [];
+  return d.errors === undefined ? { errors: warnings, warnings: [] } : { errors: d.errors || [], warnings };
 }
 
-/** One line per finding: `<key>: line <i> <code> — <first 60 chars>`; a task/bug/chore with no acceptance is acceptance_missing. */
-export async function acceptanceLint(base, graph, h, nodes, types = DISPATCH_TYPES) {
-  const found = [];
+/** Offline fallback when the server cannot be reached: lines that name a backticked command outside the local allowlist, as warnings only. */
+function localLint(lines) {
+  const out = [];
+  lines.forEach((line, index) => {
+    const m = /`([^`]+)`/.exec(line);
+    if (!m) return;
+    const cmd = m[1].replace(/;\s*echo\s+\S+=\$\?\s*$/, '');
+    if (allowedCommand(cmd, { root: process.cwd() })?.skip) out.push({ code: 'local_not_allowlisted', index, line });
+  });
+  return out;
+}
+
+/**
+ * Findings for each open dispatchable node: `<key>: line <i> <code> — <first 60 chars>`, as {errors, warnings} (strings).
+ * Only the server's errors stop a dispatch; a task/bug/chore with no acceptance is acceptance_missing (an error).
+ * When the server cannot be reached the local list is used and its findings are warnings.
+ */
+export async function acceptanceLintReport(base, graph, h, nodes, types = DISPATCH_TYPES) {
+  const errors = [];
+  const warnings = [];
   for (const n of nodes) {
     if (['done', 'cancelled', 'succeeded'].includes(n.status)) continue;
     if (types !== null && !types.includes(n.type)) continue;
@@ -113,13 +134,25 @@ export async function acceptanceLint(base, graph, h, nodes, types = DISPATCH_TYP
     const key = n.key || n.id;
     if (!lines.length) {
       if (Array.isArray(a) && a.length) continue;
-      if (['task', 'bug', 'chore'].includes(n.type)) found.push(`${key}: acceptance_missing — no acceptance lines`);
+      if (['task', 'bug', 'chore'].includes(n.type)) errors.push(`${key}: acceptance_missing — no acceptance lines`);
       continue;
     }
-    for (const w of await lintPost(base, graph, h, lines))
-      found.push(`${key}: line ${w.index} ${w.code} — ${(w.line ?? lines[w.index] ?? '').replace(/\s+/g, ' ').slice(0, 60)}`);
+    const fmt = (w) => `${key}: line ${w.index} ${w.code} — ${(w.line ?? lines[w.index] ?? '').replace(/\s+/g, ' ').slice(0, 60)}`;
+    let r;
+    try {
+      r = await lintPost(base, graph, h, lines);
+    } catch {
+      r = { errors: [], warnings: localLint(lines).map((w) => ({ ...w, code: `${w.code} (server unreachable)` })) };
+    }
+    errors.push(...r.errors.map(fmt));
+    warnings.push(...r.warnings.map(fmt));
   }
-  return found;
+  return { errors, warnings };
+}
+
+/** Errors only, as one line per finding (plan check prints these as LINT). */
+export async function acceptanceLint(base, graph, h, nodes, types = DISPATCH_TYPES) {
+  return (await acceptanceLintReport(base, graph, h, nodes, types)).errors;
 }
 
 const run = (cmd, args, o = {}) => {
@@ -238,10 +271,11 @@ export async function preflight(
   // 4a acceptance lint: every dispatchable open node's lines through the server's advisory lint
   if (nodes) {
     try {
-      const found = await acceptanceLint(base, graph, h, nodes, types);
-      if (!found.length) add('acceptance', true, 'ok');
-      else if (allowLintWarnings) add('acceptance', true, `warning (--allow-lint-warnings): ${found.join('; ')}`);
-      else add('acceptance', false, `${found.join('; ')}; fix the lines or pass --allow-lint-warnings`);
+      const { errors: found, warnings } = await acceptanceLintReport(base, graph, h, nodes, types);
+      const warn = warnings.length ? `; warnings: ${warnings.join('; ')}` : '';
+      if (!found.length) add('acceptance', true, `ok${warn}`);
+      else if (allowLintWarnings) add('acceptance', true, `warning (--allow-lint-warnings): ${found.join('; ')}${warn}`);
+      else add('acceptance', false, `${found.join('; ')}; fix the lines or pass --allow-lint-warnings${warn}`);
     } catch (e) {
       add('acceptance', false, `cannot lint acceptance: ${e.message}`);
     }
