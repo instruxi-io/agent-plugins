@@ -529,6 +529,7 @@ export class Dispatcher {
       governorHome,
       route: r,
       routeEnv: a.routesEnv || process.env,
+      harness,
     });
     const proc = spawnWorker(cmd, {
       cwd: path,

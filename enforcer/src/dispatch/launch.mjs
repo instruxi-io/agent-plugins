@@ -174,6 +174,7 @@ export function workerEnv(
     governorHome = null,
     route = null,
     routeEnv = null,
+    harness = 'claude',
   } = {},
 ) {
   const root = pluginDirs()[0];
@@ -190,6 +191,10 @@ export function workerEnv(
     CLAUDE_PLUGIN_ROOT: root,
     ENFORCER_PLUGIN_ROOT: root,
   });
+  // Grok imports Claude Code's enabled plugins, and expands their hooks' ${CLAUDE_PLUGIN_ROOT} from the environment: with ours set, jev-hooks'
+  // UserPromptSubmit gate ran enforcer's path, failed, and blocked the first prompt (every grok worker ended `cancelled` at 0 turns).
+  // Grok's own enforcer plugin does not read it (ENFORCER_PLUGIN_ROOT stays), so a grok worker gets none.
+  if (harness === 'grok') delete out.CLAUDE_PLUGIN_ROOT;
   // The host root the dispatcher itself talks to (the same resolver its API client uses): without it a worker holding only an API key has no base and its hooks go silent.
   try {
     out[BASE_URL_VAR] = baseUrl || resolveConfig({ env }).baseUrl;
