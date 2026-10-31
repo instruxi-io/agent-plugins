@@ -75,7 +75,7 @@ test('a dispatched worker report gets runner check records attached', async () =
   );
   const ev = out.updatedInput.evidence;
   const runner = ev.filter((e) => e.kind === 'check' && e.source === 'runner');
-  const tests = runner.find((e) => e.name === 'repo.tests');
+  const tests = runner.find((e) => e.name === 'tests');
   assert.ok(tests, 'repo.tests runner record attached: ' + JSON.stringify(ev));
   assert.equal(tests.exit, 0);
   assert.equal(tests.line, 1, 'the check row keeps its node line number');

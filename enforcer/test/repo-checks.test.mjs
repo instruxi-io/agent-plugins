@@ -48,7 +48,7 @@ test('pass: the argv runs without a shell and yields a runner record', () => {
   const r = runCheck('pass', { root: d, env: { ...process.env, SECRET_TOKEN: 's' } });
   assert.equal(r.kind, 'check');
   assert.equal(r.source, 'runner');
-  assert.equal(r.name, 'repo.pass');
+  assert.equal(r.name, 'pass'); // the contract's bare name (OUTPUTS_AND_LINKS_CONTRACT §8)
   assert.equal(r.exit, 0);
   assert.match(r.output, /all good/);
   // the minimal environment: no credential reaches the check
@@ -66,15 +66,15 @@ test('fail: a non-zero exit is recorded, and evidence run counts it as not found
   assert.deepEqual(
     r.items.map((i) => [i.kind, i.source, i.name, i.exit, i.line_index]),
     [
-      ['check', 'runner', 'repo.pass', 0, 0],
-      ['check', 'runner', 'repo.fail', 3, 1],
+      ['check', 'runner', 'pass', 0, 0],
+      ['check', 'runner', 'fail', 3, 1],
     ],
   );
   assert.equal(r.found, 1);
   assert.equal(r.total, 2);
   assert.deepEqual(
     r.checks.map((c) => c.name),
-    ['repo.pass', 'repo.fail'],
+    ['pass', 'fail'],
   );
 });
 
