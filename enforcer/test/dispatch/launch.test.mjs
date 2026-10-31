@@ -25,3 +25,13 @@ test('preflight prints the plugin root and version workers will run', async () =
   assert.ok(l.line.includes(PLUGIN_DIR.replace(/\/$/, '')) || l.line.includes('workers run'));
   assert.match(l.line, /enforcer \d+\.\d+/);
 });
+
+test('codex launch auto-approves only the enforcer MCP server tools, and drops a claude model name', () => {
+  const c = launchCmd('p', 'sonnet', {}, 'k', { harness: 'codex' });
+  const i = c.indexOf('-c');
+  assert.ok(i > 0 && c[i + 1].startsWith('mcp_servers.enforcer={url='));
+  assert.match(c[i + 1], /default_tools_approval_mode="approve"/);
+  assert.ok(!c.includes('--model'));
+  assert.ok(!c.includes('--dangerously-bypass-approvals-and-sandbox'));
+  assert.equal(c.at(-1), 'p');
+});
