@@ -44,6 +44,7 @@ import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
 import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
+import { codexGitRules, landForCodex } from './codex-land.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -470,8 +471,10 @@ export class Dispatcher {
     // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
     const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
     const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
-    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness, cwd: a.dryRun ? null : path });
+    // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
+    if (harness === 'codex') prompt += '\n' + codexGitRules();
+    else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
+    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
@@ -709,6 +712,55 @@ export class Dispatcher {
     }
   }
 
+  /** A codex worker reported succeeded: commit its worktree on the card branch, push, open the PR, land it with
+   *  land-pr.sh and post the github runner records. Any failure (empty or destructive diff, red CI, a git error) fails
+   *  the run with the reason and the land-pr output as evidence. Returns the failure, or null (landed, or nothing to land). */
+  async landCodex(w) {
+    if (!w.branch || !w.path) return null;
+    let run = null;
+    try {
+      run = await latestRun(this.api, this.g, w.node);
+    } catch (e) {
+      this.say(`codex land ${w.key}: ${e.message}`);
+    }
+    if (!run || !(runDone(run) || run.status === 'verifying')) return null;
+    let res;
+    try {
+      res = await (this.codexLander || landForCodex)({
+        api: this.api,
+        graph: this.g,
+        node: w.node,
+        runId: run.runId,
+        cwd: w.path,
+        branch: w.branch,
+        base: w.node.data?.base || 'main',
+        landPr: LAND_PR,
+        landTimeout: this.args.landTimeout,
+        logDir: this.logs,
+        say: (m) => this.say(m),
+      });
+    } catch (e) {
+      res = { ok: false, code: 'land_failed', error: `codex land threw: ${e.message}` };
+    }
+    if (res.ok) {
+      this.say(`codex land ${w.key}: merged ${res.url}`);
+      return null;
+    }
+    this.say(`codex land ${w.key}: ${res.code}: ${clip(res.error, 300)}`);
+    try {
+      await this.api.complete(this.g, w.node.id, run.runId, {
+        status: 'failed',
+        error: res.error,
+        ...(res.evidence ? { evidence: res.evidence } : {}),
+        data: { runner: 'graph-dispatch', codex_land: { code: res.code, url: res.url || null, files: res.files || [] } },
+      });
+      this.say(`codex land ${w.key}: run ${run.runId} reported failed`);
+    } catch (e) {
+      this.say(`codex land ${w.key}: could not fail run ${run.runId}: ${e.message}`);
+    }
+    return res;
+  }
+
   /** A non-Claude worker whose merged PR only deleted files outside the node's paths: log destructive_merge and fail its
    *  run (incident 2026-10-31, PR 57). Returns the finding or null. Never throws. */
   async destructiveGuard(w, s) {
@@ -825,6 +877,8 @@ export class Dispatcher {
       this.say(
         `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} cold cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
+      // codex cannot commit in its sandbox: the dispatcher commits, pushes and lands its worktree, then posts the records
+      const codexFail = harness === 'codex' ? await this.landCodex(w) : null;
       // gemini/codex/grok run no report hook, so their reports carry no runner records: attach them here
       // the run state comes from the API: the stream parser sees no graph_report for gemini and grok
       let apiDone = false;
@@ -847,8 +901,11 @@ export class Dispatcher {
       }
       const destructive = harness !== 'claude' ? await this.destructiveGuard(w, s) : null;
       for (const ln of judgeLines(key, s.verification)) this.say(ln);
-      let outcome = destructive
-        ? { error: destructive.reason, rejection: null }
+      // a codex landing refusal (empty or destructive diff, red CI) failed the run: it wins over the API's earlier succeeded
+      const refused = codexFail || destructive;
+      if (refused) apiDone = false;
+      let outcome = refused
+        ? { error: refused.error || refused.reason, rejection: null }
         : apiDone
           ? null
           : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
