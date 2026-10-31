@@ -10,7 +10,9 @@ import { isCheckRow } from '../repo-checks.mjs';
 export const checkRows = (node) => ((node && node.data && node.data.acceptance) || []).filter((l) => typeof l !== 'string' && isCheckRow(l));
 
 /** Should the dispatcher look for records to attach for this finished worker? Claude's own hook already did. */
-export const needsRunnerRecords = (harness, node) => harness !== 'claude' && checkRows(node).length > 0;
+export const needsRunnerRecords = (harness, node) => harness !== 'claude' && acceptanceLines(node).length > 0;
+
+const acceptanceLines = (node) => (node && node.data && node.data.acceptance) || [];
 
 /** The node's latest run from the API (the stream parser misses graph_report for gemini and grok). Null when none. */
 export async function latestRun(api, graph, node) {
@@ -20,16 +22,11 @@ export async function latestRun(api, graph, node) {
   return last ? { runId: last.run_id ?? last.id, status: last.status } : null;
 }
 
-/** Run each check row in cwd; returns the records tagged with their 1-based acceptance line. */
+/** Run every runnable acceptance line (check rows and command lines; prose is skipped) in cwd; returns the records
+ * tagged with their 1-based acceptance line. Command lines give the judge real output (gemini conformance, 0.45). */
 export function runnerRecords(node, cwd, graph, deps = {}) {
-  const lines = (node.data && node.data.acceptance) || [];
-  const out = [];
-  lines.forEach((l, i) => {
-    if (typeof l === 'string' || !isCheckRow(l)) return;
-    const r = runEvidence(node, { cwd, graph, only: i, run: deps.run, retryDelayMs: deps.retryDelayMs, timeoutMs: deps.timeoutMs });
-    for (const { line_index, ...rec } of r.items) out.push({ ...rec, line: line_index + 1 });
-  });
-  return out;
+  const r = runEvidence(node, { cwd, graph, run: deps.run, retryDelayMs: deps.retryDelayMs, timeoutMs: deps.timeoutMs });
+  return r.items.map(({ line_index, ...rec }) => ({ ...rec, source: 'runner', line: line_index + 1 }));
 }
 
 /** Run the rows and POST them to the run's evidence route (the run is already complete). Returns the number posted. */
