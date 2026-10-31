@@ -1,0 +1,1 @@
+The dispatcher now reads a gemini, codex or grok worker's latest run from the API and posts its check records to the run's evidence route, and codex workers launch with a workspace-write sandbox (network on) so they can commit and land.

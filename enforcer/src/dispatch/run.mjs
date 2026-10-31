@@ -42,7 +42,7 @@ import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinit
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
-import { needsRunnerRecords, attachRunnerRecords } from './check-records.mjs';
+import { needsRunnerRecords, attachRunnerRecords, latestRun } from './check-records.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -792,9 +792,13 @@ export class Dispatcher {
         `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} cold cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
       // gemini/codex/grok run no report hook, so their reports carry no runner records: attach them here
-      if (needsRunnerRecords(harness, s, w.node) && w.path) {
+      // the run state comes from the API: the stream parser sees no graph_report for gemini and grok
+      if (needsRunnerRecords(harness, w.node) && w.path) {
         try {
-          await attachRunnerRecords({ api: this.api, graph: this.g, node: w.node, runId: s.run_id, cwd: w.path, say: (m) => this.say(m) });
+          const run = await latestRun(this.api, this.g, w.node);
+          if (run && run.status === 'succeeded') {
+            await attachRunnerRecords({ api: this.api, graph: this.g, node: w.node, runId: run.runId, cwd: w.path, say: (m) => this.say(m) });
+          }
         } catch (e) {
           this.say(`runner records ${key}: ${e.message}`);
         }

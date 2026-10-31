@@ -40,6 +40,11 @@
       "kind": "read",
       "field": "data.tenant_id",
       "reason": "Tolerant fallback for tenant.id (the schema nests the tenant). The /auth/me schema has no top-level tenant_id."
+    },
+    {
+      "id": "src/dispatch/api.mjs POST /graphs/{}/nodes/{}/runs/{}/evidence",
+      "kind": "path",
+      "reason": "The runner-evidence route (enforcer-graph PR 479) is not in the pinned graph spec yet. The dispatcher posts check records there after a non-Claude worker reports. Delete this entry when the spec is re-pinned."
     }
   ]
 }

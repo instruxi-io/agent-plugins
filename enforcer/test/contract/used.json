@@ -131,6 +131,18 @@
       "headers": []
     },
     {
+      "id": "src/dispatch/api.mjs POST /graphs/{}/nodes/{}/runs/{}/evidence",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "POST",
+      "path": "/graphs/{}/nodes/{}/runs/{}/evidence",
+      "sends": [
+        "evidence"
+      ],
+      "reads": [],
+      "headers": []
+    },
+    {
       "id": "src/dispatch/api.mjs GET /graphs/{}/nodes/{}/runs",
       "file": "src/dispatch/api.mjs",
       "service": "graph",

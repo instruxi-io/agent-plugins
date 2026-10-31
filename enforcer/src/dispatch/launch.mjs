@@ -424,6 +424,12 @@ export function launchCmd(prompt, model, args, key, { session = null, resume = f
       args.codex || process.env.CODEX_BIN || 'codex',
       'exec',
       '--json',
+      // default exec sandbox is read-only (a worker could not commit or land): write inside the cwd (the worktree) only,
+      // plus network for git push and gh. Narrower than danger-full-access; no approvals needed (exec never asks).
+      '--sandbox',
+      'workspace-write',
+      '-c',
+      'sandbox_workspace_write.network_access=true',
       '-c',
       `mcp_servers.enforcer={url=${JSON.stringify(url)}, default_tools_approval_mode="approve"}`,
     ];
