@@ -43,6 +43,7 @@ import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimit
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import { needsRunnerRecords, attachRunnerRecords, latestRun } from './check-records.mjs';
+import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -467,7 +468,8 @@ export class Dispatcher {
     // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
     const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
     const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness });
+    if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
+    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness, cwd: a.dryRun ? null : path });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
@@ -555,6 +557,7 @@ export class Dispatcher {
       started: now(),
       resources: resourcesOf(n),
       path,
+      branch,
       model,
       harness,
       tier: r.tier,
@@ -704,6 +707,35 @@ export class Dispatcher {
     }
   }
 
+  /** A non-Claude worker whose merged PR only deleted files outside the node's paths: log destructive_merge and fail its
+   *  run (incident 2026-10-31, PR 57). Returns the finding or null. Never throws. */
+  async destructiveGuard(w, s) {
+    if (!w.branch || !w.path) return null;
+    let found = null;
+    try {
+      found = (this.gitGuard || checkDestructiveMerge)({ node: w.node, branch: w.branch, cwd: w.path });
+    } catch (e) {
+      this.say(`destructive_merge check ${w.key}: ${e.message}`);
+      return null;
+    }
+    if (!found) return null;
+    this.say(`destructive_merge ${w.key}: ${found.reason}`);
+    let runId = s.run_id;
+    if (!runId) runId = (await latestRun(this.api, this.g, w.node).catch(() => null))?.runId;
+    if (!runId) return found;
+    try {
+      await this.api.complete(this.g, w.node.id, runId, {
+        status: 'failed',
+        error: found.reason,
+        data: { runner: 'graph-dispatch', destructive_merge: { url: found.url, files: found.files } },
+      });
+      this.say(`destructive_merge ${w.key}: run ${runId} reported failed`);
+    } catch (e) {
+      this.say(`destructive_merge ${w.key}: could not fail run ${runId}: ${e.message}`);
+    }
+    return found;
+  }
+
   async failOrphan(w, s) {
     const body = {
       status: 'failed',
@@ -803,8 +835,9 @@ export class Dispatcher {
           this.say(`runner records ${key}: ${e.message}`);
         }
       }
+      const destructive = harness !== 'claude' ? await this.destructiveGuard(w, s) : null;
       for (const ln of judgeLines(key, s.verification)) this.say(ln);
-      let outcome = await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
+      let outcome = destructive ? { error: destructive.reason, rejection: null } : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
       if (s.run_id && !s.reported) await this.failOrphan(w, s);
       const down = Object.entries(s.mcp).filter(([k, v]) => k.startsWith('plugin:enforcer') && v !== 'connected');
       if (down.length && !s.run_id) {
