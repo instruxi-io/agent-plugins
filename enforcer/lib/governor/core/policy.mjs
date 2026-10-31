@@ -401,6 +401,11 @@ export const DEFAULTS = {
   clientLimits: {},
   rules: null, // null = DEFAULT_RULES; set your own to override
   operator: '', // the human this agent acts for; stamped on every receipt
+  // Compliance fields stamped on every receipt when set (compliance.mjs); '' leaves them off.
+  dataClassification: '',
+  purpose: '',
+  legalBasis: '',
+  retentionClass: '',
   softAction: 'escalate', // 'escalate' -> ask a human; 'deny' -> auto-block
 };
 

@@ -29,6 +29,12 @@
     "cost_usd": { "type": "number", "minimum": 0, "description": "Dollars spent in the session, on summary lines." },
     "authority": { "type": "string" },
     "graph_id": { "type": "string", "description": "The graph the run belongs to, for graph workers." },
+    "data_classification": { "type": "string", "maxLength": 64, "description": "How sensitive the data was: the operator's dataClassification setting. Absent when unset." },
+    "purpose": { "type": "string", "maxLength": 512, "description": "What the work was for: the operator's purpose setting. Absent when unset." },
+    "legal_basis": { "type": "string", "maxLength": 256, "description": "The basis it was done under: the operator's legalBasis setting. Absent when unset." },
+    "policy_id": { "type": "string", "maxLength": 256, "description": "The local ruleset whose rule decided: governor.default_rules, governor.config_rules or governor.worker_rules. Absent when spend or the tenant's policy decided." },
+    "policy_version": { "type": "string", "maxLength": 256, "description": "sha256:<hex> of that ruleset's rules as data; changes exactly when a rule does." },
+    "retention_class": { "type": "string", "maxLength": 64, "description": "The retention schedule the record falls under: the operator's retentionClass setting. Absent when unset." },
     "decision": {
       "type": "object",
       "required": ["decision", "code", "rule", "tool", "summary"],
