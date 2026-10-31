@@ -81,6 +81,21 @@ export function resolveBase(node, graphBases = null, registry = null, originHead
   return [originHead || 'origin/main', 'origin/HEAD'];
 }
 
+const INPUT_BRANCH_KEYS = ['tests_branch', 'input_branch', 'base_branch', 'base_commit'];
+
+/** [ref, source] when the claim card's inputs name a branch (test-first's tests_branch) or commit to build on, else null. */
+export function inputBase(inputs) {
+  if (!inputs || typeof inputs !== 'object') return null;
+  for (const k of INPUT_BRANCH_KEYS) {
+    const v = typeof inputs[k] === 'string' ? inputs[k].trim() : '';
+    if (!v) continue;
+    if (/^[0-9a-f]{7,40}$/i.test(v)) return [v, 'input ' + k];
+    const b = v.replace(/^origin\//, '');
+    if (b.split('/').every((p) => safeIdent(p))) return [originRef(b), 'input ' + k];
+  }
+  return null;
+}
+
 export function checkBase(ref, source, cwd) {
   if (source === 'origin/HEAD') return;
   if (git(['rev-parse', '--verify', '-q', ref], cwd).returncode !== 0) throw new BaseMissing(`base ${ref} (from ${source}) does not exist on origin`);
@@ -148,7 +163,16 @@ export function worktreeFor(
   node,
   repoRoot,
   stateDir,
-  { dry = false, graphBases = null, registry = null, graphId = null, graphCode = null, graphEpoch = null } = {},
+  {
+    dry = false,
+    graphBases = null,
+    registry = null,
+    graphId = null,
+    graphCode = null,
+    graphEpoch = null,
+    inputs = null,
+    say = /** @type {(m: string) => void} */ (() => {}),
+  } = {},
 ) {
   const key = assertIdent(node.key, 'node key'); // the key and repo become paths and a branch: never trust a caller to have checked
   const repo = (node.data || {}).repo;
@@ -165,6 +189,15 @@ export function worktreeFor(
   const path = join(repoRoot, code ? `${repo}-${code}-${key}` : `${repo}-${key}`);
   if (isDir(path)) return [path, branch, 'reused'];
   let [base, source] = resolveBase(node, graphBases, registry, null);
+  const ib = inputBase(inputs);
+  if (ib) {
+    [base, source] = ib;
+    say(`worktree-base: from ${source} ${base.replace(/^origin\//, '')}`);
+  } else if (inputs && typeof inputs === 'object') {
+    // inputs present but none names a branch: ordinary node, the base applies
+  } else if (node.data && node.data.needs_input_branch) {
+    say('worktree-base: WARNING input branch absent; falling back to ' + base);
+  }
   if (source === 'origin/HEAD') {
     base = defaultBranch(src);
     if (!base) throw new BaseMissing("cannot resolve origin's default branch (no origin/HEAD, gh repo view failed, no origin/main or origin/master)");

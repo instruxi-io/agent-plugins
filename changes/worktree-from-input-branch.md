@@ -1,0 +1,1 @@
+The dispatcher now builds a worker's worktree from the branch or commit named by the claim card's inputs (test-first's `tests_branch`, also `input_branch`, `base_branch`, `base_commit`) instead of the node's base, and logs `worktree-base: from input tests_branch <branch>`. Without such an input the base applies as before.
