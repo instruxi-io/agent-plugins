@@ -32,9 +32,11 @@ test("a linked worktree's common dir is the main checkout's .git, and launchCmd 
   execFileSync('git', ['init', '-q', main]);
   git(main, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
   git(main, 'worktree', 'add', '-q', '-b', 'w', wt);
-  assert.equal(gitCommonDir(wt), join(main, '.git'));
+  // realpath: Windows temp paths can come back short (RUNNER~1) on one side and long on the other
+  const same = (a, b) => assert.equal(realpathSync.native(a), realpathSync.native(b));
+  same(gitCommonDir(wt), join(main, '.git'));
   const cmd = launchCmd('p', 'gpt-5', { harness: 'codex' }, 'k', { cwd: wt });
-  assert.equal(cmd[cmd.indexOf('--add-dir') + 1], join(main, '.git'));
+  same(cmd[cmd.indexOf('--add-dir') + 1], join(main, '.git'));
   assert.equal(gitCommonDir(root), null, 'not a checkout');
 });
 

@@ -5,7 +5,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { assertIdent } from './ident.mjs';
 import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, rmSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { openStream, redactFile, addSecret } from './logs.mjs';
-import { join, dirname, delimiter } from 'node:path';
+import { join, dirname, delimiter, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig, DEFAULT_BASE_URL, BASE_URL_VAR } from '../config.mjs';
 import { DOT } from '../../hooks/claude/paths.mjs';
@@ -416,7 +416,7 @@ export function gitCommonDir(cwd) {
   if (!cwd) return null;
   const r = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd, encoding: 'utf8', timeout: 10_000 });
   const out = r.status === 0 ? String(r.stdout || '').trim() : '';
-  return out || null;
+  return out ? resolve(out) : null; // native separators (git prints C:/... on Windows)
 }
 
 export function launchCmd(
