@@ -436,6 +436,8 @@ export class Dispatcher {
         graphId: this.g,
         graphCode: g0.code ?? null,
         graphEpoch: g0.epoch ?? null,
+        inputs: n.input_values ?? n.inputs ?? null,
+        say: (m) => this.say(`${n.key}: ${m}`),
       });
     } catch (e) {
       if (e instanceof BaseMissing) {
