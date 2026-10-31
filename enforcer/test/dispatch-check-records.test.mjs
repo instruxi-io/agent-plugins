@@ -9,7 +9,8 @@ test('only non-claude succeeded reports with check rows need records', () => {
   assert.equal(checkRows(node).length, 1);
   assert.equal(needsRunnerRecords('gemini', node), true);
   assert.equal(needsRunnerRecords('claude', node), false);
-  assert.equal(needsRunnerRecords('codex', { data: { acceptance: ['x'] } }), false);
+  assert.equal(needsRunnerRecords('codex', { data: { acceptance: ['`ls` prints x'] } }), true);
+  assert.equal(needsRunnerRecords('codex', { data: { acceptance: [] } }), false);
 });
 
 test('a refused completion is logged, not thrown', async () => {
@@ -46,4 +47,23 @@ test('records are posted to the evidence route, not complete', async () => {
     deps: { run: () => ({ status: 0, stdout: 'ok' }) },
   });
   assert.ok(n === calls.length || calls.length <= 1);
+});
+
+test('command lines are run and posted with source runner and their line number', async () => {
+  const calls = [];
+  const api = { addEvidence: async (...a) => calls.push(a) };
+  const n = await attachRunnerRecords({
+    api,
+    graph: 'g',
+    node: { id: 'n1', key: 'k', data: { acceptance: ['prose only', '`ls` prints `hi`'] } },
+    runId: 'r',
+    cwd: '/tmp',
+    deps: { run: () => ({ status: 0, stdout: 'hi\n', stderr: '' }), retryDelayMs: 0 },
+  });
+  assert.equal(n, 1);
+  const rec = calls[0][3].evidence[0];
+  assert.equal(rec.kind, 'command');
+  assert.equal(rec.source, 'runner');
+  assert.equal(rec.line, 2);
+  assert.match(rec.output, /hi/);
 });

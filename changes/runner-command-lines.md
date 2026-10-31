@@ -1,0 +1,1 @@
+The dispatcher now runs every runnable acceptance line (command lines as well as check rows) after a non-Claude worker reports succeeded, and posts the output as runner records, so the judge sees real command output for gemini, codex and grok.
