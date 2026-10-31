@@ -28,8 +28,8 @@ import { readFileSync, writeFileSync, openSync, closeSync, unlinkSync, statSync 
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { DIR, privateDir, FILE_MODE } from './store.mjs';
-import { pending, markShipped, markFailure, parseHashVersions } from './outbox.mjs';
-import { receiptHash, versionOf, GENESIS } from './chain.mjs';
+import { pending, markShipped, markFailure, parseHashVersions, noteLegacyShipper } from './outbox.mjs';
+import { receiptHash, versionOf, GENESIS, VERSIONS } from './chain.mjs';
 import { authHeaders, baseUrl, isFederated } from './credentials.mjs';
 
 export const RECEIPT_SCOPE = 'enforcer-governor/receipts';
@@ -79,7 +79,10 @@ const kv = (key, value) => ({ key, value: typeof value === 'boolean' ? { boolVal
  * chain break — which is what happened — instead of refusing it as altered.
  * A line that verifies against neither is sent as-is and refused: it WAS altered.
  *
- * @returns {{ body: object, prev: string, count: number, hashes: string[] }}
+ * `newer`, when set, is the unknown hash version the batch stopped at: only
+ * the first `count` lines were turned into records.
+ *
+ * @returns {{ body: object, prev: string, count: number, hashes: string[], newer?: unknown }}
  */
 export function toOtlp(lines, prev, install, version = '') {
   const records = [];
@@ -91,8 +94,19 @@ export function toOtlp(lines, prev, install, version = '') {
       return null;
     }
   };
+  let newer;
   for (const line of lines) {
     const { hash, ...entry } = line;
+    // A line hashed under a version this shipper does not know is not sent at
+    // all, and nothing after it is: sent as-is it would be checked under the
+    // wrong version and refused, the watermark would pass it, and the next
+    // stored receipt would name it as prev -- a chain break on the server. The
+    // batch stops here and the watermark with it, so the newer governor that
+    // wrote the line (it shares this record) ships it labelled.
+    if (hash && !VERSIONS.includes(versionOf(entry))) {
+      newer = versionOf(entry);
+      break;
+    }
     const text = JSON.stringify(entry);
     const t = Date.parse(entry.ts);
     const record = {
@@ -141,6 +155,7 @@ export function toOtlp(lines, prev, install, version = '') {
     prev,
     count: records.length,
     hashes,
+    ...(newer !== undefined ? { newer } : {}),
   };
 }
 
@@ -149,6 +164,9 @@ export function toOtlp(lines, prev, install, version = '') {
  * @returns Promise<{ shipped?: number, rejected?: number, pending?: boolean, skipped?: string, error?: string }>
  */
 export async function shipOnce(cfg = {}, { fetchImpl = hookFetch, now = Date.now, limit = 500 } = {}) {
+  // Before anything here rewrites the mark: was it last written by a shipper
+  // older than hash v2? Then the governor stays on v1 for a while (outbox.mjs).
+  noteLegacyShipper(now());
   if (cfg.shipOn === false) return { skipped: 'shipping is switched off (shipOn)' };
   if (!isFederated()) return { skipped: 'not signed in to Enforcer' };
   const batch = pending(limit);
@@ -160,7 +178,16 @@ export async function shipOnce(cfg = {}, { fetchImpl = hookFetch, now = Date.now
   const headers = await authHeaders({ fetchImpl, now });
   if (!headers['X-API-Key'] && !headers.Authorization) return { skipped: 'not signed in to Enforcer' };
 
-  const { body, prev, count, hashes } = toOtlp(batch.lines, batch.prevHash, installId(), cfg.version || '');
+  const { body, prev, count, hashes, newer } = toOtlp(batch.lines, batch.prevHash, installId(), cfg.version || '');
+  let to = batch.to;
+  if (newer !== undefined) {
+    const why = `a receipt is hashed under version ${JSON.stringify(newer)}, which this governor cannot ship; the newer governor on this machine ships it`;
+    if (!count) {
+      markFailure(why);
+      return { skipped: why };
+    }
+    to = batch.ends[count - 1];
+  }
   const url = (cfg.ingestUrl || baseUrl(cfg)).replace(/\/+$/, '') + INGEST_PATH;
   try {
     const res = await fetchImpl(url, {
@@ -183,9 +210,9 @@ export async function shipOnce(cfg = {}, { fetchImpl = hookFetch, now = Date.now
       // header is a server that predates hash v2, and the governor goes back
       // to writing v1 -- which every server takes.
       const hashVersions = parseHashVersions(res.headers?.get?.(HASH_VERSIONS_HEADER));
-      markShipped(batch.to, now(), prev, { start: batch.prevHash, hashes, hashVersions });
+      markShipped(to, now(), prev, { start: batch.prevHash, hashes, hashVersions });
       if (rejected) markFailure(`${rejected} receipt(s) refused by the control plane as altered or malformed`);
-      return { shipped: count - rejected, rejected, pending: batch.lines.length >= limit };
+      return { shipped: count - rejected, rejected, pending: newer === undefined && batch.lines.length >= limit };
     }
     const why =
       res.status === 401 || res.status === 403
