@@ -45,16 +45,6 @@
       "id": "src/dispatch/api.mjs POST /graphs/{}/nodes/{}/runs/{}/evidence",
       "kind": "path",
       "reason": "The runner-evidence route (enforcer-graph PR 479) is not in the pinned graph spec yet. The dispatcher posts check records there after a non-Claude worker reports. Delete this entry when the spec is re-pinned."
-    },
-    {
-      "id": "lib/governor/core/approvals.mjs GET /approvals",
-      "kind": "path",
-      "reason": "Server-side approvals (enforcer-governance #84, and the ingest-key poll in #95): the pinned governance spec predates them. Only called with serverApprovals on (default off). Delete this entry when the spec is re-pinned past #95."
-    },
-    {
-      "id": "lib/governor/core/approvals.mjs GET /chain-heads/public-keys",
-      "kind": "path",
-      "reason": "The unauthenticated chain-head public keys the approval signatures verify under; the pinned governance spec predates the route. Only called with serverApprovals on (default off) and no approvalKeys pinned. Delete this entry when the spec is re-pinned."
     }
   ]
 }

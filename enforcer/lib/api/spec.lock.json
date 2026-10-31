@@ -32,10 +32,10 @@
       "repo": "enforcer-governance",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "5d8ee745de55aa7a9d678e64c1d138aaa9085d4f",
+      "ref": "ca0c37f4818e73e5686f9e75802c0c2612c7ab42",
       "file": "spec/governance.json",
-      "upstream_sha256": "3a9cf9d5db73f4e06385718793c0f69bfdb95137b59ae435678394d108469ca7",
-      "sha256": "e09871de72e31d2a7a43cbcb85d4a46929bc3a2ddbb812e65ac981c54a0b6ab6"
+      "upstream_sha256": "449c92bb7abe640d54823ba8a42eb97ff0f499003c4f5d08f157066894c21f03",
+      "sha256": "67dea490a61b3bd90c7cda30e65794c084a0fc19a8a04c409714af2a2f6e0113"
     },
     "mcp": {
       "repo": "enforcer-v3-mcp",
