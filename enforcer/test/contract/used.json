@@ -466,6 +466,32 @@
       "sends": [],
       "reads": [],
       "headers": []
+    },
+    {
+      "id": "lib/governor/core/approvals.mjs GET /approvals",
+      "file": "lib/governor/core/approvals.mjs",
+      "service": "governance",
+      "method": "GET",
+      "path": "/approvals",
+      "sends": [],
+      "reads": [
+        "data.items"
+      ],
+      "headers": [
+        "X-API-Key"
+      ]
+    },
+    {
+      "id": "lib/governor/core/approvals.mjs GET /chain-heads/public-keys",
+      "file": "lib/governor/core/approvals.mjs",
+      "service": "governance",
+      "method": "GET",
+      "path": "/chain-heads/public-keys",
+      "sends": [],
+      "reads": [
+        "data.keys"
+      ],
+      "headers": []
     }
   ]
 }

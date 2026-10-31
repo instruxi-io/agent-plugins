@@ -33,6 +33,8 @@ import { brief as briefFor, markTold } from './brief.mjs';
 import { costUsd, receiptUsage } from './cost.mjs';
 import { signedInOperator, refreshIdentity, identityStale } from './identity.mjs';
 const attributeSession = async (...a) => (await import('./attribution.mjs')).attributeSession(...a);
+// Server-side approvals (approvals.mjs): loaded only for an ask with serverApprovals on.
+const approvalsMod = () => import('./approvals.mjs');
 import { shadow } from './shadow.mjs';
 
 // The tool a receipt names: the harness's own name when the adapter gave one,
@@ -69,8 +71,11 @@ export const NO_COST = Object.freeze({
  * @param {string} [opts.shipper]  the script to start, detached, to ship the
  *   record. Defaults to the core's own (core/bin/ship.mjs); an adapter with
  *   its own entry point -- the Claude Code plugin's bin/ship.mjs -- names it.
+ * @param {object} [opts.approvalDeps]  seams for the server-approval wait
+ *   (approvals.mjs awaitApproval deps: fetchImpl, now, sleep, ship, headers,
+ *   keys, install). Tests only; a harness leaves it unset.
  */
-export function createGovernor({ harness = 'unknown', adapterVersion = '', cost = NO_COST, shipper = SHIPPER } = {}) {
+export function createGovernor({ harness = 'unknown', adapterVersion = '', cost = NO_COST, shipper = SHIPPER, approvalDeps = undefined } = {}) {
   // Stamped on every receipt, after every other field (see verdict.mjs entry()).
   const stamp = { harness, adapterVersion };
   // Local config under the tenant's managed floor: stricter wins, per setting.
@@ -91,8 +96,16 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
    *   fields canonical field -> the harness's key, for that rewrite.
    * An older caller that sends only `tool: 'Bash'` is still understood.
    *
-   * Returns { verdict, spend: { model, tokens, budget }, config }. The verdict
-   * is a Verdict (verdict.mjs); the adapter words it for its harness.
+   * Returns { verdict, spend: { model, tokens, budget }, config, receipt,
+   * approval }. The verdict is a Verdict (verdict.mjs); the adapter words it
+   * for its harness. `receipt` is { hash } of the chained receipt this call
+   * wrote (absent on the blind path, whose receipt is unhashed).
+   *
+   * `approval` is present only for an `ask` with `serverApprovals` on
+   * (approvals.mjs): before() then waits, bounded, for a person's signed
+   * answer on the control plane, and the adapter must act on approval.status
+   * INSTEAD of putting the ask to a person -- only 'approved' runs the tool;
+   * denied, invalid, timeout and unavailable all block.
    */
   async function before(event) {
     const cfg = config();
@@ -117,6 +130,13 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
     const withWould = (entry) => (would ? { ...entry, would } : entry);
 
     const spend = { model: cfg.model, tokens: 0, budget: 0 };
+    // With server approvals on, an ask is remembered by what was asked, so a
+    // retry of the same action also polls the earlier ask (approvals.mjs).
+    const wantsApproval = isOn(cfg.serverApprovals);
+    let receiptHash = null;
+    let earlier = [];
+    let fp = null;
+    if (wantsApproval) A ||= await approvalsMod();
     // Who the agent acted for, and for which project, from config and the
     // working directory: a rule decides before economics stamps these on the
     // agent, and those first receipts are the ones an audit reads first.
@@ -172,6 +192,11 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
       // (chain.mjs, store.mjs hashVersion()).
       const sealed = seal(state.prevHash, entry, hashVersion());
       commit(state, sealed.entry, sealed.hash);
+      receiptHash = sealed.hash;
+      if (wantsApproval && v.action === 'ask') {
+        fp = fingerprint(event);
+        earlier = earlierFor(state.approvalWaits, fp);
+      }
       return v;
     });
 
@@ -179,9 +204,40 @@ export function createGovernor({ harness = 'unknown', adapterVersion = '', cost 
     // and the refusal is recorded without a hash rather than hidden or forged.
     const verdict = held.ok && held.value ? held.value : gate(event, cfg, { central });
     if (!held.ok || !held.value) {
+      receiptHash = null;
       writeReceipt(withWould(verdict.entry({ agent: event.agent, tool: recorded(event), ...acting(), chained: false, ...st })), undefined);
     }
-    return { verdict, spend, config: cfg };
+    const receipt = receiptHash ? { hash: receiptHash } : undefined;
+    if (!(wantsApproval && verdict.action === 'ask')) return { verdict, spend, config: cfg, receipt };
+
+    // The bounded wait: never inside the lock. Never throws; a failure is a
+    // status that blocks.
+    let approval;
+    try {
+      approval = await waitForApproval({ receiptHash, earlier, cfg });
+    } catch (e) {
+      approval = { status: 'unavailable', why: `the approval wait failed: ${String(e?.message || e).slice(0, 200)}`, receiptHash, waitedMs: 0 };
+    }
+    if (fp) {
+      withLock(() => {
+        const state = loadState();
+        state.approvalWaits = remember(state.approvalWaits, fp, approval);
+        if (!state.approvalWaits.length) delete state.approvalWaits;
+        saveState(state);
+      });
+    }
+    return { verdict, spend, config: cfg, receipt, approval };
+  }
+
+  // approvals.mjs is loaded lazily, so these hold its helpers once loaded.
+  let A = null;
+  const fingerprint = (event) => A.askFingerprint(event, recorded(event));
+  const earlierFor = (waits, f) => A.earlierAsks(waits, f);
+  const remember = (waits, f, r) => A.rememberOutcome(waits, f, r);
+  async function waitForApproval({ receiptHash, earlier, cfg }) {
+    const deps = approvalDeps || {};
+    const install = deps.install !== undefined ? deps.install : (await import('./ship.mjs')).installId();
+    return A.awaitApproval({ install, receiptHash, earlier, cfg }, deps);
   }
 
   /**

@@ -59,6 +59,12 @@ export const CODES = Object.freeze({
   no_rule_matched: 'no rule objected and spend is within limits',
   spend_unchecked: 'no rule objected; the governor could not read its state, so spend was not checked',
   checks_off: 'no rule objected and the decision checks are switched off (the default); still recorded',
+
+  // ── server approvals (approvals.mjs, serverApprovals on) ─────────────────
+  ask_approved: 'a person approved the ask in Enforcer, and the signed decision verified',
+  ask_denied: 'a person denied the ask in Enforcer, and the signed decision verified',
+  ask_unverified: 'an answer to the ask came back from Enforcer but did not verify, so it was treated as not approved',
+  ask_unanswered: 'no verified answer to the ask within the wait limit, or Enforcer could not be asked, so it was treated as not approved',
 });
 
 export const DECISIONS = Object.freeze(['allow', 'deny', 'ask']);

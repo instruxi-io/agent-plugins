@@ -19,14 +19,40 @@ const up = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 const SAVED = 'A record of this decision was saved.';
 const GOV = '/enforcer:governor';
 
+const APPROVAL_CODES = { approved: 'ask_approved', denied: 'ask_denied', invalid: 'ask_unverified' };
+
+/**
+ * The answer for an ask decided on the control plane (core/approvals.mjs).
+ * The record keeps the ask's rule, tool and summary; its decision and code say
+ * what the server's answer did.
+ */
+export function approvalAnswer(approval, askRecord) {
+  const ok = approval.status === 'approved';
+  const record = { ...askRecord, decision: ok ? 'allow' : 'deny', code: APPROVAL_CODES[approval.status] || 'ask_unanswered' };
+  const said = approval.reason ? ` Their reason: ${String(approval.reason).replace(/\s+/g, ' ').trim().slice(0, 300)}.` : '';
+  const ask = ` (receipt ${String(approval.receiptHash || '').slice(0, 12)})`;
+  let reason;
+  if (ok) reason = `A person approved this in Enforcer, and Enforcer verified their signed decision.${said} ${SAVED}`;
+  else if (approval.status === 'denied') reason = `A person denied this in Enforcer, so it was not run.${said} The AI can carry on with other work. ${SAVED}`;
+  else if (approval.status === 'invalid')
+    reason = `Enforcer was sent an answer to this request${ask} that it could not verify (${approval.why}), so it treated it as not approved. Nothing was run. ${SAVED}`;
+  else
+    reason = `This needs a person's approval in Enforcer${ask} and none arrived (${approval.why}), so it was not run. Approve it in Enforcer, then ask the AI to try the same action again. ${SAVED}`;
+  return { decision: ok ? 'allow' : 'deny', reason, record, line: decisionLine(record), approval };
+}
+
 export async function decide(ev) {
   const event = toolEvent(ev);
-  const { verdict, spend } = await governor().before(event);
+  const { verdict, spend, approval } = await governor().before(event);
   const spent = spend.tokens,
     budget = spend.budget;
   const record = decisionRecord(verdict, { tool: event.name, run_id: event.runId });
   const line = decisionLine(record);
   const answer = (decision, reason, extra = {}) => ({ decision, reason, record, line, ...extra });
+
+  // serverApprovals on: the ask was put to a person in Enforcer, not here.
+  // Only a verified approval runs the tool; everything else blocks.
+  if (approval) return approvalAnswer(approval, record);
 
   const perM = priceOf(spend.model || '').in;
   const usd = (t) => '$' + ((t / 1e6) * perM).toFixed(2);
