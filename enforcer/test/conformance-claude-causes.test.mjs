@@ -32,7 +32,7 @@ test('check: the nested manifest {checks: {name: {argv}}} (enforcer-smoke, confo
   const r = runCheck('tests', { root: d, timeoutMs: 30000 });
   assert.equal(r.kind, 'check');
   assert.equal(r.source, 'runner');
-  assert.equal(r.name, 'repo.tests');
+  assert.equal(r.name, 'tests');
   assert.equal(r.exit, 0);
   assert.match(r.output, /ok: smoke/);
   // the flat form still loads, and a bad nested entry is still refused

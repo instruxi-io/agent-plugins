@@ -93,5 +93,5 @@ export function runCheck(name, { root, env = process.env, timeoutMs = 600000, ru
   const runEnv = man.pathPrefix ? { ...env, PATH: env.PATH ? man.pathPrefix + delimiter + env.PATH : man.pathPrefix } : env;
   const r = spawnAllowed(argv, { cwd: root, env: runEnv, timeoutMs, ...(run ? { run } : {}) });
   const out = String(r.out || '');
-  return { kind: 'check', source: 'runner', name: `repo.${name}`, argv, exit: r.exit, output: out.length > OUTPUT_TAIL ? out.slice(-OUTPUT_TAIL) : out };
+  return { kind: 'check', source: 'runner', name, argv, exit: r.exit, output: out.length > OUTPUT_TAIL ? out.slice(-OUTPUT_TAIL) : out };
 }
