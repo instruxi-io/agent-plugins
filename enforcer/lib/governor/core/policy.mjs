@@ -379,6 +379,14 @@ export const DEFAULTS = {
   allowEnvOff: false,
   policyTimeoutMs: 1500,
   policyTtlSec: 30,
+  // Answer an `ask` from a person's signed decision on the control plane
+  // instead of a dialog here (approvals.mjs). Off by default: nothing about
+  // an ask changes until the operator turns it on. Local only, never managed.
+  serverApprovals: false,
+  serverApprovalWaitSec: 20, // how long the hook waits for it; at most 20
+  // Pinned approval-signing keys, { key_id: base64 Ed25519 public key }, read
+  // from config.json. Empty: the server's published keys are fetched.
+  approvalKeys: {},
   centralUrl: 'https://api.instruxi.dev',
   // Ship receipts to the control plane (src/ship.mjs), in the background,
   // with the Enforcer sign-in. Inert when signed out.

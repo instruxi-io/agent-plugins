@@ -40,6 +40,7 @@ const SOURCES = [
   call('lib/governor/core/managed.mjs', 'governance', /const PATH = '\/api\/v1\/governance(\/[^']*)'/g, 'GET', 1),
   call('lib/governor/core/ship.mjs', 'governance', /INGEST_PATH = '\/api\/v1\/governance(\/[^']*)'/g, 'POST', 1),
   call('lib/governor/core/attribution.mjs', 'governance', /ATTRIBUTION_PATH = '\/api\/v1\/governance(\/[^']*)'/g, 'POST', 1),
+  call('lib/governor/core/approvals.mjs', 'governance', /_PATH = '\/api\/v1\/governance(\/[^']*)'/g, 'GET', 1),
 ];
 
 /** `/graphs/${g}/nodes/${n}?limit=1` -> `/graphs/{}/nodes/{}`; Python `%s`/`%d` the same. */

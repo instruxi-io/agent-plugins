@@ -264,13 +264,16 @@ function bound(s, now = Date.now()) {
     for (const k of keys.slice(-UNMAPPED_CAP)) keep[k] = s.unmapped[k];
     s.unmapped = keep;
   }
+  if (s.approvalWaits !== undefined && !Array.isArray(s.approvalWaits)) delete s.approvalWaits;
+  else if (s.approvalWaits?.length > 50) s.approvalWaits = s.approvalWaits.slice(-50);
 }
 
 export function loadState() {
   const s = makeState();
   const saved = readJSON(STATE, null);
   if (saved) {
-    for (const k of ['agents', 'periods', 'burn', 'spawns', 'clients', 'unmapped', 'prevHash', 'sweptAt']) {
+    // approvalWaits: asks waiting on a server approval (approvals.mjs), bounded there.
+    for (const k of ['agents', 'periods', 'burn', 'spawns', 'clients', 'unmapped', 'prevHash', 'sweptAt', 'approvalWaits']) {
       if (saved[k] !== undefined) s[k] = saved[k];
     }
   }

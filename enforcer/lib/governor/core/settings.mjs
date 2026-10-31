@@ -149,6 +149,21 @@ export const SETTINGS = {
     describe: 'How long a policy answer is reused for the same kind of action. 0 asks every time.',
     hint: 'A new policy version takes effect within this long on each machine.',
   },
+  serverApprovals: {
+    group: 'checks',
+    type: 'boolean',
+    check: bool(),
+    describe: 'Answer an ask from a person deciding it in Enforcer, not a dialog here. Off by default.',
+    hint: 'The hook waits up to serverApprovalWaitSec for a signed decision it verifies; anything but a verified approval blocks. Needs a sign-in and shipOn.',
+  },
+  serverApprovalWaitSec: {
+    group: 'checks',
+    type: 'number',
+    unit: 's',
+    check: num(1, 20),
+    describe: 'How long a tool call waits for an approval in Enforcer before it is blocked.',
+    hint: 'At most 20, to stay inside the hook timeout. A retry of the same action checks the earlier ask again.',
+  },
   shipOn: {
     group: 'checks',
     type: 'boolean',
