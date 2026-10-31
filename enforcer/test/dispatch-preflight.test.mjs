@@ -54,9 +54,10 @@ const srv = http.createServer((req, res) => {
     return req.on('end', () =>
       send(200, {
         success: true,
-        warnings: JSON.parse(body).acceptance.flatMap((line, index) =>
+        errors: JSON.parse(body).acceptance.flatMap((line, index) =>
           /works|passes/.test(line) ? [{ code: 'vague_phrase', index, line, hint: 'name a command' }] : [],
         ),
+        warnings: JSON.parse(body).acceptance.flatMap((line, index) => (/prose-only/.test(line) ? [{ code: 'prose_row', index, line }] : [])),
       }),
     );
   }
@@ -178,6 +179,29 @@ await t('done nodes and non-dispatch types are not linted', () =>
     (res) => assert.equal(line(res, 'acceptance').ok, true),
   ),
 );
+
+await t('server warnings print but do not fail preflight', () =>
+  withNodes([{ key: 'rev', type: 'task', data: { acceptance: ['prose-only review of the diff'] } }], {}, (res) => {
+    const r = line(res, 'acceptance');
+    assert.equal(r.ok, true);
+    assert.match(r.line, /warnings: rev: line 0 prose_row/);
+  }),
+);
+
+await t('an unreachable lint endpoint falls back to the local list as warnings', async () => {
+  const saved = planNodes;
+  planNodes = [{ key: 'off', type: 'task', data: { acceptance: ['`rm -rf x` exits 0'] } }];
+  const orig = globalThis.fetch;
+  try {
+    const { acceptanceLintReport } = await import('../src/preflight.mjs');
+    const r = await acceptanceLintReport('http://127.0.0.1:1', 'g1', {}, planNodes);
+    assert.deepEqual(r.errors, []);
+    assert.match(r.warnings[0], /off: line 0 local_not_allowlisted/);
+  } finally {
+    globalThis.fetch = orig;
+    planNodes = saved;
+  }
+});
 
 srv.close();
 rmSync(tmp, { recursive: true, force: true });
