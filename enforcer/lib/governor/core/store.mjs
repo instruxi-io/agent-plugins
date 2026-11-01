@@ -396,7 +396,31 @@ export function commit(state, entry, hash, before = state.prevHash) {
  */
 export function hashVersion() {
   const m = readJSON(join(DIR, 'outbox.json'), null);
-  return m && Array.isArray(m.hashVersions) && m.hashVersions.includes(2) ? 2 : 1;
+  if (!(m && Array.isArray(m.hashVersions) && m.hashVersions.includes(2))) return 1;
+  // A shipper older than hash v2 shares this record: a session still running a
+  // plugin version from before 2.10 ships from the same file under the same
+  // lock. It hashes every line as v1, so it sends a v2 line unlabelled, the
+  // server refuses it as altered, its watermark moves past it anyway, and the
+  // next receipt the server DOES store names a prev it never got: a chain
+  // break, in the record of a machine that did nothing wrong. While one has
+  // been seen (outbox.mjs noteLegacyShipper), write v1, which every shipper
+  // sends correctly.
+  return legacyShipperSeen() ? 1 : 2;
+}
+
+/**
+ * The shipper-compatibility note: a file no governor before 2.10 knows, so an
+ * old shipper rewriting outbox.json cannot erase it. `markVersion` 2 says a
+ * shipper that writes `hashVersions` has written the mark; `legacyShipperAt`
+ * is when the mark was last found rewritten by one that does not.
+ */
+export const SHIP_COMPAT = join(DIR, 'ship-compat.json');
+/** How long one sighting of a pre-v2 shipper keeps the governor on v1. */
+export const LEGACY_SHIPPER_HOLD_MS = 7 * DAY_MS;
+export const readShipCompat = () => readJSON(SHIP_COMPAT, null) || {};
+export function legacyShipperSeen(now = Date.now()) {
+  const at = Number(readShipCompat().legacyShipperAt);
+  return Number.isFinite(at) && at > 0 && now - at < LEGACY_SHIPPER_HOLD_MS;
 }
 
 // Walk the file, not memory: the file is the record. Names the first line

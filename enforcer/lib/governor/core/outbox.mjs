@@ -23,9 +23,9 @@
 // outside the hashed body to avoid breaking existing chains, which would make
 // it the one field in the record nothing protects.
 
-import { readFileSync, writeFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, openSync, readSync, closeSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { DIR, RECEIPTS, FILE_MODE } from './store.mjs';
+import { DIR, RECEIPTS, FILE_MODE, SHIP_COMPAT, readShipCompat } from './store.mjs';
 
 const MARK = join(DIR, 'outbox.json');
 
@@ -65,11 +65,61 @@ const readMark = () => {
 const writeMark = (m) => {
   try {
     writeFileSync(MARK, JSON.stringify(m), { mode: FILE_MODE });
-    return true;
   } catch {
     return false;
   }
+  // Remember that a shipper which writes hashVersions has written the mark, so
+  // a later mark WITHOUT them is known to be an older shipper's rewrite and not
+  // a record carried over from before the upgrade (noteLegacyShipper).
+  const c = readShipCompat();
+  if (c.markVersion !== 2) writeCompat({ ...c, markVersion: 2 });
+  return true;
 };
+
+// tmp + rename: a reader sees the old note or the new one. Losing it costs at
+// most the v1 hold below, never a receipt.
+const writeCompat = (c) => {
+  const tmp = `${SHIP_COMPAT}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(c), { mode: FILE_MODE });
+    renameSync(tmp, SHIP_COMPAT);
+    return true;
+  } catch {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    return false;
+  }
+};
+
+/**
+ * Notice a shipper older than hash v2 sharing this record, and hold the
+ * governor on v1 (store.mjs hashVersion()) while one is about.
+ *
+ * Every session on a machine ships from the same receipts.jsonl under the same
+ * lock, whatever plugin version it runs, and a long-lived session keeps the
+ * version it started with. A pre-v2 shipper does not know `hv`: it sends a v2
+ * line without its version label, the control plane checks it as v1 and
+ * refuses it as altered, and the old shipper's watermark moves past it anyway.
+ * The next receipt the server stores names that refused line as its prev, and
+ * is recorded as a chain break. That is what made parallel sessions look like
+ * tampering. Such a shipper never writes `hashVersions`, so a mark without them,
+ * after this code has written one with them, is its fingerprint.
+ * @returns {boolean} true when one was seen just now
+ */
+export function noteLegacyShipper(now = Date.now()) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(MARK, 'utf8'));
+  } catch {
+    return false;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw.hashVersions)) return false;
+  const c = readShipCompat();
+  if (c.markVersion !== 2) return false; // never written by a v2 shipper: an upgrade, not an old shipper
+  writeCompat({ ...c, legacyShipperAt: now });
+  return true;
+}
 
 /** Bytes currently in the record. */
 function size() {
@@ -82,7 +132,7 @@ function size() {
 
 /**
  * Receipts written but not yet acknowledged by the control plane.
- * @returns {{lines:object[], from:number, to:number, prevHash:string}} `to` is the offset to
+ * @returns {{lines:object[], ends?:number[], from:number, to:number, prevHash:string}} `to` is the offset to
  *   pass back to markShipped once the server has them. Only whole lines are
  *   returned: a half-written tail is left for the next call rather than sent
  *   as a truncated receipt that would fail verification on the far side.
@@ -114,6 +164,7 @@ export function pending(limit = 500) {
   const complete = chunk.slice(0, lastNL);
 
   const lines = [];
+  const ends = []; // ends[i]: the offset just past lines[i], where a batch that stops after it resumes
   let consumed = 0;
   for (const raw of complete.split('\n')) {
     const bytes = Buffer.byteLength(raw, 'utf8') + 1;
@@ -122,12 +173,13 @@ export function pending(limit = 500) {
     if (!raw.trim()) continue;
     try {
       lines.push(JSON.parse(raw));
+      ends.push(from + consumed);
     } catch {
       /* an unparseable line is still consumed: it cannot be shipped and
                must not wedge the queue behind it forever */
     }
   }
-  return { lines, from, to: from + consumed, prevHash };
+  return { lines, ends, from, to: from + consumed, prevHash };
 }
 
 /**
