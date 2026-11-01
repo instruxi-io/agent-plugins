@@ -1,0 +1,1 @@
+The dispatcher now decides a gemini, codex or grok worker's success from the node's latest run in the API (succeeded or verified), not from its stream, so a passing run is no longer relaunched as "exited without reporting"; runner records are skipped when the run is already verified.

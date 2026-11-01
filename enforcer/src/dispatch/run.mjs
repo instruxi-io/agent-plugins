@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { API, APIError } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
-import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch } from './worktree.mjs';
+import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
   launchCmd,
   workerEnv,
@@ -42,8 +42,9 @@ import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinit
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
-import { needsRunnerRecords, attachRunnerRecords, latestRun } from './check-records.mjs';
+import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
 import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
+import { codexGitRules, landForCodex } from './codex-land.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -398,6 +399,23 @@ export class Dispatcher {
     return routeFor(n, this.routes, this.args).harness;
   }
 
+  /** The resolved inputs the worktree is built from. A frontier row has no claim card yet: its data.inputs holds bindings
+   *  (`test-author.tests_branch`), so resolve the branch-like ones from the upstream runs' outputs here. */
+  async launchInputs(n) {
+    const plain = n.inputs && typeof n.inputs === 'object' && !Array.isArray(n.inputs) && n.inputs !== n.data?.inputs ? n.inputs : null;
+    const given = n.input_values ?? plain;
+    if (given) return given;
+    if (!inputBindings(n).length || !this.api.nodes || !this.api.runs) return null;
+    try {
+      const { values, missing } = await resolveInputBindings(n, { nodes: () => this.api.nodes(this.g), runs: (id) => this.api.runs(this.g, id) });
+      if (missing.length) this.say(`${n.key}: worktree-base: input binding unresolved (${missing.join(', ')})`);
+      return values && Object.keys(values).length ? values : null;
+    } catch (e) {
+      this.say(`${n.key}: worktree-base: could not resolve input bindings (${e.message})`);
+      return null;
+    }
+  }
+
   async launch(n) {
     const a = this.args;
     const bad = unsafeIdent(n);
@@ -429,6 +447,7 @@ export class Dispatcher {
     let note;
     try {
       const g0 = (await this.api.graph?.(this.g).catch(() => null)) || {};
+      const inputs = await this.launchInputs(n);
       [path, branch, note] = worktreeFor(n, a.repoRoot, this.state, {
         dry: a.dryRun,
         graphBases: await this.graphBases(),
@@ -436,7 +455,7 @@ export class Dispatcher {
         graphId: this.g,
         graphCode: g0.code ?? null,
         graphEpoch: g0.epoch ?? null,
-        inputs: n.input_values ?? n.inputs ?? null,
+        inputs,
         say: (m) => this.say(`${n.key}: ${m}`),
       });
     } catch (e) {
@@ -470,8 +489,10 @@ export class Dispatcher {
     // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
     const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
     const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
-    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness, cwd: a.dryRun ? null : path });
+    // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
+    if (harness === 'codex') prompt += '\n' + codexGitRules();
+    else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
+    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
@@ -709,6 +730,55 @@ export class Dispatcher {
     }
   }
 
+  /** A codex worker reported succeeded: commit its worktree on the card branch, push, open the PR, land it with
+   *  land-pr.sh and post the github runner records. Any failure (empty or destructive diff, red CI, a git error) fails
+   *  the run with the reason and the land-pr output as evidence. Returns the failure, or null (landed, or nothing to land). */
+  async landCodex(w) {
+    if (!w.branch || !w.path) return null;
+    let run = null;
+    try {
+      run = await latestRun(this.api, this.g, w.node);
+    } catch (e) {
+      this.say(`codex land ${w.key}: ${e.message}`);
+    }
+    if (!run || !(runDone(run) || run.status === 'verifying')) return null;
+    let res;
+    try {
+      res = await (this.codexLander || landForCodex)({
+        api: this.api,
+        graph: this.g,
+        node: w.node,
+        runId: run.runId,
+        cwd: w.path,
+        branch: w.branch,
+        base: w.node.data?.base || 'main',
+        landPr: LAND_PR,
+        landTimeout: this.args.landTimeout,
+        logDir: this.logs,
+        say: (m) => this.say(m),
+      });
+    } catch (e) {
+      res = { ok: false, code: 'land_failed', error: `codex land threw: ${e.message}` };
+    }
+    if (res.ok) {
+      this.say(`codex land ${w.key}: merged ${res.url}`);
+      return null;
+    }
+    this.say(`codex land ${w.key}: ${res.code}: ${clip(res.error, 300)}`);
+    try {
+      await this.api.complete(this.g, w.node.id, run.runId, {
+        status: 'failed',
+        error: res.error,
+        ...(res.evidence ? { evidence: res.evidence } : {}),
+        data: { runner: 'graph-dispatch', codex_land: { code: res.code, url: res.url || null, files: res.files || [] } },
+      });
+      this.say(`codex land ${w.key}: run ${run.runId} reported failed`);
+    } catch (e) {
+      this.say(`codex land ${w.key}: could not fail run ${run.runId}: ${e.message}`);
+    }
+    return res;
+  }
+
   /** A non-Claude worker whose merged PR only deleted files outside the node's paths: log destructive_merge and fail its
    *  run (incident 2026-10-31, PR 57). Returns the finding or null. Never throws. */
   async destructiveGuard(w, s) {
@@ -825,12 +895,22 @@ export class Dispatcher {
       this.say(
         `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} cold cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
+      // codex cannot commit in its sandbox: the dispatcher commits, pushes and lands its worktree, then posts the records
+      const codexFail = harness === 'codex' ? await this.landCodex(w) : null;
       // gemini/codex/grok run no report hook, so their reports carry no runner records: attach them here
       // the run state comes from the API: the stream parser sees no graph_report for gemini and grok
+      let apiDone = false;
+      if (harness !== 'claude') {
+        try {
+          apiDone = runDone(await latestRun(this.api, this.g, w.node));
+        } catch {
+          apiDone = false;
+        }
+      }
       if (needsRunnerRecords(harness, w.node) && w.path) {
         try {
           const run = await latestRun(this.api, this.g, w.node);
-          if (run && run.status === 'succeeded') {
+          if (run && run.status === 'succeeded' && !run.verified) {
             await attachRunnerRecords({ api: this.api, graph: this.g, node: w.node, runId: run.runId, cwd: w.path, say: (m) => this.say(m) });
           }
         } catch (e) {
@@ -839,8 +919,16 @@ export class Dispatcher {
       }
       const destructive = harness !== 'claude' ? await this.destructiveGuard(w, s) : null;
       for (const ln of judgeLines(key, s.verification)) this.say(ln);
-      let outcome = destructive ? { error: destructive.reason, rejection: null } : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
-      if (s.run_id && !s.reported) await this.failOrphan(w, s);
+      // a codex landing refusal (empty or destructive diff, red CI) failed the run: it wins over the API's earlier succeeded
+      const refused = codexFail || destructive;
+      if (refused) apiDone = false;
+      let outcome = refused
+        ? { error: refused.error || refused.reason, rejection: null }
+        : apiDone
+          ? null
+          : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
+      if (apiDone) this.say(`${key}: API shows a succeeded run; not relaunching`);
+      if (s.run_id && !s.reported && !apiDone) await this.failOrphan(w, s);
       const down = Object.entries(s.mcp).filter(([k, v]) => k.startsWith('plugin:enforcer') && v !== 'connected');
       if (down.length && !s.run_id) {
         // never reached the graph (a needs-auth flake): not the node's fault; three in a row is an outage
