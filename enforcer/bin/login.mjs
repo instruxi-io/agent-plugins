@@ -74,7 +74,7 @@ export const FAMILIES = [
     fix: 'enforcer login --for plan',
   },
   { name: 'files', needs: ['enforcer:files-files.write'], fix: 'enforcer login --for work' },
-  { name: 'agent management', needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'], fix: 'enforcer login --for agents' },
+  { name: 'agent management', needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'], fix: 'enforcer login --for work' },
   { name: 'workspace switching', needs: ['enforcer:workspace.write'], fix: 'enforcer login --for work' },
   { name: 'plan sharing, recruiting and skills', needs: SHARE_SCOPES, fix: 'enforcer login --for work' },
   {
@@ -458,12 +458,40 @@ export function signInLifeLine(o, nowMs) {
 
 const who = (me) => me.person?.primary_email || me.person?.name || me.account_id || 'unknown account';
 
-async function whoAmI(base) {
-  const headers = await authHeaders();
+/** Who Enforcer says the credential is (GET auth/me): the acceptance check behind `status`, and the probe after a sign-in. */
+export async function whoAmI(base, { headers, fetchImpl = defaultFetch } = {}) {
+  headers = headers || (await authHeaders());
   if (!headers['X-API-Key'] && !headers.Authorization) return null;
-  const r = await defaultFetch(`${base}${API}/auth/me`, { headers, signal: AbortSignal.timeout(10_000) });
-  if (!r.ok) return { error: `HTTP ${r.status}` };
+  const r = await fetchImpl(`${base}${API}/auth/me`, { headers, signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) return { error: `HTTP ${r.status}`, status: r.status };
   return (await r.json())?.data || null;
+}
+
+/**
+ * Read the probe of a fresh sign-in's token. HTTP 431 means the token itself is too large for the server's
+ * request headers (seen with --for admin: 65 scopes, a 3,545-character Authorization header), so every later
+ * call would fail: the sign-in is refused. Anything else that is not an answer (offline, 5xx) is only a warning,
+ * so an offline sign-in still saves. Never prints the token, only its header's length.
+ */
+export function signInProbeResult(me, { preset, headerLength } = {}) {
+  if (me?.status === 431) {
+    const size = headerLength ? ` (a ${headerLength}-character Authorization header)` : '';
+    return {
+      fail: true,
+      lines: [
+        `Sign-in failed: the ${preset || 'requested'} preset's token${size} is too large for this Enforcer (HTTP 431 Request Header Fields Too Large), so every call with it would be refused.`,
+        'Nothing was saved; the previous sign-in on this machine, if any, is unchanged.',
+        'Sign in with fewer scopes: /enforcer:login --for plan (or --for work).',
+      ],
+    };
+  }
+  if (!me || me.error) {
+    return {
+      fail: false,
+      lines: [`Warning: could not confirm the new sign-in with Enforcer (${me?.error || 'unreachable'}). Check it with /enforcer:login status.`],
+    };
+  }
+  return { fail: false, lines: [] };
 }
 
 // A workspace code, as a tenant hands it out (e.g. ACME-1234-ABCD). Anything
@@ -721,6 +749,15 @@ async function main(rawArgv) {
         openBrowser(url);
       },
     });
+    // Probe the new token before saving it: a token too large for the server's headers (HTTP 431) must not replace a working one.
+    const probeHeaders = { Authorization: `Bearer ${oauth.access_token}` };
+    const me = await whoAmI(base, { headers: probeHeaders }).catch(() => null);
+    const probe = signInProbeResult(me, { preset: oauth.preset, headerLength: `Bearer ${oauth.access_token}`.length });
+    if (probe.fail) {
+      for (const line of probe.lines) out(line);
+      process.exitCode = 1;
+      return;
+    }
     // Read before the save: the notice revokes the sign-in this one replaces.
     const previous = readCredentials()?.enforcer?.oauth || null;
     // The sign-in REPLACES any saved API key. authHeaders prefers a key when
@@ -741,8 +778,8 @@ async function main(rawArgv) {
           };
     saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth: signIn, oauth_client } });
     const notice = await replacementNotice(previous, oauth, base);
-    const me = await whoAmI(base).catch(() => null);
     out(me && !me.error ? `Signed in as ${who(me)}.` : 'Signed in.');
+    for (const line of probe.lines) out(line);
     const granted = String(oauth.scope || '')
       .split(/\s+/)
       .filter(Boolean);
