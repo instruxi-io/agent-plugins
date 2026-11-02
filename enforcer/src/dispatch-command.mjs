@@ -77,7 +77,10 @@ const readJson = (p) => {
     return null;
   }
 };
+// only a real pid: process.kill(0, 0) signals our own process group and "succeeds", which listed every file in the
+// dispatch dir that has no pids.json (watch.json, routes.json) as a running dispatcher
 const alive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;

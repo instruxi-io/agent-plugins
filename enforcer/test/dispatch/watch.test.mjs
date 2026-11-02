@@ -251,3 +251,17 @@ test('watch.json is private', () => {
   const p = join(h.cfgHome, 'dispatch', 'watch.json');
   assert.ok(JSON.parse(readFileSync(p, 'utf8')).running.includes('a'));
 });
+
+test('status lists no file in the dispatch dir as a running dispatcher (pid 0 is our own process group)', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { spawnSync } = await import('node:child_process');
+  const cfg = mkdtempSync(join(tmpdir(), 'watch-status-'));
+  mkdirSync(join(cfg, 'dispatch', 'g-idle'), { recursive: true });
+  writeFileSync(join(cfg, 'dispatch', 'watch.json'), JSON.stringify({ pid: 0 }));
+  writeFileSync(join(cfg, 'dispatch', 'routes.json'), '{}');
+  const bin = join(import.meta.dirname, '..', '..', 'bin', 'enforcer');
+  const r = spawnSync(process.execPath, [bin, 'dispatch', 'status'], { env: { ...process.env, ENFORCER_CONFIG_HOME: cfg }, encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /running:|watch: running/);
+  assert.match(r.stdout, /no dispatcher is running/);
+});
