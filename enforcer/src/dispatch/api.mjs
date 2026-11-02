@@ -71,9 +71,11 @@ export class API {
   async graph(g) {
     return (await this.call('GET', `/graphs/${g}`)).data || {};
   }
-  // api-used: reads data
-  async frontier(g) {
-    return (await this.call('GET', `/graphs/${g}/frontier`)).data || [];
+  // api-used: reads data. `forWho` ('me' or 'mine') narrows the frontier to nodes assigned to the caller (and, for 'me',
+  // unassigned ones); assignment is advisory on the server, so this is the dispatcher choosing what to take.
+  async frontier(g, forWho = null) {
+    const q = forWho ? `?for=${encodeURIComponent(forWho)}` : '';
+    return (await this.call('GET', `/graphs/${g}/frontier${q}`)).data || [];
   }
   async nodes(g) {
     const out = [];
