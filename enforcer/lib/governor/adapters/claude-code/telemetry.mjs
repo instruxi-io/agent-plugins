@@ -1,5 +1,13 @@
 // Point Claude Code's own OpenTelemetry exporter at the Enforcer control plane.
 //
+// ON BY DEFAULT, like Codex's and Gemini's. ensure() runs after a sign-in and at
+// every Claude Code session start (hooks/session.mjs): it writes the settings
+// below when they are missing and does nothing when they are already ours. It
+// never takes over an exporter someone else set up (an OTEL_EXPORTER_OTLP_ENDPOINT
+// or otelHeadersHelper that is not ours), never writes while signed out, and
+// `telemetry off` records telemetryOn: false so it stays off. Claude Code
+// reads its settings when it starts, so a write takes effect from the next session.
+//
 // Claude Code exports its metrics (claude_code.cost.usage, token.usage, ...) and
 // events (tool_result, api_request, ...) over OTLP when told to. This writes the
 // settings that tell it to, into Claude Code's user settings file:
@@ -49,6 +57,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { claudeSettingsPath } from '../../../../hooks/claude/paths.mjs';
 import { SHARED_DIR, baseUrl } from '../../core/credentials.mjs';
+import { isOff } from '../../core/bool.mjs';
 
 const home = () => process.env.HOME || process.env.USERPROFILE || homedir();
 export const CLAUDE_SETTINGS = () => claudeSettingsPath();
@@ -141,7 +150,7 @@ export function writeSettings(s) {
 
 /** Turn telemetry on. Returns what was written, for the command to print. */
 export function enable(cfg = {}) {
-  const endpoint = (cfg.ingestUrl || baseUrl(cfg)).replace(/\/+$/, '') + OTLP_PATH;
+  const endpoint = endpointFor(cfg);
   recordPluginRoot();
   writeShim();
   const s = readSettings();
@@ -187,4 +196,44 @@ export function status() {
     ours: typeof s.otelHeadersHelper === 'string' && s.otelHeadersHelper.includes('otel-headers.mjs'),
     sensitive: SENSITIVE_KEYS.filter((k) => Object.hasOwn(env, k)),
   };
+}
+
+/** The endpoint enable() writes for this config. */
+export const endpointFor = (cfg = {}) => (cfg.ingestUrl || baseUrl(cfg)).replace(/\/+$/, '') + OTLP_PATH;
+
+/**
+ * Turn Claude Code's export on unless it is off, already ours, or someone else's. Returns
+ * { changed: true, ...enable() } when it wrote, else { skipped: why } (`turned off`, `not signed in`,
+ * `already on`, `another exporter`, or an error). Never throws: a session start must not fail on it.
+ * @param {object} cfg merged governor config
+ * @param {{ signedIn?: (() => boolean) | null, env?: Record<string, string | undefined> }} [deps]
+ */
+export function ensure(cfg = {}, { signedIn = null, env = process.env } = {}) {
+  try {
+    if (isOff(cfg.telemetryOn)) return { skipped: 'turned off (telemetryOn)' };
+    if (signedIn && !signedIn()) return { skipped: 'not signed in' };
+    // a worker the dispatcher started, or anything else given its own exporter in the environment, is left alone
+    if (env.OTEL_EXPORTER_OTLP_ENDPOINT && !String(env.OTEL_EXPORTER_OTLP_ENDPOINT).endsWith(OTLP_PATH))
+      return { skipped: 'another exporter (OTEL_EXPORTER_OTLP_ENDPOINT in the environment)' };
+    const s = readSettings();
+    const e = s.env || {};
+    const helper = typeof s.otelHeadersHelper === 'string' ? s.otelHeadersHelper : '';
+    if ((e.OTEL_EXPORTER_OTLP_ENDPOINT && !String(e.OTEL_EXPORTER_OTLP_ENDPOINT).endsWith(OTLP_PATH)) || (helper && !helper.includes('otel-headers.mjs')))
+      return { skipped: `another exporter (${CLAUDE_SETTINGS()})` };
+    const want = endpointFor(cfg);
+    const sensitive = SENSITIVE_KEYS.some((k) => Object.hasOwn(e, k));
+    const ours =
+      e.CLAUDE_CODE_ENABLE_TELEMETRY === '1' &&
+      e.OTEL_EXPORTER_OTLP_ENDPOINT === want &&
+      e.CLAUDE_CODE_OTEL_HEADERS_HELPER_DEBOUNCE_MS === HEADERS_REFRESH_MS &&
+      helper.includes('otel-headers.mjs') &&
+      existsSync(SHIM());
+    if (ours && !sensitive) {
+      recordPluginRoot();
+      return { skipped: 'already on' };
+    }
+    return { changed: true, ...enable(cfg) };
+  } catch (err) {
+    return { skipped: /** @type {any} */ (err)?.message || String(err) };
+  }
 }

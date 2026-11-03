@@ -35,6 +35,16 @@ await guard(async () => {
     } catch {}
   }
 
+  // Under Claude Code, its own OTel export is on by default too (adapters/claude-code/telemetry.mjs ensure):
+  // written into its user settings while signed in, unless telemetryOn is off or another exporter is set.
+  // Claude Code reads settings at start, so a first write applies from the next session. Best effort.
+  if (EVENT === 'SessionStart' && runningHarness() === 'claude-code') {
+    try {
+      const [{ ensure }, { isFederated }] = await Promise.all([import('../adapters/claude-code/telemetry.mjs'), import('../core/credentials.mjs')]);
+      ensure({ ...DEFAULTS, ...loadConfig() }, { signedIn: isFederated });
+    } catch {}
+  }
+
   // A session's end is the natural moment to catch up; its summary receipt was
   // just written, so the 30s throttle is bypassed.
   gov.flush(EVENT === 'SessionEnd' ? 0 : 30_000);

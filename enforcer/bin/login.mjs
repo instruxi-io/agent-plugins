@@ -478,6 +478,30 @@ export async function codexTelemetryAfterSignIn(deps = {}) {
   }
 }
 
+/**
+ * After a sign-in, turn on Claude Code's own telemetry export (on by default; `enforcer governor telemetry off`
+ * keeps it off; another exporter already in its settings is left alone). One line when it was written, none otherwise.
+ * @param {{ ensure?: Function }} [deps]
+ */
+export async function claudeCodeTelemetryAfterSignIn(deps = {}) {
+  try {
+    const claude = await import('../lib/governor/adapters/claude-code/telemetry.mjs');
+    const { loadConfig } = await import('../lib/governor/core/store.mjs');
+    const { DEFAULTS } = await import('../lib/governor/core/policy.mjs');
+    const r = (deps.ensure || claude.ensure)({ ...DEFAULTS, ...loadConfig() });
+    if (r.skipped) {
+      if (r.skipped.startsWith('another exporter'))
+        return [`Claude Code telemetry: left off, ${r.skipped.replace(/^another exporter/, 'another exporter is configured')}.`];
+      return [];
+    }
+    return [
+      `Claude Code telemetry: on, to ${r.endpoint} (metrics and events, no prompt text), from your next Claude Code session. Turn it off with: enforcer governor telemetry off`,
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function main(rawArgv) {
   const { argv: a1, scope } = extractScope(rawArgv);
   const { argv, preset: forPreset } = extractPreset(a1);
@@ -601,6 +625,7 @@ async function main(rawArgv) {
         : 'Saved, but Enforcer did not accept the key just now. Check it with /enforcer:login status.',
     );
     if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
+    if (me && !me.error) for (const line of await claudeCodeTelemetryAfterSignIn()) out(line);
     return;
   }
 
@@ -662,6 +687,7 @@ async function main(rawArgv) {
     // Harness telemetry is on by default once signed in (each harness skips itself when absent or turned off).
     for (const line of await geminiOnLogin()) out(line);
     if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
+    if (me && !me.error) for (const line of await claudeCodeTelemetryAfterSignIn()) out(line);
     return;
   }
 

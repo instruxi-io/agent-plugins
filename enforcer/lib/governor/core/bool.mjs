@@ -12,6 +12,7 @@ export const BOOLEAN_SETTINGS = Object.freeze([
   'shipOn',
   'adviseModel',
   'codexTelemetry',
+  'telemetryOn',
   'serverApprovals',
 ]);
 
