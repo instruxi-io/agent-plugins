@@ -91,3 +91,38 @@ test('a branch with commits ahead is left alone; the next -a name is used', () =
   assert.ok(existsSync(p));
   assert.equal(sh(['rev-list', '--count', 'main..graph/busy'], src).stdout.trim(), '1');
 });
+
+test("a new epoch never reuses the last epoch's worktree: a clean one is replaced, a dirty one refused", async () => {
+  const { readFileSync, writeFileSync } = await import('node:fs');
+  const { StaleWorktree, worktreeBranch } = await import('../../src/dispatch/worktree.mjs');
+  const { root, src, state } = repo();
+  const o = (epoch) => ({ graphId: 'dddddddd-4444', graphCode: 'ZQP', graphEpoch: epoch });
+  const [p1, b1, n1] = worktreeFor(node('card'), root, state, o(1));
+  assert.match(n1, /^added off/);
+  writeFileSync(join(p1, 'card.md'), 'epoch 1\n');
+  sh(['add', 'card.md'], p1);
+  sh(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'epoch 1 card'], p1);
+  // the same epoch again (a retry): reused as it is
+  const [, , again] = worktreeFor(node('card'), root, state, o(1));
+  assert.equal(again, 'reused');
+  // the next epoch: same path, a fresh checkout of the base on the new branch, the old branch's commit kept
+  const [p2, b2, n2] = worktreeFor(node('card'), root, state, o(2));
+  assert.equal(p2, p1);
+  assert.notEqual(b2, b1);
+  assert.equal(worktreeBranch(p2), b2);
+  assert.match(n2, new RegExp(`replaced the worktree left on ${b1.replace(/[/]/g, '\\/')}`));
+  assert.equal(existsSync(join(p2, 'card.md')), false, "epoch 2 does not start with epoch 1's card");
+  assert.equal(sh(['log', '-1', '--format=%s', b1], src).stdout.trim(), 'epoch 1 card', 'the old branch keeps its work');
+  // a dry run says what it would do and touches nothing
+  const [, , dry] = worktreeFor(node('card'), root, state, { ...o(3), dry: true });
+  assert.match(dry, /would replace the worktree on /);
+  assert.equal(worktreeBranch(p2), b2);
+  // uncommitted changes on the old branch: refused, nothing removed
+  writeFileSync(join(p2, 'wip.md'), 'x\n');
+  sh(['add', 'wip.md'], p2);
+  assert.throws(
+    () => worktreeFor(node('card'), root, state, o(3)),
+    (e) => e instanceof StaleWorktree && /uncommitted changes/.test(e.message),
+  );
+  assert.equal(readFileSync(join(p2, 'wip.md'), 'utf8'), 'x\n');
+});

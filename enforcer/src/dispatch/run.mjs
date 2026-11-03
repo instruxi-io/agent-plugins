@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { API, APIError } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
-import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
+import { worktreeFor, worktreeSetup, BaseMissing, StaleWorktree, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
   launchCmd,
   workerEnv,
@@ -513,6 +513,12 @@ export class Dispatcher {
     } catch (e) {
       if (e instanceof BaseMissing) {
         this.say(`refuse ${n.key}: ${e.message}; fix the repo's remote, or set data.base / the registry`);
+        return;
+      }
+      if (e instanceof StaleWorktree) {
+        // said once per node: it is refused every pass until a person lands or cleans the checkout
+        if (this.lastSkip.get(n.key) !== 'stale-worktree') this.say(`REFUSE ${n.key}: ${e.message}`);
+        this.lastSkip.set(n.key, 'stale-worktree');
         return;
       }
       throw e;
