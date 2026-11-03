@@ -32,8 +32,9 @@ import {
   writeAgentMcpConfig,
   mcpConfigPath,
   removeAgentMcpConfigs,
+  localUp,
 } from './launch.mjs';
-import { modelFor, nodeMaxTurns } from './model.mjs';
+import { routeFor, nodeMaxTurns, LOCAL_TIERS, TIER_MODEL } from './model.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
@@ -133,6 +134,8 @@ export function defaultArgs(o = {}) {
     codex: null,
     leaseRenew: LEASE_TTL / 3,
     killGrace: 30,
+    local: null,
+    localProbe: null,
     mergeAllow: [],
     prView: null,
     ...o,
@@ -242,7 +245,7 @@ export class Dispatcher {
     const agents = affinityOrder(
       cands.filter((n) => !mergeTarget(n)),
       {},
-      (n) => modelFor(n, this.args.model),
+      (n) => routeFor(n, this.args.model, this.args.local).model,
     );
     const merges = cands.filter((n) => mergeTarget(n));
     const a = select(agents, held, Math.max(slots, 0), this.workers);
@@ -295,6 +298,25 @@ export class Dispatcher {
   }
 
   // ---- launching
+  /** The node's route, with the local endpoint checked at most once a minute; null = hold the node this pass. */
+  async routeOf(n) {
+    const a = this.args;
+    const r = routeFor(n, a.model, a.local);
+    if (!r.local || a.dryRun) return r;
+    if (!this.localSeen || now() - this.localSeen.at > 60) {
+      const up = await (a.localProbe || localUp)(a.local);
+      if (this.localSeen && this.localSeen.up !== up) this.say(`local model at ${a.local.url} is ${up ? 'answering again' : 'not answering'}`);
+      this.localSeen = { at: now(), up };
+    }
+    if (this.localSeen.up) return r;
+    if (a.local.fallback === 'wait') {
+      if (this.lastSkip.get(n.key) !== 'local model down') this.say(`hold ${n.key}: local model at ${a.local.url} is not answering`);
+      this.lastSkip.set(n.key, 'local model down');
+      return null;
+    }
+    return { model: routeFor(n, a.model, null).model, local: false };
+  }
+
   async launch(n) {
     const a = this.args;
     const bad = unsafeIdent(n);
@@ -305,7 +327,9 @@ export class Dispatcher {
     const tag = n._lapsed ? ' (lease lapsed; re-claim)' : '';
     const mt = mergeTarget(n);
     if (mt) return this.launchMerge(n, mt, tag);
-    const model = modelFor(n, a.model);
+    const route = await this.routeOf(n);
+    if (!route) return;
+    const { model } = route;
     let path;
     let branch;
     let note;
@@ -343,7 +367,7 @@ export class Dispatcher {
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
-        `would launch ${n.key} [${n.type}, tier ${n.data?.tier ?? '-'}] model=${model} worktree=${path} branch=${branch || '-'} (${note}) resources=${res}${turnsCap ? ` max_turns=${turnsCap}` : ''}${t2}`,
+        `would launch ${n.key} [${n.type}, tier ${n.data?.tier ?? '-'}] model=${model}${route.local ? ' (local)' : ''} worktree=${path} branch=${branch || '-'} (${note}) resources=${res}${turnsCap ? ` max_turns=${turnsCap}` : ''}${t2}`,
       );
       return;
     }
@@ -389,9 +413,10 @@ export class Dispatcher {
         workerRules: this.args.workerRules,
         context: this.args.context,
         enforcerHome,
+        local: route.local ? a.local : null,
       }),
       cleanup: mcpConfig ? [mcpConfig] : [],
-      secrets: [a.agentKey, token].filter(Boolean),
+      secrets: [a.agentKey, token, route.local && a.local.token].filter(Boolean),
     });
     proc.done.then(async () => {
       if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
@@ -415,7 +440,9 @@ export class Dispatcher {
     this.peak = Math.max(this.peak, this.workers.size);
     const acNote = a.autocompact && (a.autocompact !== 'auto' || !this.acSaid) ? ` autocompact=${a.autocompact}` : '';
     this.acSaid = true;
-    this.say(`launch ${n.key} pid=${proc.pid} model=${model} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`);
+    this.say(
+      `launch ${n.key} pid=${proc.pid} model=${model}${route.local ? ' (local)' : ''} mode=cold session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
+    );
   }
 
   async launchMerge(n, [pr, slug], tag) {
@@ -859,6 +886,12 @@ export class Dispatcher {
       if (gone.length) this.say(`pruned ${gone.length} old worker log(s)`, { removed: gone.length });
     }
     this.say(`dispatching graph ${this.g} with ${a.workers} workers; stop file ${a.stopFile}`);
+    if (a.local) {
+      if (a.local.token) addSecret(a.local.token);
+      this.say(
+        `local model ${a.local.model} at ${a.local.url} for tiers ${a.local.tiers.join(',')}; when it is down: ${a.local.fallback === 'wait' ? 'hold those nodes' : 'fall back to ' + TIER_MODEL.standard}`,
+      );
+    }
     let idle = 0;
     while (!this.terminating) {
       await this.ciProbe();
@@ -1024,6 +1057,10 @@ const OPTS = {
   grok: { type: 'string' },
   codex: { type: 'string' },
   claude: { type: 'string' },
+  'local-url': { type: 'string' },
+  'local-model': { type: 'string' },
+  'local-tiers': { type: 'string' },
+  'local-fallback': { type: 'string' },
   // accepted for compatibility with the Python dispatcher's front door; the features they tune are not in the Node runtime yet
   'no-salvage': { type: 'boolean' },
   'no-triage': { type: 'boolean' },
@@ -1096,7 +1133,29 @@ export function parseDispatchArgs(argv, env = process.env) {
     grok: v.grok || null,
     codex: v.codex || null,
     agentBin: v['claude'] || null,
+    local: localArgs(v, env, harness),
   };
+}
+
+/** The local endpoint from --local-* (or ENFORCER_LOCAL_MODEL_URL / _MODEL / _TOKEN); null when none is set.
+ *  The token is read from the environment only, never from argv. */
+export function localArgs(v, env = process.env, harness = 'claude') {
+  const url = v['local-url'] || env.ENFORCER_LOCAL_MODEL_URL;
+  if (!url) return null;
+  if (!/^https?:\/\/[^\s]+$/.test(url)) throw new Error('--local-url must be an http(s) URL');
+  if (harness !== 'claude') throw new Error('--local-url works only with --harness claude');
+  const model = v['local-model'] || env.ENFORCER_LOCAL_MODEL;
+  if (!model) throw new Error('--local-url needs --local-model (or ENFORCER_LOCAL_MODEL): the name the endpoint serves');
+  const tiers = v['local-tiers']
+    ? String(v['local-tiers'])
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean)
+    : LOCAL_TIERS;
+  for (const t of tiers) if (!Object.hasOwn(TIER_MODEL, t)) throw new Error(`--local-tiers: ${t} is not a tier (${Object.keys(TIER_MODEL).join(', ')})`);
+  const fallback = v['local-fallback'] ?? 'sonnet';
+  if (!['sonnet', 'wait'].includes(fallback)) throw new Error('--local-fallback must be sonnet or wait');
+  return { url, model, tiers, fallback, token: env.ENFORCER_LOCAL_MODEL_TOKEN || null };
 }
 
 /** `enforcer dispatch run <flags>`: the foreground dispatcher. Returns the exit code. */

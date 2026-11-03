@@ -8,14 +8,15 @@ import { fileURLToPath } from 'node:url';
 import { headers, allNodes, preflight } from './preflight.mjs';
 import { resolveConfig } from './config.mjs';
 import { strandedReport, strandedLines, workerLogMtime } from './dispatch/stranded.mjs';
+import { TIER_MODEL } from './dispatch/model.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const DEFAULTS = { workers: 3, model: 'sonnet', salvage: 'on', triage: 'on', warm: 'off' };
+export const DEFAULTS = { workers: 3, model: null, salvage: 'on', triage: 'on', warm: 'off' };
 export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] [--repo-root dir] [--worker-rules on|off] [--context on|off]   preflight, then start the dispatcher in the background
        enforcer dispatch status [<graph>]                                              what it is doing and what it needs from you
        enforcer dispatch prune [--yes] [--repo-root dir]                               list (or with --yes remove) worktrees whose PR merged and no live worker holds
        enforcer dispatch stop <graph>                                                  finish running workers, start no new ones, then exit
-defaults: ${DEFAULTS.workers} workers, ${DEFAULTS.model} model cap, salvage ${DEFAULTS.salvage}, triage ${DEFAULTS.triage}, warm workers ${DEFAULTS.warm}
+defaults: ${DEFAULTS.workers} workers, model by tier (mechanical and standard sonnet, deep opus; --model caps it, --local-url sends tiers to a local model), salvage ${DEFAULTS.salvage}, triage ${DEFAULTS.triage}, warm workers ${DEFAULTS.warm}
 state: ~/.config/enforcer/dispatch/<graph> (dispatcher.log, pids.json, STOP)
        enforcer dispatch --dry-run <graph>                                             print the planned launches; launch nothing
 other dispatcher flags pass through; see docs/graph/DISPATCHER.md
@@ -23,7 +24,18 @@ other dispatcher flags pass through; see docs/graph/DISPATCHER.md
 
 // Flags that take a value, so the value is never mistaken for the graph id.
 // --agent is not handled here but passes through to the runner.
-const VALUE_FLAGS = ['--workers', '--model', '--repo-root', '--worker-rules', '--context', '--agent'];
+const VALUE_FLAGS = [
+  '--workers',
+  '--model',
+  '--repo-root',
+  '--worker-rules',
+  '--context',
+  '--agent',
+  '--local-url',
+  '--local-model',
+  '--local-tiers',
+  '--local-fallback',
+];
 
 const flagValue = (argv, n) => {
   const i = argv.indexOf(n);
@@ -131,8 +143,7 @@ export async function start(argv, env = process.env) {
     graph,
     '--workers',
     String(flag('--workers') || DEFAULTS.workers),
-    '--model',
-    flag('--model') || DEFAULTS.model,
+    ...(flag('--model') ? ['--model', flag('--model')] : []),
     '--state-dir',
     dir,
     ...(workerRules ? ['--worker-rules', workerRules] : []),
@@ -197,7 +208,7 @@ export async function statusText(graph, env = process.env) {
     const t = Date.parse(n.updated_at || n.started_at || '');
     return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 60000)) : '?';
   };
-  const model = (n) => ({ mechanical: 'haiku', standard: 'sonnet', deep: 'opus' })[n.data?.tier] || DEFAULTS.model;
+  const model = (n) => n.data?.model || TIER_MODEL[n.data?.tier] || TIER_MODEL.standard;
   const L = [];
   L.push(`dispatcher: ${running ? `running (pid ${pids.dispatcher})` : 'not running'}${ci.length && running ? '; blocked on CI' : ''}`);
   const sl = strandedLines(strandedRep, graph, { dispatcherRunning: Boolean(running) });

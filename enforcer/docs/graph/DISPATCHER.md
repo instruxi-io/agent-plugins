@@ -37,6 +37,10 @@ and, for each ready node, up to `--workers` at once:
 - **Model**: `data.model` (or the claim card's `model`) wins; a tier set by a
   person (`tier_source: user`) beats `--model`; otherwise `--model` caps it;
   otherwise `mechanical`/`standard` -> sonnet, `deep` -> opus, default sonnet.
+  `enforcer dispatch <graph>` passes `--model` only when you give it; through
+  1.3.28 it always passed `--model sonnet`, which capped every planner- or
+  rule-set `deep` node at Sonnet. With `--local-url`, the tiers in
+  `--local-tiers` run on a local model instead (see "Local model endpoint").
 - **Turn cap**: `data.max_turns`, when set, is passed as `claude --max-turns`
   (accepted and enforced by Claude Code 2.1.288 though not in `--help`; the run
   ends `error_max_turns`). The dispatcher also counts assistant turns in the
@@ -161,6 +165,34 @@ A fresh worktree has no `.env` and no `node_modules`. When the dispatcher create
 - `.worktreeshare`: directories to SYMLINK from the main checkout, e.g. `node_modules`, `.cache`, or a sibling such as `../protos`. A sibling (`../x`) is linked only when the worktree sits beside the checkout.
 
 An entry already present in the worktree is left alone, so a re-claimed node is not touched twice. `--dry-run` logs the counts without copying or linking.
+
+## Local model endpoint (`--local-url`)
+
+`--local-url <url> --local-model <name>` (or `ENFORCER_LOCAL_MODEL_URL` and
+`ENFORCER_LOCAL_MODEL`) sends nodes whose tier is in `--local-tiers` (default
+`mechanical,standard`; an untiered node counts as `standard`) to an
+Anthropic-compatible endpoint you run, such as vLLM serving
+`Qwen/Qwen3.8-27B-FP8` on a DGX Spark. Other tiers keep the rule above, so
+`deep` runs on Opus. An explicit `data.model` still wins. The worker is the
+same `claude -p` with the same agent, hooks and graph tools; only the model
+behind it changes.
+
+- **Environment.** A local worker gets `ANTHROPIC_BASE_URL`,
+  `ANTHROPIC_AUTH_TOKEN` (`ENFORCER_LOCAL_MODEL_TOKEN`, read from the
+  environment only, never argv; `local` when unset), and every model variable
+  (`ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`,
+  `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`) set to the local
+  model, so the worker agent's `model: sonnet` resolves to it too.
+  `CLAUDE_CODE_OAUTH_TOKEN` and the Bedrock and Vertex switches are removed.
+  A Claude worker never receives an inherited `ANTHROPIC_BASE_URL`.
+- **Down endpoint.** The dispatcher probes `<url>/v1/models` at most once a
+  minute before a local launch. `--local-fallback sonnet` (default) runs the
+  node on Claude by its tier; `--local-fallback wait` holds it until the
+  endpoint answers. Both are logged.
+- **Harness.** `--harness claude` only.
+- **Not measured yet.** No local model has been compared with Sonnet on the
+  judge's acceptance rate. Run one graph and compare verdicts per tier before
+  making it the default for a team.
 
 ## Which plugin workers run
 

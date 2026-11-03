@@ -130,7 +130,7 @@ const allowed = (k) => ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.s
 export function workerEnv(
   graphId,
   env = process.env,
-  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on', baseUrl = null, enforcerHome = null } = {},
+  { token = null, release = false, runId = null, workerRules = DEFAULT_WORKER_RULES, context = 'on', baseUrl = null, enforcerHome = null, local = null } = {},
 ) {
   const root = pluginDirs()[0];
   const out = {};
@@ -169,7 +169,37 @@ export function workerEnv(
     if (enforcerHome) out.ENFORCER_HOME = enforcerHome;
   }
   if (env.ENFORCER_WORKER_GH_TOKEN) out.GH_TOKEN = env.ENFORCER_WORKER_GH_TOKEN;
+  // A local-model worker talks to the operator's Anthropic-compatible endpoint and never to Anthropic: no Anthropic
+  // credential passes, and every model alias (the worker agent's frontmatter says sonnet) resolves to the local model.
+  if (local) {
+    for (const k of LOCAL_DROP_ENV) delete out[k];
+    Object.assign(out, { ANTHROPIC_BASE_URL: local.url, ANTHROPIC_AUTH_TOKEN: local.token || 'local', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' });
+    for (const k of LOCAL_MODEL_ENV) out[k] = local.model;
+  }
   return out;
+}
+
+/** Dropped from a local-model worker's environment: each would send it to Anthropic, Bedrock or Vertex instead. */
+export const LOCAL_DROP_ENV = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX'];
+/** Every variable Claude Code resolves a model name or alias through, all set to the local model. */
+export const LOCAL_MODEL_ENV = [
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+  'CLAUDE_CODE_SUBAGENT_MODEL',
+];
+
+/** Whether a local endpoint answers (GET <url>/v1/models within 3 s). */
+export async function localUp(local, fetchImpl = fetch) {
+  try {
+    const headers = local.token ? { authorization: `Bearer ${local.token}`, 'x-api-key': local.token } : {};
+    const r = await fetchImpl(local.url.replace(/\/+$/, '') + '/v1/models', { headers, signal: AbortSignal.timeout(3000) });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Mint a worker-scoped credential for the run through the agent credential route; null when no worker agent is configured. */
