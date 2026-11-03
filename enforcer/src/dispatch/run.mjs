@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { API, APIError } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
-import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
+import { worktreeFor, worktreeSetup, BaseMissing, StaleWorktree, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
   launchCmd,
   workerEnv,
@@ -56,6 +56,8 @@ import { writeLog, redactFile, redactLogsDir, pruneLogs, addSecret, DEFAULT_LOG_
 /** Per-worker spend cap passed as --max-budget-usd unless the operator overrides it. */
 export const DEFAULT_MAX_BUDGET_USD = HEADLESS_PROFILE.spend.defaultMaxBudgetUsd;
 export const DEFAULT_TYPES = 'task,bug,chore,merge,scout,milestone,ops'; // gate stays human
+/** --for: the server's frontier assignment filter (me: assigned to me, my groups or nobody; mine: to me or my groups). */
+export const FOR_VALUES = ['me', 'mine'];
 export const CI_UNAVAILABLE = 7;
 export const CI_STATUS_URL = 'https://www.githubstatus.com/api/v2/components.json';
 export const LAND_CODES = { 0: 'merged', 2: 'CI failed', 3: 'conflict with the base', 4: 'timed out', 5: 'usage or gh error', 7: 'CI unavailable' };
@@ -141,6 +143,7 @@ export function defaultArgs(o = {}) {
     attend: false,
     attendPoll: ATTEND_POLL_SECONDS,
     exitWhenIdle: false,
+    for: null, // --for me|mine: take only nodes assigned to the caller (me: or to nobody); null takes any node
     heartbeat: 120,
     landTimeout: 3000,
     stateDir: null,
@@ -271,7 +274,7 @@ export class Dispatcher {
 
   // ---- reading the plan
   async candidates(nodes) {
-    const front = await this.api.frontier(this.g);
+    const front = await this.api.frontier(this.g, this.args.for || null);
     this.lastFrontier = front; // attention() reuses this pass's frontier instead of fetching it again
     const ours = new Set(this.workers.keys());
     const out = [];
@@ -282,9 +285,12 @@ export class Dispatcher {
       out.push(n);
       seen.add(n.id);
     }
-    for (let n of nodes) {
-      if (!seen.has(n.id) && !ours.has(n.key) && lapsed(n)) out.push({ ...n, _lapsed: true });
-    }
+    // A lapsed node the frontier did not list is re-claimed too; with --for the frontier's own answer (which already lists
+    // reclaimable nodes) is the whole set, so a lapsed node assigned to someone else is never taken from the node list.
+    if (!this.args.for)
+      for (let n of nodes) {
+        if (!seen.has(n.id) && !ours.has(n.key) && lapsed(n)) out.push({ ...n, _lapsed: true });
+      }
     return out.filter((n) => {
       if (this.types && !this.types.has(n.type)) return false;
       if (n.key === LEASE_KEY || n.data?.dispatcher_lease) return false;
@@ -507,6 +513,12 @@ export class Dispatcher {
     } catch (e) {
       if (e instanceof BaseMissing) {
         this.say(`refuse ${n.key}: ${e.message}; fix the repo's remote, or set data.base / the registry`);
+        return;
+      }
+      if (e instanceof StaleWorktree) {
+        // said once per node: it is refused every pass until a person lands or cleans the checkout
+        if (this.lastSkip.get(n.key) !== 'stale-worktree') this.say(`REFUSE ${n.key}: ${e.message}`);
+        this.lastSkip.set(n.key, 'stale-worktree');
         return;
       }
       throw e;
@@ -1289,7 +1301,7 @@ export class Dispatcher {
       const gone = pruneLogs(this.logs, { days: this.args.logDays ?? DEFAULT_LOG_DAYS, maxBytes: this.args.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES });
       if (gone.length) this.say(`pruned ${gone.length} old worker log(s)`, { removed: gone.length });
     }
-    this.say(`dispatching graph ${this.g} with ${a.workers} workers; stop file ${a.stopFile}`);
+    this.say(`dispatching graph ${this.g} with ${a.workers} workers${a.for ? `, nodes for ${a.for}` : ''}; stop file ${a.stopFile}`);
     let idle = 0;
     while (!this.terminating) {
       await this.ciProbe();
@@ -1431,6 +1443,7 @@ const OPTS = {
   types: { type: 'string' },
   interval: { type: 'string' },
   'exit-when-idle': { type: 'boolean' },
+  for: { type: 'string' },
   attend: { type: 'boolean' },
   heartbeat: { type: 'string' },
   'land-timeout': { type: 'string' },
@@ -1503,6 +1516,7 @@ export function parseDispatchArgs(argv, env = process.env) {
   if (!(warmMaxAge > 0)) throw new Error('--warm-max-age must be a number of seconds > 0');
   const workers = num(v.workers, 3);
   if (!(workers >= 1)) throw new Error('--workers must be >= 1');
+  if (v.for !== undefined && !FOR_VALUES.includes(v.for)) throw new Error(`--for must be one of ${FOR_VALUES.join(', ')}`);
   const cfg = env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
   const stateDir = v['state-dir'] || join(cfg, 'dispatch', graph);
   const d = defaultArgs();
@@ -1520,6 +1534,7 @@ export function parseDispatchArgs(argv, env = process.env) {
     types: v.types || d.types,
     interval: num(v.interval, d.interval),
     exitWhenIdle: !!v['exit-when-idle'],
+    for: v.for || null,
     attend: !!v.attend || env.ENFORCER_DISPATCH_ATTEND === '1',
     heartbeat: num(v.heartbeat, d.heartbeat),
     landTimeout: num(v['land-timeout'], d.landTimeout),

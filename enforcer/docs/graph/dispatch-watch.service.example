@@ -1,0 +1,37 @@
+# `enforcer dispatch watch` as a systemd user service (docs/graph/DISPATCHER.md, "A dispatcher on every graph that wants you").
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp dispatch-watch.service.example ~/.config/systemd/user/enforcer-dispatch-watch.service   # then edit the paths below
+#   install -m 600 /dev/null ~/.config/enforcer/dispatch-watch.env                              # then fill it in (below)
+#   systemctl --user daemon-reload && systemctl --user enable --now enforcer-dispatch-watch
+#   sudo loginctl enable-linger "$USER"                                                         # once: keep it running after logout
+#
+# ~/.config/enforcer/dispatch-watch.env (mode 0600; never commit it):
+#   ENFORCER_AGENT_KEY=ag_...              # the agent's key (agent_credential_issue); the watcher and its dispatchers run as it
+#   GH_TOKEN=...                           # gh for the dispatcher's preflight and landings: a desktop keyring is not unlocked here
+#   ENFORCER_WORKER_GH_TOKEN=...           # passed to workers as GH_TOKEN (pushes, pull requests); may be the same token
+#
+# Logs: journalctl --user -u enforcer-dispatch-watch -f. Status: enforcer dispatch status.
+
+[Unit]
+Description=Enforcer dispatch watch (one dispatcher per graph the work lobby offers this agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/enforcer/dispatch-watch.env
+# node 22+, claude, gh and git must all be on this PATH: a user unit does not read your shell profile
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# the enforcer CLI: an installed plugin (~/.claude/plugins/cache/instruxi/enforcer/<version>/bin/enforcer) or a checkout
+ExecStart=%h/.local/bin/node %h/src/agent-plugins/enforcer/bin/enforcer dispatch watch --agent dgx-worker --for mine --max-graphs 2 --workers 3 --repo-root %h/apps
+Restart=always
+RestartSec=30
+# control-group (the default, stated so nobody "fixes" it to mixed): SIGTERM goes to every process in the unit at once,
+# so each dispatcher drains (stops its workers, fails their open runs as orphaned) instead of being SIGKILLed later
+KillMode=control-group
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

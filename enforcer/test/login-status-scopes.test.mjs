@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { scopeLines, WORK_SCOPES } from '../bin/login.mjs';
+import { scopeLines, WORK_SCOPES, PLAN_SCOPES, FAMILIES } from '../bin/login.mjs';
 
 const LOGIN = new URL('../bin/login.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 
@@ -44,7 +44,9 @@ test('status lists granted scopes and the families they cover', () => {
 
 test('status prints the fix command for a missing family', () => {
   const text = scopeLines(WORK_SCOPES.filter((x) => !x.startsWith('enforcer:agents')).join(' ')).join('\n');
-  assert.match(text, /no   agent management: .*Fix: enforcer login --for agents/);
+  // work already carries the agent scopes; the narrower agents preset would drop the graph scopes.
+  assert.match(text, /no   agent management: .*Fix: enforcer login --for work/);
+  assert.doesNotMatch(text, /--for agents/);
   assert.match(text, /no   telemetry keys .*Fix: enforcer login --for work/);
   assert.match(text, /no   graph import and templates: .*Fix: enforcer login --for plan/);
 });
@@ -61,4 +63,13 @@ test('status handles a signed-out machine', () => {
   const text = runStatus(null);
   assert.match(text, /Not signed in to Enforcer/);
   assert.doesNotMatch(text, /Granted scopes/);
+});
+
+test('every family fix preset grants every scope that family needs', () => {
+  const presets = { 'enforcer login --for work': WORK_SCOPES, 'enforcer login --for plan': PLAN_SCOPES };
+  for (const f of FAMILIES) {
+    const granted = presets[f.fix];
+    assert.ok(granted, `${f.name}: unexpected fix ${f.fix}`);
+    for (const need of f.needs) assert.ok(granted.includes(need), `${f.name}: ${f.fix} lacks ${need}`);
+  }
 });
