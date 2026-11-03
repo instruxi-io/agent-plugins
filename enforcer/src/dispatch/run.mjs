@@ -40,7 +40,7 @@ import {
 import { routeFor, nodeMaxTurns } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
-import { WarmPool, laneOf, collectHandoffs, handoffAsk, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
+import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
@@ -528,7 +528,8 @@ export class Dispatcher {
     const lane = laneOf(harness, model);
     const warmed = !failures.length && a.warm && canResume && repo && !this.coldNext.has(n.key) ? this.warm.take(repo, lane) : null;
     this.coldNext.delete(n.key);
-    const extra = { handoffs: await this.handoffsFor(n), ask: a.handoff === 'off' ? '' : handoffAsk(n) };
+    const handoffs = await this.handoffsFor(n);
+    const extra = { handoffs, ask: a.handoff === 'off' ? '' : handoffAskFor(n, handoffs) };
     if (failures.length) {
       prompt = remediationPrompt(this.g, n, path, branch, failures, extra);
       t2 += ` (remediation after ${failures.length} failed attempt(s))`;

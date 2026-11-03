@@ -130,3 +130,10 @@ export function handoffAsk(node) {
     'credentials. Skip it only if you learned nothing a next worker could use.'
   );
 }
+
+/** The ask for this launch: none once the repo already has a prompt's worth of notes. A note costs the worker a turn
+ *  (on the cassoulet calibration, +1.1 turns and +12% cost per worker when every worker wrote one), so the notes stay
+ *  fresh without every worker writing one. */
+export function handoffAskFor(node, handoffs = []) {
+  return handoffs.length >= HANDOFF_LIMIT ? '' : handoffAsk(node);
+}

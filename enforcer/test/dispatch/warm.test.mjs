@@ -5,7 +5,17 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WarmPool, laneOf, isHandoff, collectHandoffs, handoffAsk, HANDOFF_SOURCE, HANDOFF_NOTE_CHARS } from '../../src/dispatch/warm.mjs';
+import {
+  WarmPool,
+  laneOf,
+  isHandoff,
+  collectHandoffs,
+  handoffAsk,
+  handoffAskFor,
+  HANDOFF_SOURCE,
+  HANDOFF_NOTE_CHARS,
+  HANDOFF_LIMIT,
+} from '../../src/dispatch/warm.mjs';
 import { warmKey } from '../../src/dispatch/select.mjs';
 import { workerPrompt, remediationPrompt } from '../../src/dispatch/summarize.mjs';
 import { launchCmd, harnessCanResume, HARNESSES } from '../../src/dispatch/launch.mjs';
@@ -271,4 +281,12 @@ test('a warm resume that does not start relaunches the node cold and spends no a
   assert.ok(cold.includes('--session-id') && !cold.includes('--resume'));
   assert.match(r.lines, /warm: resume of session SESSION-A for b did not start .*; starting it cold, no attempt spent/);
   assert.doesNotMatch(r.lines, /FAILED b/);
+});
+
+test('the ask stops once the repo has a prompt’s worth of notes', () => {
+  const n = { id: 'n1', key: 'k1', data: { repo: 'r' } };
+  const notes = (k) => Array.from({ length: k }, (_, i) => ({ key: `k${i}`, body: 'b' }));
+  assert.match(handoffAskFor(n, notes(HANDOFF_LIMIT - 1)), /^HANDOFF:/);
+  assert.equal(handoffAskFor(n, notes(HANDOFF_LIMIT)), '');
+  assert.equal(handoffAskFor({ id: 'x', data: {} }, []), '', 'no repo, no ask');
 });
