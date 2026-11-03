@@ -37,7 +37,7 @@ import {
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { routeFor, nodeMaxTurns } from './model.mjs';
+import { routeFor, nodeMaxTurns, escalate } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
@@ -475,7 +475,11 @@ export class Dispatcher {
       return 'held';
     }
     const r = pick.route;
-    const { model, harness } = r;
+    const { harness } = r;
+    // a retry after a failure moves up a rung (escalate): unless a person pinned data.model, or the route has an endpoint
+    const priorFails = (this.failures.get(n.key) || []).length;
+    const model = r.source.model === 'node' || r.endpoint ? r.model : escalate(r.model, priorFails, a.model);
+    const escalated = model !== r.model ? ` (escalated from ${r.model} after ${priorFails} failed attempt(s))` : '';
     if (r.source.harness === 'node') {
       const why = HARNESSES.includes(harness) ? harnessRefusal(harness, a.experimental) : `data.harness must be one of ${HARNESSES.join(', ')}`;
       if (why) {
@@ -483,7 +487,7 @@ export class Dispatcher {
         return;
       }
     }
-    const rnote = this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '';
+    const rnote = (this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '') + escalated;
     let path;
     let branch;
     let note;
