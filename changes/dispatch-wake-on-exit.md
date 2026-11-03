@@ -1,0 +1,1 @@
+The dispatcher wakes when a worker exits instead of waiting out `--interval` (30 s), so the next pass reaps it and launches what its report unblocked at once; on the cassoulet calibration graph each step's worker finished in about 14 s but was noticed about 16 s later, so a 10-step chain spent more time polling than working.

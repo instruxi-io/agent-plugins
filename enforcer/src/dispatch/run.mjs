@@ -239,8 +239,19 @@ export class Dispatcher {
     return existsSync(this.args.stopFile);
   }
 
+  /** A worker exited: end the current sleep now (or the next one, when none is running) so the next pass reaps it and
+   *  launches what its report unblocked, instead of waiting out --interval. Workers on a chain finish in seconds. */
+  wakeUp() {
+    this.woken = true;
+    this.wake?.();
+  }
+
   async sleep(ms) {
     if (this.terminating) return;
+    if (this.woken) {
+      this.woken = false;
+      return;
+    }
     await new Promise((res) => {
       const t = setTimeout(res, ms);
       this.wake = () => {
@@ -249,6 +260,7 @@ export class Dispatcher {
       };
     });
     this.wake = null;
+    this.woken = false;
   }
 
   requestTerminate(signame) {
@@ -603,6 +615,7 @@ export class Dispatcher {
       cleanup: mcpConfig ? [mcpConfig] : [],
       secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
+    proc.done.then(() => this.wakeUp());
     proc.done.then(async () => {
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
@@ -678,6 +691,7 @@ export class Dispatcher {
     const env = workerEnv(this.g, process.env, { runId: card.run_id, workerRules: a.workerRules, context: a.context });
     for (const k of GH_CONFIG_ENV) if (process.env[k]) env[k] = process.env[k];
     const proc = spawnWorker(cmd, { cwd, logPath, env });
+    proc.done.then(() => this.wakeUp());
     this.workers.set(n.key, {
       kind: 'merge',
       node: n,
