@@ -86,6 +86,7 @@ export function pluginDirs(extra = []) {
 
 /** The only inherited variables: the operator's keys (ENFORCER_API_KEY, GRAPH_API_KEY, cloud keys, gh tokens) never pass. */
 export const ENV_ALLOW = [
+  'ENABLE_CLAUDEAI_MCP_SERVERS', // always set to false for a worker (workerEnv); listed so the allowlist test holds
   'PATH',
   'HOME',
   'LANG',
@@ -195,6 +196,10 @@ export function workerEnv(
     JEV_HOOKS_HEADLESS: '1',
     CLAUDE_PLUGIN_ROOT: root,
     ENFORCER_PLUGIN_ROOT: root,
+    // A headless worker never needs the operator's claude.ai connectors (Gmail, Slack, Drive, Calendar...). With the
+    // allowlisted environment Claude Code attached all of them to every worker (12 servers on the Spark, 5 signed in);
+    // --allowedTools kept them uncallable, but a worker should not hold the operator's mailbox at all.
+    ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
   });
   // Grok imports Claude Code's enabled plugins, and expands their hooks' ${CLAUDE_PLUGIN_ROOT} from the environment: with ours set, jev-hooks'
   // UserPromptSubmit gate ran enforcer's path, failed, and blocked the first prompt (every grok worker ended `cancelled` at 0 turns).
