@@ -10,9 +10,11 @@
 //        Gemini    ~/.gemini/.env managed block (+ settings.json) (gemini disable, record: false)
 //        OpenClaw  ~/.openclaw/openclaw.json diagnostics.otel     (openclaw disable, ours only)
 //        Hermes    nothing: it asks `enforcer ingest-key` for the key each time and keeps none on disk
+//        Claude Code  no key on disk (its otelHeadersHelper reads the sign-in), but its export settings are
+//                  removed when they are ours, so a signed-out machine does not export into 401s
 //   3. say which files still hold a key, if any
 //
-// None of this records an opt-out: Codex's codexTelemetry, Gemini's gemini-telemetry.json and OpenClaw's
+// None of this records an opt-out: Claude Code's telemetryOn, Codex's codexTelemetry, Gemini's gemini-telemetry.json and OpenClaw's
 // plugins.entries.enforcer.config.telemetry are left as they are, so the next sign-in turns telemetry back on.
 // Every step fails open; sign-out never depends on it.
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, chmodSync, renameSync } from 'node:fs';
@@ -37,6 +39,19 @@ export async function removeCodexKey(env = process.env) {
     return codex.disable({ env }).changed ? `Codex: removed the telemetry key from ${p}.` : null;
   } catch (e) {
     return `Codex: could not edit ${p} (${/** @type {any} */ (e)?.message || e}); remove the Enforcer [otel] exporter from it by hand.`;
+  }
+}
+
+/** Claude Code: remove the export settings when they are ours (its own disable), without recording an opt-out. */
+export async function removeClaudeExport() {
+  const claude = await import('../lib/governor/adapters/claude-code/telemetry.mjs');
+  const s = claude.status();
+  if (s.error || !s.ours) return null;
+  try {
+    const r = claude.disable();
+    return `Claude Code: removed the telemetry export settings from ${r.settings}; the next sign-in writes them again.`;
+  } catch (e) {
+    return `Claude Code: could not edit its settings (${/** @type {any} */ (e)?.message || e}); run enforcer governor telemetry off.`;
   }
 }
 
@@ -139,7 +154,7 @@ export async function forgetTelemetry({ env = process.env, fetchImpl = globalThi
   } catch (e) {
     lines.push(`Telemetry keys: could not clear the cache (${/** @type {any} */ (e)?.message || e}).`);
   }
-  for (const step of [removeCodexKey, removeGeminiKey, removeOpenclawKey]) {
+  for (const step of [removeCodexKey, removeGeminiKey, removeOpenclawKey, removeClaudeExport]) {
     try {
       const l = await step(env);
       if (l) lines.push(l);
