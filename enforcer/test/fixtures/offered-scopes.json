@@ -40,5 +40,8 @@
   "enforcer:agents.write",
   "enforcer:agents-credentials.write",
   "enforcer:agents-credentials.destructive",
-  "enforcer:workspace.write"
+  "enforcer:workspace.write",
+  "enforcer:graph-sharing.write",
+  "enforcer:graph-work.write",
+  "enforcer:graph-skills.write"
 ]
