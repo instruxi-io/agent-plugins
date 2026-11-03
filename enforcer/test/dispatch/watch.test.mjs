@@ -265,3 +265,23 @@ test('status lists no file in the dispatch dir as a running dispatcher (pid 0 is
   assert.doesNotMatch(r.stdout, /running:|watch: running/);
   assert.match(r.stdout, /no dispatcher is running/);
 });
+
+test('a dispatcher that finished its graph is not backed off, however quickly it finished', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const h = harness([[row('fast'), row('crash')]]);
+  await h.next(); // starts both
+  for (const [g, last] of [
+    ['fast', '17:58:10 nothing runnable or running; exiting (peak 3 concurrent)'],
+    ['crash', '17:58:10 graph-dispatch: HTTP 500 from the API'],
+  ]) {
+    mkdirSync(join(h.cfgHome, 'dispatch', g), { recursive: true });
+    writeFileSync(join(h.cfgHome, 'dispatch', g, 'dispatcher.log'), `17:55:00 launch x\n${last}\n`);
+  }
+  h.aliveSet.clear();
+  h.advance(30); // both exited 30 s after start: a short life
+  await h.next();
+  const log = h.out.join('');
+  assert.match(log, /dispatcher for fast exited after 30s \(graph went idle or finished\)/);
+  assert.match(log, /dispatcher for crash exited after 30s; not restarting it for 60s/);
+  assert.equal(h.started.filter(([g]) => g === 'fast').length, 2, 'fast is restarted at once when the lobby still offers it');
+});

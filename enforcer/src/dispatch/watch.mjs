@@ -177,6 +177,22 @@ export class Watcher {
     this.d.out(`${new Date(this.d.now() * 1000).toISOString().slice(11, 19)} watch: ${m}\n`);
   }
 
+  /** True when the graph's dispatcher log ends with the clean idle exit (`nothing runnable or running; exiting (peak`),
+   *  i.e. it ran out of work, not into an error. Not the `exiting 6: failed or denied nodes remain` variant: those
+   *  nodes are still advertised, so restarting at once would only churn. */
+  finished(g) {
+    if (typeof this.d.finished === 'function') return Boolean(this.d.finished(g));
+    if (!this.d.cfgHome) return false;
+    try {
+      const lines = readFileSync(join(this.d.cfgHome, 'dispatch', g, 'dispatcher.log'), 'utf8')
+        .trimEnd()
+        .split('\n');
+      return /nothing runnable or running; exiting \(peak/.test(lines[lines.length - 1] || '');
+    } catch {
+      return false;
+    }
+  }
+
   /** Forget dispatchers that exited; a short life backs the graph off. Returns the set of graphs with a live dispatcher. */
   reapStarted() {
     const running = new Set();
@@ -186,7 +202,9 @@ export class Watcher {
         continue;
       }
       const lived = this.d.now() - s.at;
-      const len = nextBackoff(this.backoffLen.get(g) || 0, lived);
+      // a dispatcher that finished the graph is not one that died young: with workers reaped on exit a whole graph
+      // can now finish inside SHORT_LIFE (a 20-step plan in 155-194 s), and that was backed off as a failure
+      const len = this.finished(g) ? 0 : nextBackoff(this.backoffLen.get(g) || 0, lived);
       this.started.delete(g);
       if (len) {
         this.backoffLen.set(g, len);
