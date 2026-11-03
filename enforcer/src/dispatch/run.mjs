@@ -37,10 +37,10 @@ import {
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { routeFor, nodeMaxTurns } from './model.mjs';
+import { routeFor, nodeMaxTurns, escalate } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
-import { WarmPool, laneOf, collectHandoffs, handoffAsk, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
+import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
@@ -239,8 +239,19 @@ export class Dispatcher {
     return existsSync(this.args.stopFile);
   }
 
+  /** A worker exited: end the current sleep now (or the next one, when none is running) so the next pass reaps it and
+   *  launches what its report unblocked, instead of waiting out --interval. Workers on a chain finish in seconds. */
+  wakeUp() {
+    this.woken = true;
+    this.wake?.();
+  }
+
   async sleep(ms) {
     if (this.terminating) return;
+    if (this.woken) {
+      this.woken = false;
+      return;
+    }
     await new Promise((res) => {
       const t = setTimeout(res, ms);
       this.wake = () => {
@@ -249,6 +260,7 @@ export class Dispatcher {
       };
     });
     this.wake = null;
+    this.woken = false;
   }
 
   requestTerminate(signame) {
@@ -463,7 +475,11 @@ export class Dispatcher {
       return 'held';
     }
     const r = pick.route;
-    const { model, harness } = r;
+    const { harness } = r;
+    // a retry after a failure moves up a rung (escalate): unless a person pinned data.model, or the route has an endpoint
+    const priorFails = (this.failures.get(n.key) || []).length;
+    const model = r.source.model === 'node' || r.endpoint ? r.model : escalate(r.model, priorFails, a.model);
+    const escalated = model !== r.model ? ` (escalated from ${r.model} after ${priorFails} failed attempt(s))` : '';
     if (r.source.harness === 'node') {
       const why = HARNESSES.includes(harness) ? harnessRefusal(harness, a.experimental) : `data.harness must be one of ${HARNESSES.join(', ')}`;
       if (why) {
@@ -471,7 +487,7 @@ export class Dispatcher {
         return;
       }
     }
-    const rnote = this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '';
+    const rnote = (this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '') + escalated;
     let path;
     let branch;
     let note;
@@ -516,7 +532,8 @@ export class Dispatcher {
     const lane = laneOf(harness, model);
     const warmed = !failures.length && a.warm && canResume && repo && !this.coldNext.has(n.key) ? this.warm.take(repo, lane) : null;
     this.coldNext.delete(n.key);
-    const extra = { handoffs: await this.handoffsFor(n), ask: a.handoff === 'off' ? '' : handoffAsk(n) };
+    const handoffs = await this.handoffsFor(n);
+    const extra = { handoffs, ask: a.handoff === 'off' ? '' : handoffAskFor(n, handoffs) };
     if (failures.length) {
       prompt = remediationPrompt(this.g, n, path, branch, failures, extra);
       t2 += ` (remediation after ${failures.length} failed attempt(s))`;
@@ -603,6 +620,7 @@ export class Dispatcher {
       cleanup: mcpConfig ? [mcpConfig] : [],
       secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
+    proc.done.then(() => this.wakeUp());
     proc.done.then(async () => {
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
@@ -678,6 +696,7 @@ export class Dispatcher {
     const env = workerEnv(this.g, process.env, { runId: card.run_id, workerRules: a.workerRules, context: a.context });
     for (const k of GH_CONFIG_ENV) if (process.env[k]) env[k] = process.env[k];
     const proc = spawnWorker(cmd, { cwd, logPath, env });
+    proc.done.then(() => this.wakeUp());
     this.workers.set(n.key, {
       kind: 'merge',
       node: n,

@@ -24,6 +24,11 @@ test('worker env contains no key not on the allowlist', () => {
   assert.equal(e.PATH, [join(PLUGIN_DIR, 'bin'), '/bin'].join(delimiter), "the operator's PATH passes, behind this plugin's own bin");
 });
 
+test("a worker never gets the operator's claude.ai connectors, whatever the operator's environment says", () => {
+  assert.equal(workerEnv('g', dirty).ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
+  assert.equal(workerEnv('g', { ...dirty, ENABLE_CLAUDEAI_MCP_SERVERS: 'true' }).ENABLE_CLAUDEAI_MCP_SERVERS, 'false');
+});
+
 test("ENFORCER_API_KEY is never the operator's: absent without a worker token, the worker token with one", () => {
   assert.equal(workerEnv('g', dirty).ENFORCER_API_KEY, undefined);
   // the MCP credential helper reads ENFORCER_API_KEY, so the worker token must be there too or claims fall back to the operator's sign-in
