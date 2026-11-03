@@ -12,12 +12,13 @@ import { strandedReport, strandedLines, workerLogMtime } from './dispatch/strand
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // no model: without --model each node runs on its tier's model (TIER_MODEL) or its route's, never a forced sonnet
-export const DEFAULTS = { workers: 3, salvage: 'on', triage: 'on', warm: 'off' };
+export const DEFAULTS = { workers: 3, warm: 'off', handoff: 'on' };
 export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] [--repo-root dir] [--worker-rules on|off] [--context on|off] [--allow-lint-warnings]   preflight, then start the dispatcher in the background
        enforcer dispatch status [<graph>]                                              what it is doing and what it needs from you
        enforcer dispatch prune [--yes] [--repo-root dir]                               list (or with --yes remove) worktrees whose PR merged and no live worker holds
        enforcer dispatch stop <graph>                                                  finish running workers, start no new ones, then exit
-defaults: ${DEFAULTS.workers} workers, no model cap (each tier's model, or its route's), routes from --routes / ENFORCER_ROUTES / the graph / routes.json, salvage ${DEFAULTS.salvage}, triage ${DEFAULTS.triage}, warm workers ${DEFAULTS.warm}
+       enforcer dispatch watch [--for me|mine] [--agent name] [--max-graphs N]         daemon: keep a dispatcher on every graph the work lobby offers you (watch --help)
+defaults: ${DEFAULTS.workers} workers, no model cap (each tier's model, or its route's), routes from --routes / ENFORCER_ROUTES / the graph / routes.json, handoff notes ${DEFAULTS.handoff} (--handoff off), warm sessions ${DEFAULTS.warm} (--warm; claude only)
 state: ~/.config/enforcer/dispatch/<graph> (dispatcher.log, pids.json, STOP)
        enforcer dispatch --dry-run <graph>                                             print the planned launches; launch nothing
 other dispatcher flags pass through; see docs/graph/DISPATCHER.md
@@ -25,7 +26,20 @@ other dispatcher flags pass through; see docs/graph/DISPATCHER.md
 
 // Flags that take a value, so the value is never mistaken for the graph id.
 // --agent is not handled here but passes through to the runner.
-const VALUE_FLAGS = ['--workers', '--model', '--repo-root', '--worker-rules', '--context', '--agent', '--routes', '--route-probe-ttl'];
+const VALUE_FLAGS = [
+  '--workers',
+  '--model',
+  '--repo-root',
+  '--worker-rules',
+  '--context',
+  '--agent',
+  '--routes',
+  '--route-probe-ttl',
+  '--for',
+  '--handoff',
+  '--warm-max-nodes',
+  '--warm-max-age',
+];
 
 const flagValue = (argv, n) => {
   const i = argv.indexOf(n);
@@ -63,7 +77,10 @@ const readJson = (p) => {
     return null;
   }
 };
+// only a real pid: process.kill(0, 0) signals our own process group and "succeeds", which listed every file in the
+// dispatch dir that has no pids.json (watch.json, routes.json) as a running dispatcher
 const alive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -71,6 +88,35 @@ const alive = (pid) => {
     return false;
   }
 };
+/** The pid of a live dispatcher for `graph` (pids.json once it runs, dispatcher.pid right after a start), or null. */
+export function dispatcherAlive(graph, env = process.env) {
+  const dir = stateDir(graph, env);
+  const fromPids = readJson(join(dir, 'pids.json'))?.dispatcher;
+  if (Number.isInteger(fromPids) && fromPids > 0 && alive(fromPids)) return fromPids;
+  let pid = null;
+  try {
+    pid = Number(readFileSync(join(dir, 'dispatcher.pid'), 'utf8').trim());
+  } catch {
+    return null;
+  }
+  return Number.isInteger(pid) && pid > 0 && alive(pid) ? pid : null;
+}
+
+const configHome = (env = process.env) => env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
+
+/** The status line for a running `dispatch watch`, or null when none is running. */
+export async function watchLine(env = process.env) {
+  const { readWatchState } = await import('./dispatch/watch.mjs');
+  const w = readWatchState(configHome(env));
+  if (!w?.pid || !alive(w.pid)) return null;
+  const parts = [`watch: running (pid ${w.pid})${w.for ? ` for ${w.for}` : ''}${w.agent ? ` as agent ${w.agent}` : ''}`];
+  parts.push(`last lobby read ${w.last_pass || 'never'}${w.last_error ? ` (last error: ${w.last_error})` : ''}`);
+  parts.push(`dispatching ${w.running?.length ? w.running.join(', ') : 'nothing'}`);
+  const off = Object.keys(w.backoff || {});
+  if (off.length) parts.push(`backing off ${off.join(', ')}`);
+  return parts.join('; ');
+}
+
 const tailLine = (p) => {
   try {
     return readFileSync(p, 'utf8').split('\n').filter(Boolean).at(-1) || '';
@@ -332,6 +378,8 @@ export async function main(argv, env = process.env) {
         try {
           names = readdirSync(dirname(stateDir('x', env))).filter((d) => alive(readJson(join(dirname(stateDir('x', env)), d, 'pids.json'))?.dispatcher || 0));
         } catch {}
+        const wl = await watchLine(env);
+        if (wl) process.stdout.write(`${wl}\n`);
         process.stdout.write(
           names.length
             ? names.map((d) => `running: ${d}   (enforcer dispatch status ${d})\n`).join('')
@@ -364,6 +412,15 @@ export async function main(argv, env = process.env) {
       return 0;
     }
     if (sub === 'run') return await (await import('./dispatch/run.mjs')).main(rest, env); // the foreground dispatcher `start` detaches
+    if (sub === 'watch') {
+      const { main: watchMain } = await import('./dispatch/watch.mjs');
+      return await watchMain(rest, env, {
+        cfgHome: configHome(env),
+        // the same front door a person uses: preflight, route check, then a detached `dispatch run`
+        start: (graph, pass, wenv) => start([graph, ...pass], wenv),
+        alive: (graph) => dispatcherAlive(graph, env),
+      });
+    }
     return await start(argv, env);
   } catch (e) {
     process.stderr.write(`enforcer dispatch: ${e.message}\n`);

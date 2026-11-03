@@ -394,6 +394,9 @@ export const DEFAULTS = {
   // Codex's own OTel export to governance (adapters/codex/telemetry.mjs), written
   // at Codex session start and sign-in. Off removes it and keeps it removed.
   codexTelemetry: true,
+  // Claude Code's own OTel export to governance (adapters/claude-code/telemetry.mjs ensure), written at sign-in
+  // and Claude Code session start into its user settings. Off removes it and keeps it removed.
+  telemetryOn: true,
   ingestUrl: '', // empty: centralUrl
   adviseModel: true, // say when the model looks mismatched to the task
   // Days a finished session's scratch files (cost-*/cursor-*) are kept before

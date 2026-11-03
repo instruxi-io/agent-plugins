@@ -31,6 +31,9 @@ const API = '/api/v1/enforcer';
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const out = (s) => process.stdout.write(s + '\n');
 
+/** The plan-sharing scopes: share with people and agents, recruiting, skills. */
+export const SHARE_SCOPES = ['enforcer:graph-sharing.write', 'enforcer:graph-work.write', 'enforcer:graph-skills.write'];
+
 /** Login scope presets: a work-loop session needs 6-7 scopes, not every one the server offers. */
 export const WORK_SCOPES = [
   'enforcer:read',
@@ -47,9 +50,14 @@ export const WORK_SCOPES = [
   // consent popping up later in a headless harness. Not the .destructive pair: rotation issues a fresh key.
   'enforcer:agents.write',
   'enforcer:agents-credentials.write',
+  // Share a plan with a person or an agent, advertise it in the work lobby (recruiting), and attach skills to
+  // it: enforcer-graph tags sharing, work and skills. Each is a ceiling only (sharing and recruiting still need
+  // graph admin, skills editor). Removing a share, closing recruiting and detaching a skill are DELETEs, which
+  // are destructive and not offered to a sign-in.
+  ...SHARE_SCOPES,
 ];
 export const PLAN_SCOPES = [...WORK_SCOPES, 'enforcer:graph-graphs.write', 'enforcer:graph-graph-templates.write', 'enforcer:graph-epochs.write'];
-export const AGENTS_SCOPES = ['enforcer:read', 'policy:self', 'enforcer:agents.write', 'enforcer:agents-credentials.write'];
+export const AGENTS_SCOPES = ['enforcer:read', 'policy:self', 'enforcer:agents.write', 'enforcer:agents-credentials.write', ...SHARE_SCOPES];
 export const PRESETS = { work: WORK_SCOPES, plan: PLAN_SCOPES, agents: AGENTS_SCOPES, admin: null /* everything offered */ };
 export const DEFAULT_PRESET = 'work';
 
@@ -66,8 +74,9 @@ export const FAMILIES = [
     fix: 'enforcer login --for plan',
   },
   { name: 'files', needs: ['enforcer:files-files.write'], fix: 'enforcer login --for work' },
-  { name: 'agent management', needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'], fix: 'enforcer login --for agents' },
+  { name: 'agent management', needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'], fix: 'enforcer login --for work' },
   { name: 'workspace switching', needs: ['enforcer:workspace.write'], fix: 'enforcer login --for work' },
+  { name: 'plan sharing, recruiting and skills', needs: SHARE_SCOPES, fix: 'enforcer login --for work' },
   {
     name: 'telemetry keys (Codex, Gemini CLI, Hermes, OpenClaw)',
     needs: ['enforcer:agents.write', 'enforcer:agents-credentials.write'],
@@ -195,7 +204,43 @@ export async function clientKnown(meta, clientId, fetchImpl = defaultFetch) {
 /** The OAuth client this machine registered before, from either record in credentials.json. */
 export function savedClient(doc) {
   const c = doc?.enforcer?.oauth_client || doc?.enforcer?.oauth;
-  return c?.client_id ? { client_id: c.client_id, issuer: c.issuer || null } : null;
+  if (!c?.client_id) return null;
+  const out = { client_id: c.client_id, issuer: c.issuer || null };
+  if (typeof c.ceiling === 'string') out.ceiling = c.ceiling;
+  return out;
+}
+
+/** `--new-app` anywhere in argv, removed: register a fresh OAuth client instead of reusing this machine's. */
+export function extractNewApp(argv) {
+  const rest = argv.filter((a) => a !== '--new-app');
+  return { argv: rest, newApp: rest.length !== argv.length };
+}
+
+/**
+ * Whether a registered client can be granted `scope`. A self-registered client's ceiling is fixed when it
+ * registers (the server's offered list AT THAT TIME), so a client registered before a scope was offered is
+ * narrowed out of it on every later sign-in, silently. Unknown (a record from before the ceiling was saved)
+ * counts as able: the sign-in then reports what it did not get.
+ */
+export function ceilingCovers(client, scope) {
+  if (typeof client?.ceiling !== 'string') return true;
+  const held = new Set(client.ceiling.split(/\s+/).filter(Boolean));
+  return String(scope || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((x) => x === 'offline_access' || held.has(x));
+}
+
+/** Requested scopes the token does not carry. */
+export function notGranted(requested, granted) {
+  const g = new Set(
+    String(granted || '')
+      .split(/\s+/)
+      .filter(Boolean),
+  );
+  return String(requested || '')
+    .split(/\s+/)
+    .filter((x) => x && x !== 'offline_access' && !g.has(x));
 }
 
 export function pkce() {
@@ -226,6 +271,7 @@ export async function browserSignIn({
   preset,
   tenantCode,
   client: previousClient,
+  newApp = false,
   fetchImpl = defaultFetch,
   onUrl,
   timeoutMs = 5 * 60_000,
@@ -282,7 +328,10 @@ export async function browserSignIn({
     // loopback redirect may differ from the registered one (RFC 8252 §7.3),
     // which is what lets one registration serve every later sign-in.
     let client = null;
+    // A client whose recorded ceiling lacks a requested scope can never be granted it, so it is not reused.
     if (
+      !newApp &&
+      ceilingCovers(previousClient, scope) &&
       previousClient?.client_id &&
       (!previousClient.issuer || previousClient.issuer === meta.issuer) &&
       (await clientKnown(meta, previousClient.client_id, fetchImpl))
@@ -303,6 +352,9 @@ export async function browserSignIn({
       });
       client = await reg.json();
       if (!reg.ok || !client.client_id) throw new Error(`client registration failed (HTTP ${reg.status})`);
+      // The ceiling the server gave this client (RFC 7591 echoes `scope`), saved so a later sign-in can tell
+      // when the server has started offering something this client can never hold.
+      client = { client_id: client.client_id, ceiling: typeof client.scope === 'string' ? client.scope : undefined };
     }
 
     const url = new URL(meta.authorization_endpoint);
@@ -353,6 +405,8 @@ export async function browserSignIn({
       resources: wanted,
       client_id: client.client_id,
       client_reused: Boolean(client.reused),
+      client_ceiling: client.ceiling,
+      not_granted: notGranted(scope, tok.scope || scope),
       token_endpoint: meta.token_endpoint,
       issuer: meta.issuer,
     };
@@ -404,12 +458,40 @@ export function signInLifeLine(o, nowMs) {
 
 const who = (me) => me.person?.primary_email || me.person?.name || me.account_id || 'unknown account';
 
-async function whoAmI(base) {
-  const headers = await authHeaders();
+/** Who Enforcer says the credential is (GET auth/me): the acceptance check behind `status`, and the probe after a sign-in. */
+export async function whoAmI(base, { headers, fetchImpl = defaultFetch } = {}) {
+  headers = headers || (await authHeaders());
   if (!headers['X-API-Key'] && !headers.Authorization) return null;
-  const r = await defaultFetch(`${base}${API}/auth/me`, { headers, signal: AbortSignal.timeout(10_000) });
-  if (!r.ok) return { error: `HTTP ${r.status}` };
+  const r = await fetchImpl(`${base}${API}/auth/me`, { headers, signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) return { error: `HTTP ${r.status}`, status: r.status };
   return (await r.json())?.data || null;
+}
+
+/**
+ * Read the probe of a fresh sign-in's token. HTTP 431 means the token itself is too large for the server's
+ * request headers (seen with --for admin: 65 scopes, a 3,545-character Authorization header), so every later
+ * call would fail: the sign-in is refused. Anything else that is not an answer (offline, 5xx) is only a warning,
+ * so an offline sign-in still saves. Never prints the token, only its header's length.
+ */
+export function signInProbeResult(me, { preset, headerLength } = {}) {
+  if (me?.status === 431) {
+    const size = headerLength ? ` (a ${headerLength}-character Authorization header)` : '';
+    return {
+      fail: true,
+      lines: [
+        `Sign-in failed: the ${preset || 'requested'} preset's token${size} is too large for this Enforcer (HTTP 431 Request Header Fields Too Large), so every call with it would be refused.`,
+        'Nothing was saved; the previous sign-in on this machine, if any, is unchanged.',
+        'Sign in with fewer scopes: /enforcer:login --for plan (or --for work).',
+      ],
+    };
+  }
+  if (!me || me.error) {
+    return {
+      fail: false,
+      lines: [`Warning: could not confirm the new sign-in with Enforcer (${me?.error || 'unreachable'}). Check it with /enforcer:login status.`],
+    };
+  }
+  return { fail: false, lines: [] };
 }
 
 // A workspace code, as a tenant hands it out (e.g. ACME-1234-ABCD). Anything
@@ -451,6 +533,18 @@ export async function revokePreviousToken(previous, base, fetchImpl = defaultFet
   }
 }
 
+/** What to say when a sign-in got less than it asked for. Never silent: a narrowed grant looks like success. */
+export function notGrantedLines(missing, reused) {
+  if (!missing?.length) return [];
+  const lines = [`Not granted: ${missing.join(' ')}`];
+  lines.push(
+    reused
+      ? 'This machine registered its app with Enforcer before the server offered these, and a registered app keeps the permissions it registered with. Run: enforcer login --new-app (each other workspace then needs one sign-in before /enforcer:workspace switch reaches it).'
+      : 'You unticked them on the consent screen, or the server does not offer them to this app.',
+  );
+  return lines;
+}
+
 /** The lines to print after a sign-in: nothing for a first sign-in, else the revocation result and the reconnect line. */
 export async function replacementNotice(previous, next, base, fetchImpl = defaultFetch) {
   if (!credentialReplaced(previous, next)) return [];
@@ -478,9 +572,34 @@ export async function codexTelemetryAfterSignIn(deps = {}) {
   }
 }
 
+/**
+ * After a sign-in, turn on Claude Code's own telemetry export (on by default; `enforcer governor telemetry off`
+ * keeps it off; another exporter already in its settings is left alone). One line when it was written, none otherwise.
+ * @param {{ ensure?: Function }} [deps]
+ */
+export async function claudeCodeTelemetryAfterSignIn(deps = {}) {
+  try {
+    const claude = await import('../lib/governor/adapters/claude-code/telemetry.mjs');
+    const { loadConfig } = await import('../lib/governor/core/store.mjs');
+    const { DEFAULTS } = await import('../lib/governor/core/policy.mjs');
+    const r = (deps.ensure || claude.ensure)({ ...DEFAULTS, ...loadConfig() });
+    if (r.skipped) {
+      if (r.skipped.startsWith('another exporter'))
+        return [`Claude Code telemetry: left off, ${r.skipped.replace(/^another exporter/, 'another exporter is configured')}.`];
+      return [];
+    }
+    return [
+      `Claude Code telemetry: on, to ${r.endpoint} (metrics and events, no prompt text), from your next Claude Code session. Turn it off with: enforcer governor telemetry off`,
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function main(rawArgv) {
   const { argv: a1, scope } = extractScope(rawArgv);
-  const { argv, preset: forPreset } = extractPreset(a1);
+  const { argv: a2, preset: forPreset } = extractPreset(a1);
+  const { argv, newApp } = extractNewApp(a2);
   const [cmd, arg] = parseLoginArgs(argv);
   // The environment base URL wins (switch deployments without editing a file), then the
   // origin the saved sign-in was made against, then the public one.
@@ -601,6 +720,7 @@ async function main(rawArgv) {
         : 'Saved, but Enforcer did not accept the key just now. Check it with /enforcer:login status.',
     );
     if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
+    if (me && !me.error) for (const line of await claudeCodeTelemetryAfterSignIn()) out(line);
     return;
   }
 
@@ -622,12 +742,22 @@ async function main(rawArgv) {
       preset,
       tenantCode: code,
       client: savedClient(readCredentials()),
+      newApp,
       onUrl: (url) => {
         out('Opening your browser to sign in to Enforcer. If it does not open, visit:');
         out(url);
         openBrowser(url);
       },
     });
+    // Probe the new token before saving it: a token too large for the server's headers (HTTP 431) must not replace a working one.
+    const probeHeaders = { Authorization: `Bearer ${oauth.access_token}` };
+    const me = await whoAmI(base, { headers: probeHeaders }).catch(() => null);
+    const probe = signInProbeResult(me, { preset: oauth.preset, headerLength: `Bearer ${oauth.access_token}`.length });
+    if (probe.fail) {
+      for (const line of probe.lines) out(line);
+      process.exitCode = 1;
+      return;
+    }
     // Read before the save: the notice revokes the sign-in this one replaces.
     const previous = readCredentials()?.enforcer?.oauth || null;
     // The sign-in REPLACES any saved API key. authHeaders prefers a key when
@@ -636,20 +766,26 @@ async function main(rawArgv) {
     const doc = readCredentials() || { enforcer: {} };
     const { api_key: _key, saved_at: _at, ...kept } = doc.enforcer;
     // The registered client outlives the sign-in: logout drops `oauth`, not this.
-    const { client_reused, ...signIn } = oauth;
+    const { client_reused, client_ceiling, not_granted, ...signIn } = oauth;
     const oauth_client =
       client_reused && kept.oauth_client?.client_id === oauth.client_id
         ? kept.oauth_client
-        : { client_id: oauth.client_id, issuer: oauth.issuer, registered_at: new Date().toISOString() };
+        : {
+            client_id: oauth.client_id,
+            issuer: oauth.issuer,
+            registered_at: new Date().toISOString(),
+            ...(client_ceiling ? { ceiling: client_ceiling } : {}),
+          };
     saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth: signIn, oauth_client } });
     const notice = await replacementNotice(previous, oauth, base);
-    const me = await whoAmI(base).catch(() => null);
     out(me && !me.error ? `Signed in as ${who(me)}.` : 'Signed in.');
+    for (const line of probe.lines) out(line);
     const granted = String(oauth.scope || '')
       .split(/\s+/)
       .filter(Boolean);
     out(`Preset: ${oauth.preset} (${granted.length} scopes)`);
     out(`Granted: ${oauth.scope || '(the server did not say)'}`);
+    for (const line of notGrantedLines(not_granted, client_reused)) out(line);
     out('Every Enforcer plugin on this machine shares this sign-in.');
     out(
       client_reused
@@ -662,11 +798,12 @@ async function main(rawArgv) {
     // Harness telemetry is on by default once signed in (each harness skips itself when absent or turned off).
     for (const line of await geminiOnLogin()) out(line);
     if (me && !me.error) for (const line of await codexTelemetryAfterSignIn()) out(line);
+    if (me && !me.error) for (const line of await claudeCodeTelemetryAfterSignIn()) out(line);
     return;
   }
 
   out(
-    'Usage: /enforcer:login [<WORKSPACE-CODE>] [--for work|plan|agents|admin] [--scope "<scopes>"] | api-key <file>|- | scopes | status | logout  — no argument opens a browser',
+    'Usage: /enforcer:login [<WORKSPACE-CODE>] [--for work|plan|agents|admin] [--scope "<scopes>"] [--new-app] | api-key <file>|- | scopes | status | logout  — no argument opens a browser',
   );
   process.exitCode = 2;
 }

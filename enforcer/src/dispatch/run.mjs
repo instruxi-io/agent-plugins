@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { API, APIError } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
-import { worktreeFor, worktreeSetup, BaseMissing, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
+import { worktreeFor, worktreeSetup, BaseMissing, StaleWorktree, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
   launchCmd,
   workerEnv,
@@ -26,6 +26,7 @@ import {
   verifyWorker,
   killNonce,
   harnessRefusal,
+  harnessCanResume,
   HARNESSES,
   LAND_PR,
   DEFAULT_WORKER_RULES,
@@ -36,9 +37,10 @@ import {
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { routeFor, nodeMaxTurns } from './model.mjs';
+import { routeFor, nodeMaxTurns, escalate } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
+import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
@@ -54,6 +56,8 @@ import { writeLog, redactFile, redactLogsDir, pruneLogs, addSecret, DEFAULT_LOG_
 /** Per-worker spend cap passed as --max-budget-usd unless the operator overrides it. */
 export const DEFAULT_MAX_BUDGET_USD = HEADLESS_PROFILE.spend.defaultMaxBudgetUsd;
 export const DEFAULT_TYPES = 'task,bug,chore,merge,scout,milestone,ops'; // gate stays human
+/** --for: the server's frontier assignment filter (me: assigned to me, my groups or nobody; mine: to me or my groups). */
+export const FOR_VALUES = ['me', 'mine'];
 export const CI_UNAVAILABLE = 7;
 export const CI_STATUS_URL = 'https://www.githubstatus.com/api/v2/components.json';
 export const LAND_CODES = { 0: 'merged', 2: 'CI failed', 3: 'conflict with the base', 4: 'timed out', 5: 'usage or gh error', 7: 'CI unavailable' };
@@ -139,6 +143,7 @@ export function defaultArgs(o = {}) {
     attend: false,
     attendPoll: ATTEND_POLL_SECONDS,
     exitWhenIdle: false,
+    for: null, // --for me|mine: take only nodes assigned to the caller (me: or to nobody); null takes any node
     heartbeat: 120,
     landTimeout: 3000,
     stateDir: null,
@@ -157,6 +162,10 @@ export function defaultArgs(o = {}) {
     harness: 'claude',
     experimental: false,
     agentBin: null,
+    warm: false,
+    warmMaxNodes: DEFAULT_WARM_MAX_NODES,
+    warmMaxAge: DEFAULT_WARM_MAX_AGE,
+    handoff: 'on',
     grok: null,
     codex: null,
     leaseRenew: LEASE_TTL / 3,
@@ -213,6 +222,11 @@ export class Dispatcher {
     this.notFoundSince = 0; // epoch seconds of the first 404 in the current run of them; 0 = none
     this.verdictNoted = 0;
     this.sessions = new Map(); // node key -> claude session that ended with a clean report, for a --resume remediation
+    // sessions that ended in a clean report, for the next node in their repo and lane (--warm; warm.mjs)
+    this.warm = new WarmPool({ maxNodes: args.warmMaxNodes ?? DEFAULT_WARM_MAX_NODES, maxAge: args.warmMaxAge ?? DEFAULT_WARM_MAX_AGE });
+    this.handoffCache = new Map(); // finished node -> its handoff note (or null), read once
+    this.lastNodes = [];
+    this.coldNext = new Set(); // node keys whose warm resume did not start: their next launch is cold
     this.attendNoted = 0;
     this.terminating = null; // the signal name once SIGTERM/SIGINT arrived: an explicit state flag, not an exception
     this.wake = null;
@@ -228,8 +242,19 @@ export class Dispatcher {
     return existsSync(this.args.stopFile);
   }
 
+  /** A worker exited: end the current sleep now (or the next one, when none is running) so the next pass reaps it and
+   *  launches what its report unblocked, instead of waiting out --interval. Workers on a chain finish in seconds. */
+  wakeUp() {
+    this.woken = true;
+    this.wake?.();
+  }
+
   async sleep(ms) {
     if (this.terminating) return;
+    if (this.woken) {
+      this.woken = false;
+      return;
+    }
     await new Promise((res) => {
       const t = setTimeout(res, ms);
       this.wake = () => {
@@ -238,6 +263,7 @@ export class Dispatcher {
       };
     });
     this.wake = null;
+    this.woken = false;
   }
 
   requestTerminate(signame) {
@@ -248,7 +274,7 @@ export class Dispatcher {
 
   // ---- reading the plan
   async candidates(nodes) {
-    const front = await this.api.frontier(this.g);
+    const front = await this.api.frontier(this.g, this.args.for || null);
     this.lastFrontier = front; // attention() reuses this pass's frontier instead of fetching it again
     const ours = new Set(this.workers.keys());
     const out = [];
@@ -259,9 +285,12 @@ export class Dispatcher {
       out.push(n);
       seen.add(n.id);
     }
-    for (let n of nodes) {
-      if (!seen.has(n.id) && !ours.has(n.key) && lapsed(n)) out.push({ ...n, _lapsed: true });
-    }
+    // A lapsed node the frontier did not list is re-claimed too; with --for the frontier's own answer (which already lists
+    // reclaimable nodes) is the whole set, so a lapsed node assigned to someone else is never taken from the node list.
+    if (!this.args.for)
+      for (let n of nodes) {
+        if (!seen.has(n.id) && !ours.has(n.key) && lapsed(n)) out.push({ ...n, _lapsed: true });
+      }
     return out.filter((n) => {
       if (this.types && !this.types.has(n.type)) return false;
       if (n.key === LEASE_KEY || n.data?.dispatcher_lease) return false;
@@ -282,14 +311,16 @@ export class Dispatcher {
 
   async tick() {
     const nodes = await this.api.nodes(this.g);
+    this.lastNodes = nodes;
     this.graphKeys = new Set(nodes.map((n) => n.key).filter(Boolean));
     const cands = await this.candidates(nodes);
     const slots = this.args.workers - [...this.workers.values()].filter((w) => w.kind === 'agent').length;
     const held = this.heldElsewhere(nodes);
+    if (this.args.warm) for (const [e, why] of this.warm.prune()) this.say(`warm: retired session ${e.session} (after ${e.lastKey}): ${why}`);
     const agents = affinityOrder(
       cands.filter((n) => !mergeTarget(n)),
-      {},
-      (n) => routeFor(n, this.routes, this.args).model,
+      this.args.warm ? this.warm.counts() : {},
+      (n) => this.laneFor(n),
     );
     const merges = cands.filter((n) => mergeTarget(n));
     const a = select(agents, held, Math.max(slots, 0), this.workers);
@@ -399,6 +430,23 @@ export class Dispatcher {
     return routeFor(n, this.routes, this.args).harness;
   }
 
+  /** The warm pool's lane for a node: the harness and model its route picks (warm.mjs laneOf). */
+  laneFor(n) {
+    const r = routeFor(n, this.routes, this.args);
+    return laneOf(r.harness, r.model);
+  }
+
+  /** Notes earlier workers in this node's repo left (warm.mjs); none with --handoff off or when the read fails. */
+  async handoffsFor(n) {
+    if (this.args.handoff === 'off' || !repoOf(n)) return [];
+    try {
+      return await collectHandoffs(this.api, this.g, this.lastNodes || [], n, { cache: this.handoffCache });
+    } catch (e) {
+      this.say(`${n.key}: handoffs: could not read them (${e.message}); launching without`);
+      return [];
+    }
+  }
+
   /** The resolved inputs the worktree is built from. A frontier row has no claim card yet: its data.inputs holds bindings
    *  (`test-author.tests_branch`), so resolve the branch-like ones from the upstream runs' outputs here. */
   async launchInputs(n) {
@@ -433,7 +481,11 @@ export class Dispatcher {
       return 'held';
     }
     const r = pick.route;
-    const { model, harness } = r;
+    const { harness } = r;
+    // a retry after a failure moves up a rung (escalate): unless a person pinned data.model, or the route has an endpoint
+    const priorFails = (this.failures.get(n.key) || []).length;
+    const model = r.source.model === 'node' || r.endpoint ? r.model : escalate(r.model, priorFails, a.model);
+    const escalated = model !== r.model ? ` (escalated from ${r.model} after ${priorFails} failed attempt(s))` : '';
     if (r.source.harness === 'node') {
       const why = HARNESSES.includes(harness) ? harnessRefusal(harness, a.experimental) : `data.harness must be one of ${HARNESSES.join(', ')}`;
       if (why) {
@@ -441,7 +493,7 @@ export class Dispatcher {
         return;
       }
     }
-    const rnote = this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '';
+    const rnote = (this.routes ? ` ${routeNote(r, pick.fallbackFrom)}` : '') + escalated;
     let path;
     let branch;
     let note;
@@ -463,6 +515,12 @@ export class Dispatcher {
         this.say(`refuse ${n.key}: ${e.message}; fix the repo's remote, or set data.base / the registry`);
         return;
       }
+      if (e instanceof StaleWorktree) {
+        // said once per node: it is refused every pass until a person lands or cleans the checkout
+        if (this.lastSkip.get(n.key) !== 'stale-worktree') this.say(`REFUSE ${n.key}: ${e.message}`);
+        this.lastSkip.set(n.key, 'stale-worktree');
+        return;
+      }
       throw e;
     }
     const repo = repoOf(n);
@@ -478,21 +536,31 @@ export class Dispatcher {
     const turnsCap = nodeMaxTurns(n);
     let prompt;
     let t2 = tag;
-    if (failures.length) {
-      prompt = remediationPrompt(this.g, n, path, branch, failures);
-      t2 += ` (remediation after ${failures.length} failed attempt(s))`;
-    } else prompt = workerPrompt(this.g, n, path, branch);
+    const canResume = harnessCanResume(harness) && !a.dryRun;
     // a remediation launch whose previous session reported cleanly continues that session instead of starting cold
-    const prior = failures.length && harness === 'claude' && !a.dryRun ? this.sessions.get(n.key) : null;
-    const session = prior || randomUUID();
+    const prior = failures.length && canResume ? this.sessions.get(n.key) : null;
     if (prior) this.sessions.delete(n.key);
+    // --warm: a first launch continues the newest clean session in this repo and lane, if one is idle
+    const lane = laneOf(harness, model);
+    const warmed = !failures.length && a.warm && canResume && repo && !this.coldNext.has(n.key) ? this.warm.take(repo, lane) : null;
+    this.coldNext.delete(n.key);
+    const handoffs = await this.handoffsFor(n);
+    const extra = { handoffs, ask: a.handoff === 'off' ? '' : handoffAskFor(n, handoffs) };
+    if (failures.length) {
+      prompt = remediationPrompt(this.g, n, path, branch, failures, extra);
+      t2 += ` (remediation after ${failures.length} failed attempt(s))`;
+    } else prompt = workerPrompt(this.g, n, path, branch, warmed ? warmed.lastKey : null, extra);
+    if (extra.handoffs.length) t2 += ` handoffs=${extra.handoffs.map((h) => h.key).join(',')}`;
+    if (warmed) t2 += ` (warm: node ${warmed.nodes + 1} of session ${warmed.session}, after ${warmed.lastKey})`;
+    const session = prior || warmed?.session || randomUUID();
+    const mode = prior ? 'warm --resume' : warmed ? 'warm' : 'cold';
     // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
     const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
     const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
     // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
     if (harness === 'codex') prompt += '\n' + codexGitRules();
     else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
-    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior), maxTurns: turnsCap, mcpConfig, harness });
+    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior || warmed), maxTurns: turnsCap, mcpConfig, harness });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
@@ -564,6 +632,7 @@ export class Dispatcher {
       cleanup: mcpConfig ? [mcpConfig] : [],
       secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
+    proc.done.then(() => this.wakeUp());
     proc.done.then(async () => {
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
@@ -590,13 +659,19 @@ export class Dispatcher {
       turns: 0,
       maxTurns: Math.max(a.maxTurns, turnsCap || 0),
       session,
+      mode,
+      repo,
+      lane,
+      // the session's place in the warm pool: how many nodes it has worked, and when it was first launched
+      warmNodes: warmed ? warmed.nodes + 1 : 1,
+      warmBorn: warmed ? warmed.born : now(),
     };
     this.workers.set(n.key, w);
     this.peak = Math.max(this.peak, this.workers.size);
     const acNote = a.autocompact && (a.autocompact !== 'auto' || !this.acSaid) ? ` autocompact=${a.autocompact}` : '';
     this.acSaid = true;
     this.say(
-      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model}${rnote} mode=${prior ? 'warm --resume' : 'cold'} session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
+      `launch ${n.key} pid=${proc.pid} harness=${harness} model=${model}${rnote} mode=${mode} session=${session} cwd=${path} (${note}) log=${logPath}${acNote}${t2}`,
     );
   }
 
@@ -633,6 +708,7 @@ export class Dispatcher {
     const env = workerEnv(this.g, process.env, { runId: card.run_id, workerRules: a.workerRules, context: a.context });
     for (const k of GH_CONFIG_ENV) if (process.env[k]) env[k] = process.env[k];
     const proc = spawnWorker(cmd, { cwd, logPath, env });
+    proc.done.then(() => this.wakeUp());
     this.workers.set(n.key, {
       kind: 'merge',
       node: n,
@@ -879,6 +955,17 @@ export class Dispatcher {
       // a worker that lost its endpoint: probe it again before the next launch instead of trusting the cached answer
       if (w.endpoint && ENDPOINT_LOST.test(String(s?.error || ''))) this.probes.clear(w.endpoint.url);
       const limitText = harnessLimitText(s);
+      if (w.mode === 'warm' && !s.started) {
+        // the resume never started (no init event: the session is gone, e.g. "No conversation found"): not the node's
+        // fault, so no attempt is spent; the session is not pooled again and the node's next launch is cold
+        this.workers.delete(key);
+        this.attempts.set(key, Math.max(0, (this.attempts.get(key) || 0) - 1));
+        this.coldNext.add(key);
+        this.say(
+          `warm: resume of session ${w.session} for ${key} did not start (${clip(String(s.error_text || 'no init event'), 120)}); starting it cold, no attempt spent`,
+        );
+        continue;
+      }
       if (limitText) {
         // the harness, not the node: refund the attempt, leave the run to lapse, hold every launch until the reset
         this.workers.delete(key);
@@ -893,7 +980,7 @@ export class Dispatcher {
       const u = s.usage || {};
       const compactions = harness === 'claude' ? countCompactions(w.logPath) : 0;
       this.say(
-        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} cold cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
+        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
       // codex cannot commit in its sandbox: the dispatcher commits, pushes and lands its worktree, then posts the records
       const codexFail = harness === 'codex' ? await this.landCodex(w) : null;
@@ -954,13 +1041,21 @@ export class Dispatcher {
         this.say(`DENIED ${key}: ${rec?.code || '-'}; not relaunching it this session. Worktree: ${w.path} (a person can land it)`);
         outcome = null;
       }
-      if (!outcome && s.reported && w.session && harness === 'claude') this.sessions.set(key, w.session);
+      if (!outcome && s.reported && w.session && harnessCanResume(harness)) {
+        this.sessions.set(key, w.session);
+        // a clean report: the session goes back in the pool for the next node in its repo and lane
+        if (this.args.warm && w.repo && s.report_status === 'succeeded') {
+          const session = s.session_id || w.session;
+          const entry = { session, repo: w.repo, lane: w.lane, nodes: w.warmNodes || 1, born: w.warmBorn || w.started, lastKey: key };
+          if (this.warm.add(entry)) this.say(`warm: session ${session} idle after ${key} (${entry.nodes} node(s)) for ${w.repo} ${w.lane}`);
+        }
+      }
       if (outcome && !graphDenied.length) {
         const list = this.failures.get(key) || [];
         list.push(outcome);
         this.failures.set(key, list);
         const exhausted = (this.attempts.get(key) || 0) >= this.args.maxAttempts;
-        if (s.reported && w.session && harness === 'claude' && !exhausted) this.sessions.set(key, w.session);
+        if (s.reported && w.session && harnessCanResume(harness) && !exhausted) this.sessions.set(key, w.session);
         this.say(
           `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: ${exhausted ? 'left for a person' : 'remediation launch'}`,
         );
@@ -1206,7 +1301,7 @@ export class Dispatcher {
       const gone = pruneLogs(this.logs, { days: this.args.logDays ?? DEFAULT_LOG_DAYS, maxBytes: this.args.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES });
       if (gone.length) this.say(`pruned ${gone.length} old worker log(s)`, { removed: gone.length });
     }
-    this.say(`dispatching graph ${this.g} with ${a.workers} workers; stop file ${a.stopFile}`);
+    this.say(`dispatching graph ${this.g} with ${a.workers} workers${a.for ? `, nodes for ${a.for}` : ''}; stop file ${a.stopFile}`);
     let idle = 0;
     while (!this.terminating) {
       await this.ciProbe();
@@ -1348,6 +1443,7 @@ const OPTS = {
   types: { type: 'string' },
   interval: { type: 'string' },
   'exit-when-idle': { type: 'boolean' },
+  for: { type: 'string' },
   attend: { type: 'boolean' },
   heartbeat: { type: 'string' },
   'land-timeout': { type: 'string' },
@@ -1377,10 +1473,12 @@ const OPTS = {
   grok: { type: 'string' },
   codex: { type: 'string' },
   claude: { type: 'string' },
-  // accepted for compatibility with the Python dispatcher's front door; the features they tune are not in the Node runtime yet
+  // accepted for compatibility with the Python dispatcher's front door; salvage and triage are not in the Node runtime yet
   'no-salvage': { type: 'boolean' },
   'no-triage': { type: 'boolean' },
+  warm: { type: 'boolean' },
   'no-warm': { type: 'boolean' },
+  handoff: { type: 'string' },
   'triage-grace': { type: 'string' },
   'triage-model': { type: 'string' },
   'check-acceptance': { type: 'boolean' },
@@ -1391,6 +1489,7 @@ const OPTS = {
 /** argv -> args object (throws Error with a usage message on bad input). */
 export function parseDispatchArgs(argv, env = process.env) {
   const { values: v, positionals } = parseArgs({ args: argv, options: OPTS, allowPositionals: true });
+  const d0 = defaultArgs();
   const num = (x, d) => (x === undefined ? d : Number(x));
   const graph = v.graph || positionals[0];
   if (!graph) throw new Error('a graph id is required');
@@ -1408,8 +1507,16 @@ export function parseDispatchArgs(argv, env = process.env) {
   const routeProbeTtl = num(v['route-probe-ttl'], DEFAULT_PROBE_TTL);
   if (!(routeProbeTtl >= 0)) throw new Error('--route-probe-ttl must be a number of seconds >= 0');
   if (v.routes && v['no-routes']) throw new Error('--routes and --no-routes cannot be used together');
+  if (v.warm && v['no-warm']) throw new Error('--warm and --no-warm cannot be used together');
+  const handoff = v.handoff ?? 'on';
+  if (!['on', 'off'].includes(handoff)) throw new Error('--handoff must be on or off');
+  const warmMaxNodes = num(v['warm-max-nodes'], d0.warmMaxNodes);
+  if (!(Number.isInteger(warmMaxNodes) && warmMaxNodes >= 2)) throw new Error('--warm-max-nodes must be a whole number >= 2');
+  const warmMaxAge = num(v['warm-max-age'], d0.warmMaxAge);
+  if (!(warmMaxAge > 0)) throw new Error('--warm-max-age must be a number of seconds > 0');
   const workers = num(v.workers, 3);
   if (!(workers >= 1)) throw new Error('--workers must be >= 1');
+  if (v.for !== undefined && !FOR_VALUES.includes(v.for)) throw new Error(`--for must be one of ${FOR_VALUES.join(', ')}`);
   const cfg = env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
   const stateDir = v['state-dir'] || join(cfg, 'dispatch', graph);
   const d = defaultArgs();
@@ -1427,6 +1534,7 @@ export function parseDispatchArgs(argv, env = process.env) {
     types: v.types || d.types,
     interval: num(v.interval, d.interval),
     exitWhenIdle: !!v['exit-when-idle'],
+    for: v.for || null,
     attend: !!v.attend || env.ENFORCER_DISPATCH_ATTEND === '1',
     heartbeat: num(v.heartbeat, d.heartbeat),
     landTimeout: num(v['land-timeout'], d.landTimeout),
@@ -1455,6 +1563,10 @@ export function parseDispatchArgs(argv, env = process.env) {
     grok: v.grok || null,
     codex: v.codex || null,
     agentBin: v['claude'] || null,
+    warm: !!v.warm,
+    warmMaxNodes,
+    warmMaxAge,
+    handoff,
   };
 }
 

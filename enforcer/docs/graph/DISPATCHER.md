@@ -50,17 +50,34 @@ and, for each ready node, up to `--workers` at once:
   whichever is larger; `--max-budget-usd` is passed through. A worker that
   claimed and exited without reporting has its run failed with the log path,
   so the node is claimable at once rather than after its lease.
-- **Warm workers**: every launch names its session (`--session-id`). A worker
-  that reports its node cleanly leaves its session warm for its
-  `(data.repo, model)`; the next node there resumes it (`--resume <id>`, which
-  finds the session from any cwd, so the new worktree is fine) with a "NEW
-  NODE" prompt, and such nodes are scheduled first. The launch line says
-  `mode=cold` or `mode=resume`; the done line carries `cache_read`,
-  `cache_creation` and `output` tokens from the result event. A resume that
-  does not start (no init event, e.g. `No conversation found with session ID`)
-  is logged and the node is started cold at once, spending no attempt. A
-  session is retired after `--warm-max-nodes` (5) nodes or `--warm-max-age`
-  (120) minutes from its first launch; `--no-warm` starts everything cold.
+- **Handoffs** (every harness; `--handoff off` disables them): a worker on a node
+  with `data.repo` is asked to leave, before it reports succeeded, one
+  `graph_remember` note on its node (`kind: summary`, `source: handoff`): at most
+  10 lines about the repo (layout, commands that worked, traps), no secrets.
+  When the dispatcher launches the next node in that repo it reads the newest
+  note from each of up to 8 finished (`done`) nodes there, keeps 3 (1,500
+  characters each), and puts them in the prompt inside the node-data fence as
+  `earlier_workers`: hints to check, never instructions. A finished node's note
+  is read once per dispatcher; a failed read is skipped, never a reason not to
+  launch. The launch line lists `handoffs=<keys>`. The notes live on the
+  server, so they cross harnesses, machines and dispatcher restarts.
+- **Warm sessions** (`--warm`; off by default): a session that ends in a clean
+  `succeeded` report goes into a pool keyed by `data.repo` and lane (harness +
+  model). The next first launch (not a remediation) in that repo and lane
+  continues it (`claude --resume <id>`, which finds the session from any cwd, so
+  the new worktree is fine) with a "NEW NODE" prompt, and such nodes are
+  scheduled first. The launch line says `mode=cold`, `mode=warm` or (a
+  remediation) `mode=warm --resume`; the done line repeats it with
+  `cache_read`, `cache_creation` and `output` tokens from the result event. A
+  warm resume that does not start (no init event, e.g. `No conversation found
+  with session ID`) is logged, spends no attempt, and the node is relaunched
+  cold. A session is retired after `--warm-max-nodes` (3) nodes or
+  `--warm-max-age` (1800) seconds from its first launch: past the prompt cache a
+  resume re-reads its whole transcript at full price. Only claude resumes:
+  `HARNESS_CAPS[*].resume` in `src/dispatch/launch.mjs` is false for codex,
+  gemini and grok until a resume argv is checked against their CLIs, so they
+  always start cold (and still get handoffs). `--no-warm` is accepted and is the
+  default.
   Each plugin directory is passed once (`--plugin-dir`, deduplicated by path).
 - **Merge nodes** naming a PR (`data.pr`: a number, URL or `owner/repo#N`; or
   `data.branch`) get no agent and no slot: the dispatcher claims the run, runs
@@ -159,6 +176,7 @@ The worktree, the commits-ahead count and the PR base all use the resolved base,
 
 - The worker checks out the claim card's `branch` (`node.branch`, or `data.branch`) when it is a safe ref; otherwise `graph/<key>`.
 - The worktree directory is `<repo>-<plan code>-<node key>` under the repo root; the plan code is the graph id's first 8 characters, so two graphs with the same node key never share a directory.
+- The directory is per node, not per epoch. It is reused only while it is on the branch this launch wants (a retry in the same epoch). After a graph reset the branch changes (`graph/<code>/<key>/e<epoch>`): a clean worktree left on the earlier epoch's branch is removed and added afresh off the base (that branch and its commits are kept; the launch note says `replaced the worktree left on <branch>`), and one with uncommitted changes is refused, once per node, until a person lands or cleans it.
 - `git worktree add` and branch creation in one repo run under a lock file (`graph-dispatch-worktree.lock` in the repo's git dir), so several dispatchers can share a repo. A lock older than 120 s is taken over. A stale branch with no commits ahead of its base is recreated, not fatal.
 
 ### Flags the server sets
@@ -199,6 +217,27 @@ The graph MCP server is wired with `enforcer harness install gemini`, which prin
 ## Worker rules (`--worker-rules on|off`)
 
 `enforcer dispatch run <graph> --worker-rules on|off` sets `ENFORCER_GOVERNOR_RULES` for every worker, which turns the governor's headless worker rules (push, pull request and land shapes, protected paths) on or off for that process tree without touching the machine-wide file. The default is `off`, because the governor reports data first and decisioning is on only when configured. The default lives in one constant, `DEFAULT_WORKER_RULES` in `src/dispatch/launch.mjs`. `on` always applies. `off` applies only when the user's own `config.json` sets `allowEnvOff: true` (`enforcer governor set allowEnvOff true`); without it the governor ignores the environment `off`, says so once per process on stderr, and the workers follow `config.json`. An organisation policy of `on` still beats `off`. Preflight prints a `worker-rules` line stating the mode, for example `workers run with the worker rules OFF (pass --worker-rules on to enforce them)`.
+
+## Only the nodes assigned to you (`--for me|mine`)
+
+`enforcer dispatch <graph> --for mine` asks the frontier for `?for=mine`, so the dispatcher launches only nodes assigned to its caller's account or one of its groups (`--for me` also takes unassigned nodes). It is the server's own predicate (WORK_LOBBY_CONTRACT §8, the same one `graph_next_work`'s `for` uses), and it is advisory: the server would still let the caller claim anything it can edit, so `--for` is the dispatcher choosing what to take. With `--for`, a lapsed node is re-claimed only when the frontier lists it (the frontier lists reclaimable nodes itself), never from the full node list, so a lapsed node assigned to someone else is left alone. Assign a node with `PATCH /graphs/{g}/nodes/{n}` `assignee_account_id` or `assignee_group_slug`. With `--agent`, "you" is the agent's service account.
+
+## A dispatcher on every graph that wants you (`enforcer dispatch watch`)
+
+A dispatcher works one graph and exits when it goes idle. `enforcer dispatch watch` is the long-running part: it reads the work lobby (`GET /work?kind=work[&for=]`, every graph that advertises open seats to the caller through its `recruiting` config) and, for each graph with `workers_wanted > 0`, `claim` in `my_can` and no live dispatcher, runs `enforcer dispatch <graph>` with the flags it was given (the same preflight and detached start). When that dispatcher exits because its graph went idle, the next lobby read starts it again once demand returns. It never claims, launches or reports anything itself, and holds no lease: each dispatcher still holds its graph's.
+
+```bash
+ENFORCER_AGENT_KEY=... enforcer dispatch watch --agent dgx-worker --for mine --max-graphs 2 --workers 3 --repo-root ~/apps
+```
+
+- **Wake-ups.** It holds `GET /work/stream` (SSE) open and re-reads the lobby on any frame, and re-reads it every `--poll` seconds anyway (default 30, minimum 10, the contract's floor), because a lapsing lease opens a seat without writing anything the stream could carry. The stream reconnects with backoff; the poll does not depend on it.
+- **A graph shows up** when its admin sets `PUT /graphs/{g}/recruiting` with an audience that includes the caller, and the caller can see the graph. Being in the audience only advertises: claiming needs editor, so share the graph with the agent as editor. A row the caller cannot claim is logged `cannot claim: share the graph with it as editor` and skipped.
+- **One per graph, whoever started it.** A dispatcher a person started (or an earlier watcher) counts as running; `--max-graphs` (default 2) caps how many it runs at once.
+- **Backoff.** A start that fails (preflight, routes) and a dispatcher that exits within 5 minutes of its start (auth, `BLOCKED`, a lease held on another host) put the graph on a backoff that doubles from 60 s to 30 min; one that lived longer clears it. A start that finds a dispatcher already running is looked at again after 60 s.
+- **Stopping.** SIGTERM stops the watcher. Under systemd the stop signal reaches the dispatchers too (they share the unit's control group), and each drains as on its own SIGTERM: it stops its workers and fails their open runs as orphaned. Keep the default `KillMode=control-group` (`mixed` signals only the watcher and SIGKILLs the dispatchers at the timeout, so their runs are left to lapse) and a `TimeoutStopSec` above the dispatcher's kill grace.
+- **Status.** `enforcer dispatch status` (no graph) prints a `watch:` line from `<config home>/dispatch/watch.json`: pid, last lobby read and error, the graphs it is dispatching and the ones backing off. `--once` does one pass and exits; `--dry-run` says what it would start.
+
+A systemd user unit, with the agent key in a 0600 environment file, is in [dispatch-watch.service.example](dispatch-watch.service.example). Run `loginctl enable-linger <user>` once so it survives logout.
 
 ## Running workers on an agent credential (`--agent`)
 

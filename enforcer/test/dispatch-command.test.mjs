@@ -63,7 +63,7 @@ await t('--help prints the three subcommands and the defaults', async () => {
   assert.match(r.out, /dispatch stop/);
   assert.match(
     r.out,
-    /defaults: 3 workers, no model cap \(each tier's model, or its route's\), routes from --routes \/ ENFORCER_ROUTES \/ the graph \/ routes\.json, salvage on, triage on, warm workers off/,
+    /defaults: 3 workers, no model cap \(each tier's model, or its route's\), routes from --routes \/ ENFORCER_ROUTES \/ the graph \/ routes\.json, handoff notes on \(--handoff off\), warm sessions off \(--warm; claude only\)/,
   );
 });
 await t('status prints workers, nodes, review items, gates and the last line', async () => {

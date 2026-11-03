@@ -1,7 +1,7 @@
 {
   "name": "@instruxi-io/enforcer",
   "license": "FSL-1.1-ALv2",
-  "version": "1.9.3",
+  "version": "1.9.4",
   "bin": {
     "enforcer": "bin/enforcer"
   },
@@ -48,7 +48,7 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.4",
     "openapi-fetch": "0.17.0",
     "openapi-typescript": "7.13.0",
     "typescript": "5.9.3"

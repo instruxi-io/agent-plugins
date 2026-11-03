@@ -9,6 +9,21 @@ const LADDER = ['haiku', 'sonnet', 'opus'];
 /** opus > sonnet > haiku; any other name is unranked (-1) and never capped. */
 export const rank = (m) => LADDER.indexOf(String(m || ''));
 
+/**
+ * The model for a node's next launch after `failures` failed attempts this session: one rung up the ladder per
+ * failure (haiku -> sonnet -> opus), so a step tiered too low is retried on a model that can do it instead of
+ * failing the same way again. Never above the --model cap (`cap`), never for an unranked model (a route's vLLM name,
+ * a pinned id). The first launch (`failures` 0) is unchanged.
+ */
+export function escalate(model, failures, cap = null) {
+  const r = rank(model);
+  if (!failures || r < 0) return model;
+  let t = Math.min(r + failures, LADDER.length - 1);
+  const c = rank(cap);
+  if (c >= 0) t = Math.min(t, Math.max(c, r));
+  return LADDER[t];
+}
+
 /** Explicit data.model (or the claim card's model) wins; a user-set tier beats the
  *  dispatcher's --model cap; otherwise the cap, then the tier, then sonnet. */
 export function modelFor(node, override = null) {

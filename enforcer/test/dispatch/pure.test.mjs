@@ -462,3 +462,14 @@ test('prune: an old merged PR with a different head is not a match', () => {
     else process.env.GH_FAKE = old.GH_FAKE;
   }
 });
+
+test('escalate: one rung per failure, never above the --model cap, never an unranked model', async () => {
+  const { escalate } = await import('../../src/dispatch/model.mjs');
+  assert.equal(escalate('haiku', 0), 'haiku', 'the first launch is unchanged');
+  assert.equal(escalate('haiku', 1), 'sonnet');
+  assert.equal(escalate('haiku', 2), 'opus');
+  assert.equal(escalate('opus', 3), 'opus');
+  assert.equal(escalate('haiku', 2, 'sonnet'), 'sonnet', 'the cap holds');
+  assert.equal(escalate('haiku', 1, 'haiku'), 'haiku', 'a haiku cap means no escalation');
+  assert.equal(escalate('Qwen3.8-27B', 2), 'Qwen3.8-27B', 'an endpoint model name is not on the ladder');
+});

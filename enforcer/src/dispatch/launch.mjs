@@ -18,12 +18,17 @@ export const GRAPH_TOOLS = ['graph_next_work', 'graph_heartbeat', 'graph_report'
 export const PREFIXES = ['mcp__plugin_enforcer_enforcer__', 'mcp__enforcer__', 'mcp__enforcer-graph__'];
 export const BASE_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'ToolSearch'];
 export const HARNESSES = ['claude', 'codex', 'grok', 'gemini'];
+// `resume`: the harness can continue a session by id (a --warm launch, a remediation). Only claude is verified; codex
+// (`codex exec resume <id>`) and gemini (`--resume <id>`) document one, but neither argv is checked against the CLI
+// versions these launches target, so they start cold until it is (docs/graph/DISPATCHER.md "Warm sessions and handoffs").
 export const HARNESS_CAPS = {
-  claude: { supported: true, experimental: false, models: null },
-  grok: { supported: true, experimental: true, models: ['grok'] },
-  codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'] },
-  gemini: { supported: true, experimental: true, models: ['gemini', 'auto'] },
+  claude: { supported: true, experimental: false, models: null, resume: true },
+  grok: { supported: true, experimental: true, models: ['grok'], resume: false },
+  codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'], resume: false },
+  gemini: { supported: true, experimental: true, models: ['gemini', 'auto'], resume: false },
 };
+
+export const harnessCanResume = (harness) => HARNESS_CAPS[harness || 'claude']?.resume === true;
 
 /** Per-launch settings: the installed release is off for the child, so the --plugin-dir checkout is the only copy of the hooks and MCP server. */
 export const DISABLED_PLUGINS = { 'enforcer@instruxi': false };
@@ -81,6 +86,7 @@ export function pluginDirs(extra = []) {
 
 /** The only inherited variables: the operator's keys (ENFORCER_API_KEY, GRAPH_API_KEY, cloud keys, gh tokens) never pass. */
 export const ENV_ALLOW = [
+  'ENABLE_CLAUDEAI_MCP_SERVERS', // always set to false for a worker (workerEnv); listed so the allowlist test holds
   'PATH',
   'HOME',
   'LANG',
@@ -190,6 +196,10 @@ export function workerEnv(
     JEV_HOOKS_HEADLESS: '1',
     CLAUDE_PLUGIN_ROOT: root,
     ENFORCER_PLUGIN_ROOT: root,
+    // A headless worker never needs the operator's claude.ai connectors (Gmail, Slack, Drive, Calendar...). With the
+    // allowlisted environment Claude Code attached all of them to every worker (12 servers on the Spark, 5 signed in);
+    // --allowedTools kept them uncallable, but a worker should not hold the operator's mailbox at all.
+    ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
   });
   // Grok imports Claude Code's enabled plugins, and expands their hooks' ${CLAUDE_PLUGIN_ROOT} from the environment: with ours set, jev-hooks'
   // UserPromptSubmit gate ran enforcer's path, failed, and blocked the first prompt (every grok worker ended `cancelled` at 0 turns).

@@ -179,6 +179,13 @@ export const SETTINGS = {
     describe: "Send Codex's own OpenTelemetry (events and metrics, no prompt text) to Enforcer governance.",
     hint: 'On by default where the Enforcer plugin is installed in Codex. `enforcer governor telemetry codex off` turns it off and removes the settings.',
   },
+  telemetryOn: {
+    group: 'checks',
+    type: 'boolean',
+    check: bool(),
+    describe: "Send Claude Code's own OpenTelemetry (metrics and events, no prompt text or tool parameters) to Enforcer governance.",
+    hint: 'On by default while signed in, unless another exporter is configured. `enforcer governor telemetry off` turns it off and removes the settings.',
+  },
   sweepDays: {
     group: 'checks',
     type: 'number',
