@@ -18,12 +18,17 @@ export const GRAPH_TOOLS = ['graph_next_work', 'graph_heartbeat', 'graph_report'
 export const PREFIXES = ['mcp__plugin_enforcer_enforcer__', 'mcp__enforcer__', 'mcp__enforcer-graph__'];
 export const BASE_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'ToolSearch'];
 export const HARNESSES = ['claude', 'codex', 'grok', 'gemini'];
+// `resume`: the harness can continue a session by id (a --warm launch, a remediation). Only claude is verified; codex
+// (`codex exec resume <id>`) and gemini (`--resume <id>`) document one, but neither argv is checked against the CLI
+// versions these launches target, so they start cold until it is (docs/graph/DISPATCHER.md "Warm sessions and handoffs").
 export const HARNESS_CAPS = {
-  claude: { supported: true, experimental: false, models: null },
-  grok: { supported: true, experimental: true, models: ['grok'] },
-  codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'] },
-  gemini: { supported: true, experimental: true, models: ['gemini', 'auto'] },
+  claude: { supported: true, experimental: false, models: null, resume: true },
+  grok: { supported: true, experimental: true, models: ['grok'], resume: false },
+  codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'], resume: false },
+  gemini: { supported: true, experimental: true, models: ['gemini', 'auto'], resume: false },
 };
+
+export const harnessCanResume = (harness) => HARNESS_CAPS[harness || 'claude']?.resume === true;
 
 /** Per-launch settings: the installed release is off for the child, so the --plugin-dir checkout is the only copy of the hooks and MCP server. */
 export const DISABLED_PLUGINS = { 'enforcer@instruxi': false };

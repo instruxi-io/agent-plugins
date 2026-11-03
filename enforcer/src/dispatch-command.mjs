@@ -12,12 +12,12 @@ import { strandedReport, strandedLines, workerLogMtime } from './dispatch/strand
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // no model: without --model each node runs on its tier's model (TIER_MODEL) or its route's, never a forced sonnet
-export const DEFAULTS = { workers: 3, salvage: 'on', triage: 'on', warm: 'off' };
+export const DEFAULTS = { workers: 3, warm: 'off', handoff: 'on' };
 export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] [--repo-root dir] [--worker-rules on|off] [--context on|off] [--allow-lint-warnings]   preflight, then start the dispatcher in the background
        enforcer dispatch status [<graph>]                                              what it is doing and what it needs from you
        enforcer dispatch prune [--yes] [--repo-root dir]                               list (or with --yes remove) worktrees whose PR merged and no live worker holds
        enforcer dispatch stop <graph>                                                  finish running workers, start no new ones, then exit
-defaults: ${DEFAULTS.workers} workers, no model cap (each tier's model, or its route's), routes from --routes / ENFORCER_ROUTES / the graph / routes.json, salvage ${DEFAULTS.salvage}, triage ${DEFAULTS.triage}, warm workers ${DEFAULTS.warm}
+defaults: ${DEFAULTS.workers} workers, no model cap (each tier's model, or its route's), routes from --routes / ENFORCER_ROUTES / the graph / routes.json, handoff notes ${DEFAULTS.handoff} (--handoff off), warm sessions ${DEFAULTS.warm} (--warm; claude only)
 state: ~/.config/enforcer/dispatch/<graph> (dispatcher.log, pids.json, STOP)
        enforcer dispatch --dry-run <graph>                                             print the planned launches; launch nothing
 other dispatcher flags pass through; see docs/graph/DISPATCHER.md
@@ -25,7 +25,19 @@ other dispatcher flags pass through; see docs/graph/DISPATCHER.md
 
 // Flags that take a value, so the value is never mistaken for the graph id.
 // --agent is not handled here but passes through to the runner.
-const VALUE_FLAGS = ['--workers', '--model', '--repo-root', '--worker-rules', '--context', '--agent', '--routes', '--route-probe-ttl'];
+const VALUE_FLAGS = [
+  '--workers',
+  '--model',
+  '--repo-root',
+  '--worker-rules',
+  '--context',
+  '--agent',
+  '--routes',
+  '--route-probe-ttl',
+  '--handoff',
+  '--warm-max-nodes',
+  '--warm-max-age',
+];
 
 const flagValue = (argv, n) => {
   const i = argv.indexOf(n);

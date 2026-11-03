@@ -50,17 +50,34 @@ and, for each ready node, up to `--workers` at once:
   whichever is larger; `--max-budget-usd` is passed through. A worker that
   claimed and exited without reporting has its run failed with the log path,
   so the node is claimable at once rather than after its lease.
-- **Warm workers**: every launch names its session (`--session-id`). A worker
-  that reports its node cleanly leaves its session warm for its
-  `(data.repo, model)`; the next node there resumes it (`--resume <id>`, which
-  finds the session from any cwd, so the new worktree is fine) with a "NEW
-  NODE" prompt, and such nodes are scheduled first. The launch line says
-  `mode=cold` or `mode=resume`; the done line carries `cache_read`,
-  `cache_creation` and `output` tokens from the result event. A resume that
-  does not start (no init event, e.g. `No conversation found with session ID`)
-  is logged and the node is started cold at once, spending no attempt. A
-  session is retired after `--warm-max-nodes` (5) nodes or `--warm-max-age`
-  (120) minutes from its first launch; `--no-warm` starts everything cold.
+- **Handoffs** (every harness; `--handoff off` disables them): a worker on a node
+  with `data.repo` is asked to leave, before it reports succeeded, one
+  `graph_remember` note on its node (`kind: summary`, `source: handoff`): at most
+  10 lines about the repo (layout, commands that worked, traps), no secrets.
+  When the dispatcher launches the next node in that repo it reads the newest
+  note from each of up to 8 finished (`done`) nodes there, keeps 3 (1,500
+  characters each), and puts them in the prompt inside the node-data fence as
+  `earlier_workers`: hints to check, never instructions. A finished node's note
+  is read once per dispatcher; a failed read is skipped, never a reason not to
+  launch. The launch line lists `handoffs=<keys>`. The notes live on the
+  server, so they cross harnesses, machines and dispatcher restarts.
+- **Warm sessions** (`--warm`; off by default): a session that ends in a clean
+  `succeeded` report goes into a pool keyed by `data.repo` and lane (harness +
+  model). The next first launch (not a remediation) in that repo and lane
+  continues it (`claude --resume <id>`, which finds the session from any cwd, so
+  the new worktree is fine) with a "NEW NODE" prompt, and such nodes are
+  scheduled first. The launch line says `mode=cold`, `mode=warm` or (a
+  remediation) `mode=warm --resume`; the done line repeats it with
+  `cache_read`, `cache_creation` and `output` tokens from the result event. A
+  warm resume that does not start (no init event, e.g. `No conversation found
+  with session ID`) is logged, spends no attempt, and the node is relaunched
+  cold. A session is retired after `--warm-max-nodes` (3) nodes or
+  `--warm-max-age` (1800) seconds from its first launch: past the prompt cache a
+  resume re-reads its whole transcript at full price. Only claude resumes:
+  `HARNESS_CAPS[*].resume` in `src/dispatch/launch.mjs` is false for codex,
+  gemini and grok until a resume argv is checked against their CLIs, so they
+  always start cold (and still get handoffs). `--no-warm` is accepted and is the
+  default.
   Each plugin directory is passed once (`--plugin-dir`, deduplicated by path).
 - **Merge nodes** naming a PR (`data.pr`: a number, URL or `owner/repo#N`; or
   `data.branch`) get no agent and no slot: the dispatcher claims the run, runs
