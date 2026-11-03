@@ -8,7 +8,7 @@
 //             will lapse and strand within minutes
 //   quiet     running, lease live, dispatcher up, but its worker log has not grown for QUIET_MINUTES
 //   gateRun   a gate with a run: gates are decided, not claimed, so this is an outside claim
-import { statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { lapsed } from './select.mjs';
 import { parseTs } from './util.mjs';
@@ -21,15 +21,31 @@ export const ago = (ms) => {
   return m >= 120 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 };
 
-/** newest worker log for a node: logs/<key>.<attempt>.jsonl; returns its mtime in ms, or null. */
+/** A worker's log file name: <key>.e<epoch>.<attempt>.<ext>, or <key>.<attempt>.<ext> when the epoch is unknown.
+ *  The epoch is in the name because a looping graph starts every epoch with a new dispatcher, whose attempts count
+ *  from 1 again: without it, epoch 2's first attempt overwrote epoch 1's log. */
+export const workerLogName = (key, attempt, epoch = null, ext = 'jsonl') =>
+  Number.isInteger(epoch) && epoch > 0 ? `${key}.e${epoch}.${attempt}.${ext}` : `${key}.${attempt}.${ext}`;
+
+const esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** newest worker log for a node: logs/<key>[.e<epoch>].<attempt>.jsonl; returns its mtime in ms, or null. */
 export function workerLogMtime(logsDir, key) {
+  let names;
+  try {
+    names = readdirSync(logsDir);
+  } catch {
+    return null;
+  }
+  const re = new RegExp(`^${esc(key)}\\.(?:e\\d+\\.)?\\d+\\.jsonl$`);
   let best = null;
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (const n of names) {
+    if (!re.test(n)) continue;
     try {
-      const t = statSync(join(logsDir, `${key}.${attempt}.jsonl`)).mtimeMs;
+      const t = statSync(join(logsDir, n)).mtimeMs;
       if (best === null || t > best) best = t;
     } catch {
-      /* no such attempt */
+      /* gone since the listing */
     }
   }
   return best;

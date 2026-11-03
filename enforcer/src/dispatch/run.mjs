@@ -52,6 +52,7 @@ import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
 import { ATTEND_POLL_SECONDS, ATTEND_NOTE_SECONDS, needsYou, newItems, attentionLine, loadSeen, saveSeen, notify } from './attention.mjs';
 import { writeLog, redactFile, redactLogsDir, pruneLogs, addSecret, DEFAULT_LOG_DAYS, DEFAULT_LOG_MAX_BYTES } from './logs.mjs';
+import { workerLogName } from './stranded.mjs';
 
 /** Per-worker spend cap passed as --max-budget-usd unless the operator overrides it. */
 export const DEFAULT_MAX_BUDGET_USD = HEADLESS_PROFILE.spend.defaultMaxBudgetUsd;
@@ -206,6 +207,7 @@ export class Dispatcher {
     this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
     this.holdNoted = new Map();
     this.attempts = new Map();
+    this.epoch = null; // the graph's epoch, read at each launch; it names the worker logs
     this.failures = new Map();
     this.denied = new Map();
     this.lastSkip = new Map();
@@ -499,6 +501,7 @@ export class Dispatcher {
     let note;
     try {
       const g0 = (await this.api.graph?.(this.g).catch(() => null)) || {};
+      if (Number.isInteger(g0.epoch)) this.epoch = g0.epoch;
       const inputs = await this.launchInputs(n);
       [path, branch, note] = worktreeFor(n, a.repoRoot, this.state, {
         dry: a.dryRun,
@@ -570,7 +573,7 @@ export class Dispatcher {
     }
     const attempt = (this.attempts.get(n.key) || 0) + 1;
     this.attempts.set(n.key, attempt);
-    const logPath = join(this.logs, `${n.key}.${attempt}.jsonl`);
+    const logPath = join(this.logs, workerLogName(n.key, attempt, this.epoch));
     // The worker gets a minted one-day token when ENFORCER_WORKER_AGENT_ID is set; the agent key stays in the dispatcher.
     // Without it the agent key is the only credential there is, so it is passed on (see docs/graph/DISPATCHER.md).
     let token = null;
@@ -703,7 +706,7 @@ export class Dispatcher {
       this.attempts.set(n.key, Math.max(0, (this.attempts.get(n.key) || 0) - 1));
       return;
     }
-    const logPath = join(this.logs, `${n.key}.${this.attempts.get(n.key)}.log`);
+    const logPath = join(this.logs, workerLogName(n.key, this.attempts.get(n.key), this.epoch, 'log'));
     // the lander gets the worker allowlist like every other worker (gh reads its sign-in from HOME), never the full environment
     const env = workerEnv(this.g, process.env, { runId: card.run_id, workerRules: a.workerRules, context: a.context });
     for (const k of GH_CONFIG_ENV) if (process.env[k]) env[k] = process.env[k];
