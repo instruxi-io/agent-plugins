@@ -71,8 +71,13 @@ export class API {
   async graph(g) {
     return (await this.call('GET', `/graphs/${g}`)).data || {};
   }
-  // api-used: reads data
-  async frontier(g) {
+  // `forWho` ('me' or 'mine') narrows the frontier to nodes assigned to the caller (and, for 'me', unassigned ones);
+  // assignment is advisory on the server, so this is the dispatcher choosing what to take. The path stays a literal
+  // (query after `?`) so scripts/extract-api-usage.mjs sees one route.
+  async frontier(g, forWho = null) {
+    // api-used: reads data
+    if (forWho) return (await this.call('GET', `/graphs/${g}/frontier?for=${encodeURIComponent(forWho)}`)).data || [];
+    // api-used: reads data
     return (await this.call('GET', `/graphs/${g}/frontier`)).data || [];
   }
   async nodes(g) {
