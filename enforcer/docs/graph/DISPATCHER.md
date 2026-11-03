@@ -176,6 +176,7 @@ The worktree, the commits-ahead count and the PR base all use the resolved base,
 
 - The worker checks out the claim card's `branch` (`node.branch`, or `data.branch`) when it is a safe ref; otherwise `graph/<key>`.
 - The worktree directory is `<repo>-<plan code>-<node key>` under the repo root; the plan code is the graph id's first 8 characters, so two graphs with the same node key never share a directory.
+- The directory is per node, not per epoch. It is reused only while it is on the branch this launch wants (a retry in the same epoch). After a graph reset the branch changes (`graph/<code>/<key>/e<epoch>`): a clean worktree left on the earlier epoch's branch is removed and added afresh off the base (that branch and its commits are kept; the launch note says `replaced the worktree left on <branch>`), and one with uncommitted changes is refused, once per node, until a person lands or cleans it.
 - `git worktree add` and branch creation in one repo run under a lock file (`graph-dispatch-worktree.lock` in the repo's git dir), so several dispatchers can share a repo. A lock older than 120 s is taken over. A stale branch with no commits ahead of its base is recreated, not fatal.
 
 ### Flags the server sets

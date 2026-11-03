@@ -19,6 +19,41 @@ import { git, originRef, ghPrState } from './prune.mjs';
 import { assertIdent, safeIdent } from './ident.mjs';
 
 export class BaseMissing extends Error {}
+/** A node's worktree is on another branch (an earlier epoch's) and holds uncommitted changes: not ours to discard. */
+export class StaleWorktree extends Error {}
+
+/** The branch a worktree has checked out ('HEAD' when detached), or null when git cannot say. */
+export function worktreeBranch(path) {
+  const r = git(['rev-parse', '--abbrev-ref', 'HEAD'], path);
+  return r.returncode === 0 ? r.stdout.trim() || null : null;
+}
+
+/** Tracked changes in a worktree (untracked files, e.g. .worktreeinclude copies, are not work and are recopied). */
+const trackedDirty = (path) => git(['status', '--porcelain', '--untracked-files=no'], path).stdout.trim() !== '';
+
+/**
+ * The worktree path is per node, not per epoch (<repo>-<code>-<key>), so after a graph reset the directory left by the
+ * last epoch is still on that epoch's branch, with that epoch's work committed. Reusing it started epoch N+1's worker in
+ * epoch N's checkout while the dispatcher reported the new branch. Returns 'reuse' when the worktree is on `branch`
+ * (a retry in the same epoch), 'replace' when it is clean and on another branch, and throws StaleWorktree when it holds
+ * uncommitted changes. The old branch and its commits are never touched.
+ */
+export function staleWorktree(path, branch) {
+  const cur = worktreeBranch(path);
+  if (!cur || !branch || cur === branch) return 'reuse';
+  if (trackedDirty(path))
+    throw new StaleWorktree(
+      `worktree ${path} is on ${cur}, not ${branch}, and has uncommitted changes; land or clean it (git -C ${path} status), then the node runs`,
+    );
+  return 'replace';
+}
+
+/** Remove a clean worktree left on an earlier branch, so it is added afresh off the base. */
+function removeWorktree(src, path) {
+  const r = git(['worktree', 'remove', '--force', path], src);
+  if (r.returncode !== 0) throw new StaleWorktree(`could not remove the stale worktree ${path}: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+  git(['worktree', 'prune'], src);
+}
 
 const isDir = (p) => {
   try {
@@ -231,7 +266,14 @@ export function worktreeFor(
   }
   const src = join(repoRoot, repo);
   const path = join(repoRoot, code ? `${repo}-${code}-${key}` : `${repo}-${key}`);
-  if (isDir(path)) return [path, branch, 'reused'];
+  let replaced = null;
+  if (isDir(path)) {
+    const was = worktreeBranch(path);
+    if (staleWorktree(path, branch) === 'reuse') return [path, branch, 'reused'];
+    if (dry) return [path, branch, `would replace the worktree on ${was}`];
+    withRepoLock(src, () => removeWorktree(src, path));
+    replaced = was;
+  }
   let [base, source] = resolveBase(node, graphBases, registry, null);
   const ib = inputBase(inputs);
   if (ib) {
@@ -252,7 +294,9 @@ export function worktreeFor(
   }
   checkBase(base, source, src);
   if (dry) return [path, branch, 'would add off ' + base];
-  return withRepoLock(src, () => addWorktree(src, path, branch, base));
+  const out = withRepoLock(src, () => addWorktree(src, path, branch, base));
+  if (replaced) out[2] = `${out[2]}; replaced the worktree left on ${replaced}`;
+  return out;
 }
 
 function addWorktree(src, path, branch, base) {
