@@ -1,0 +1,1 @@
+- The API spec lock is re-pinned to what is deployed on 2026-11-03 (graph c0b13c8, v3 ed13ea6, files a3af836, governance ba7871f, MCP manifest 09c0729), the generated types are regenerated, and two drift entries the new specs resolve (graph-scoped observations, run evidence) are removed.
