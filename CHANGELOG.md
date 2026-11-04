@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.9.5
+
+- `enforcer dispatch watch` keeps one dispatcher running per graph that the work lobby (`GET /work`) advertises to the caller and restarts it when demand returns after it went idle, woken by `GET /work/stream` and a 30 s poll, with a doubling backoff for dispatchers that die young (one that finished its graph cleanly is not backed off) and a `watch:` line in `enforcer dispatch status`; a systemd user unit example is in `docs/graph/dispatch-watch.service.example`. `enforcer dispatch <graph> --for me|mine` launches only nodes assigned to the caller (the frontier's `for` filter).
+- Dispatcher worker logs now carry the graph's epoch: `logs/<key>.e<epoch>.<attempt>.jsonl` (and `.log` for the lander). A looping graph starts each epoch with a new dispatcher whose attempts count from 1 again, so epoch 2's first worker overwrote epoch 1's transcript for the same node. The stranded/quiet check reads both the new and the old names.
+- A node's worktree is no longer reused across epochs: the path is per node (`<repo>-<code>-<key>`), so after a graph reset the dispatcher started the next epoch's worker in the last epoch's checkout (old branch, old work committed) while reporting the new branch. A clean worktree on another branch is now removed and added afresh off the base (the old branch and its commits are kept; the launch note says `replaced the worktree left on <branch>`); one with uncommitted changes is refused (`REFUSE <key>: ... uncommitted changes`, once per node) until a person lands or cleans it. A retry in the same epoch still reuses its worktree.
+- A browser sign-in now probes the new token before saving it: when Enforcer answers HTTP 431 (the token too large for its request headers, as `--for admin` hit on servers before the 16 KiB header fix) the sign-in fails, saves nothing and says to use `--for plan` or `--for work`; an unreachable server is only a warning. The "agent management" fix hint now says `enforcer login --for work`, which carries the agent scopes without dropping the graph ones.
+
 ## 1.9.4
 
 - Claude Code's own OpenTelemetry export (metrics and events, no prompt text or tool parameters) is now on by default, like Codex's and Gemini's: it is written into Claude Code's user settings at sign-in and at each Claude Code session start while signed in, never replaces another exporter, and `enforcer governor telemetry off` turns it off and keeps it off (`telemetryOn`); `enforcer logout` removes it.

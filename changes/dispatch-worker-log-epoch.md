@@ -1,1 +1,0 @@
-Dispatcher worker logs now carry the graph's epoch: `logs/<key>.e<epoch>.<attempt>.jsonl` (and `.log` for the lander). A looping graph starts each epoch with a new dispatcher whose attempts count from 1 again, so epoch 2's first worker overwrote epoch 1's transcript for the same node. The stranded/quiet check reads both the new and the old names.
