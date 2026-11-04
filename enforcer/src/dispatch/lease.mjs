@@ -48,7 +48,24 @@ export class Lease {
       await this.api.patchNode(this.graph, cur.id, { data: { ...(cur.data || {}), ...data } });
     }
     const back = await this.node();
-    return back?.data?.dispatcher?.nonce === this.nonce;
+    const ours = back?.data?.dispatcher?.nonce === this.nonce;
+    if (ours) await this.keepDone(back);
+    return ours;
+  }
+
+  /**
+   * The lease node is not work, so it must stay `done`: a graph reset (and the loop worker's reset) puts every
+   * live node back to `active`, this one included, and an active lease node keeps the epoch from ever completing
+   * (issue #409). PATCH carries no status, so this is the status route. Best effort: the lease never depends on it.
+   */
+  async keepDone(n) {
+    if (!n?.id || n.status === 'done' || typeof this.api.setNodeStatus !== 'function') return;
+    try {
+      await this.api.setNodeStatus(this.graph, n.id, 'done');
+      this.say(`dispatcher-lease was ${n.status}; set it back to done so the epoch can complete`);
+    } catch (e) {
+      this.say(`could not set dispatcher-lease to done (${e?.message || e}); the epoch cannot complete until it is`);
+    }
   }
 
   async acquire(nodes = null) {

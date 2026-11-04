@@ -58,6 +58,11 @@ class FakeAPI {
     );
     return {};
   }
+  async setNodeStatus(g, id, status) {
+    this.statuses = (this.statuses || 0) + 1;
+    this.list.find((n) => n.id === id).status = status;
+    return {};
+  }
   async claim(g, id) {
     return { run_id: 'run-' + id };
   }
@@ -206,6 +211,34 @@ test('a second dispatcher is refused; --takeover replaces a live lease', async (
   assert.ok(say.some((m) => /another graph-dispatch holds/.test(m)));
   assert.equal(await new Lease(api, 'g', { say: (m) => say.push(m), pid: 222, host: 'h', takeover: true }).acquire(), true);
   assert.equal(await a.renew(), false, 'the old holder sees the lease is lost');
+});
+
+test('a reset that left the lease node active is put back to done on renew (#409)', async () => {
+  const api = new FakeAPI([]);
+  const lease = new Lease(api, 'g', { pid: 111, host: 'h' });
+  assert.equal(await lease.acquire(), true);
+  const n = api.list.find((x) => x.key === LEASE_KEY);
+  assert.equal(n.status, 'done', 'created done');
+  assert.equal(api.statuses || 0, 0, 'no status call while it is already done');
+  n.status = 'active'; // what POST /graphs/{id}/reset does to every live node
+  assert.equal(await lease.renew(), true);
+  assert.equal(n.status, 'done');
+  assert.equal(api.statuses, 1);
+  assert.equal(await lease.renew(), true);
+  assert.equal(api.statuses, 1, 'done stays done without another call');
+});
+
+test('a failing status call never costs the lease', async () => {
+  const api = new FakeAPI([]);
+  const say = [];
+  const lease = new Lease(api, 'g', { say: (m) => say.push(m), pid: 111, host: 'h' });
+  assert.equal(await lease.acquire(), true);
+  api.list.find((x) => x.key === LEASE_KEY).status = 'active';
+  api.setNodeStatus = async () => {
+    throw new Error('HTTP 503');
+  };
+  assert.equal(await lease.renew(), true);
+  assert.ok(say.some((m) => /could not set dispatcher-lease to done \(HTTP 503\)/.test(m)));
 });
 
 test('pids.json orphans from a dead dispatcher are reaped', async () => {
