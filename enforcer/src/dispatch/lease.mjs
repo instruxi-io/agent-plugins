@@ -48,7 +48,22 @@ export class Lease {
       await this.api.patchNode(this.graph, cur.id, { data: { ...(cur.data || {}), ...data } });
     }
     const back = await this.node();
-    return back?.data?.dispatcher?.nonce === this.nonce;
+    const ours = back?.data?.dispatcher?.nonce === this.nonce;
+    if (ours) await this.keepDone(back);
+    return ours;
+  }
+
+  /** The lease node is bookkeeping, never work, so it must stay `done`. A graph reset (a loop's next epoch) returns
+   *  every live node to `active`, this one too, and PATCH cannot set a status: left open, it keeps the epoch from ever
+   *  completing (so an on-completion loop never fires again) and the lobby advertises it as work. Best effort: a
+   *  failure here must not cost the lease, and the next renewal tries again. */
+  async keepDone(n) {
+    if (!n?.id || n.status === 'done' || typeof this.api.setNodeStatus !== 'function') return;
+    try {
+      await this.api.setNodeStatus(this.graph, n.id, 'done');
+    } catch (e) {
+      this.say(`lease node is ${n.status}, could not set it done: ${e.status ?? e.message}`);
+    }
   }
 
   async acquire(nodes = null) {
