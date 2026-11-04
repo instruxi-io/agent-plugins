@@ -59,6 +59,14 @@ names the criterion and the fix; satisfy it rather than override. Only when a
 hint truly cannot apply, pass `evidence_override: {line, reason}` naming the acceptance line, (its
 `reason` is recorded in the report data as `overrides`).
 
+**A join (two or more prerequisites in `upstream`).** Each prerequisite is its
+own entry; nothing has merged them for you. Before your first edit, confirm each
+one's work is in your base (`git log --oneline <base> | grep` its PR number or
+merge commit), and write down which output or note you rely on from each. A
+prerequisite missing from your base, or two whose outputs or notes conflict, is
+not yours to paper over: `graph_remember` it with `needs.kind: "prerequisite"`
+and report `failed`.
+
 ## 2. Keep the lease
 
 `graph_heartbeat` `{graph, node_id, run_id}` right after claiming, and before
@@ -92,6 +100,13 @@ tool call, but do not rely on it. `cancel_requested`: finish quickly and report
   `docs/WORKER_BRIEF.md`, the node's brief and the card's skills, not from this
   file. Use only a contested value your brief assigned; start no test database
   the brief does not name.
+- A bug or an incident: get the actual error (the log line, the trace, the
+  failing command's output) before forming a theory, and test the theory
+  against a control, a path that should be unaffected. A suspect named in the
+  node is a lead, not the cause.
+- A check that can pass without exercising what it guards (a probe that only
+  opens a port, a job that is green when it skipped its work) is not evidence.
+  Prove the thing did its work: rows written, a query answered, a PR opened.
 
 ## 4. Deliver as your skills say
 
@@ -118,7 +133,17 @@ until it ends `literals found: <n>/<n>`.
 `graph_report` `{graph, node_id, run_id, status, report, pr}` before you return.
 Write `report` as a numbered list in the criteria's order, each line `MET` or
 `NOT MET` naming the command that shows it. Any line NOT MET means `failed`, with
-`error` saying what went wrong for the next attempt.
+`error` saying what went wrong for the next attempt. Every other claim in
+`report` names the command that showed it too; anything you inferred but did not
+run is marked `UNVERIFIED:`. An unmarked inference is a false statement to the judge.
+
+Before a `succeeded` report, if your work created anything another node could
+build on (a name, path, endpoint, flag, schema, interface, or a decision a later
+node must not undo), `graph_remember` one note for the nodes that depend on
+yours: `kind: "decision"`, `data: {for_dependents: true}`, `body` at most 8
+lines, each a fact your own commands showed. It reaches them in their card's
+`upstream`; the report excerpt there is only 400 bytes. Skip it when there is
+nothing to build on.
 
 Before ANY `failed` report, `graph_remember` on the node one structured
 observation, so the next claim card carries it (a failure means the context was
