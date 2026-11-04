@@ -5386,7 +5386,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Pages the folder's files, newest first; each row's user_id is its uploader. Requires read on the folder.",
+        "description": "Pages the folder's files, newest first unless sort/sort_dir say otherwise (id is always the final tie-breaker); each row's user_id is its uploader. total counts the rows matching q and path. Requires read on the folder.",
         "tags": [
           "folders"
         ],
@@ -5413,9 +5413,35 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Case-insensitive substring of the file name",
+            "description": "Case-insensitive substring of the file name; empty = no filter",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort key (default created_at)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "name",
+                "size",
+                "created_at",
+                "updated_at"
+              ]
+            }
+          },
+          {
+            "name": "sort_dir",
+            "in": "query",
+            "description": "Sort direction (default desc)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
             }
           },
           {
@@ -5455,7 +5481,7 @@
             }
           },
           "400": {
-            "description": "tenant_id_required, tenant_id_not_allowed",
+            "description": "tenant_id_required, tenant_id_not_allowed, invalid_sort",
             "content": {
               "application/json": {
                 "schema": {
@@ -5935,6 +5961,142 @@
           },
           "409": {
             "description": "folder_archived, storage_provider_mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "storage_unavailable, storage_not_configured, service_label_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage/folders/{folder_id}/files/{file_id}/presigned-url": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Returns a short-lived presigned GET URL for one file in the folder. Requires read on the folder, and reads anyone's upload in it, not only the caller's. This is the read route a managing service can use: it names the tenant with tenant_id as on every other folder route, which GET /storage/file/s3/presigned-url cannot take. An archived folder is still readable. The URL is signed without checking the object exists; a row whose object is gone answers 404 from storage when the URL is fetched.",
+        "tags": [
+          "folders"
+        ],
+        "summary": "Get a presigned read URL for a file in a folder",
+        "operationId": "getFolderFilePresignedUrl",
+        "parameters": [
+          {
+            "name": "folder_id",
+            "in": "path",
+            "description": "Folder ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "File ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expiry",
+            "in": "query",
+            "description": "URL lifetime in seconds (default 900, max 604800)",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "description": "Service principal only, and required for one",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.GetPresignedUrlResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "bad_request, tenant_id_required, tenant_id_not_allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "folder_not_found, file_not_in_folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "storage_provider_mismatch",
             "content": {
               "application/json": {
                 "schema": {
@@ -6747,7 +6909,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Returns the files shared with the group, newest share first. Requires membership of the group (admins and tenant admins are exempt).",
+        "description": "Returns the live files shared with the group, ordered by the file's own columns: newest file first unless sort/sort_dir say otherwise (id is always the final tie-breaker). total counts the files matching q. Requires membership of the group (admins and tenant admins are exempt).",
         "tags": [
           "sharing"
         ],
@@ -6761,6 +6923,40 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive substring of the file name; empty = no filter",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Sort key (default created_at)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "name",
+                "size",
+                "created_at",
+                "updated_at"
+              ]
+            }
+          },
+          {
+            "name": "sort_dir",
+            "in": "query",
+            "description": "Sort direction (default desc)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
             }
           },
           {
@@ -6787,6 +6983,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/internal_delivery_http_handler.GroupFilesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_sort",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
                 }
               }
             }

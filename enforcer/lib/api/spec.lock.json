@@ -5,43 +5,43 @@
       "repo": "enforcer-graph",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "ec1f53334ffb580b41621c92bd8bc281ad88a16d",
+      "ref": "c0b13c86bea341ca873dc0bdf4a3e39f2a9c039a",
       "file": "spec/graph.json",
-      "upstream_sha256": "429bc6ebeddea6985981137aa68406aa4541c15cb501165248572675b09a4ca5",
-      "sha256": "60de52073356fc20bf234a62f4eae4d2f9790671109454b02ad32501ed7746ae"
+      "upstream_sha256": "143a453616a4fc01cedbd75cd8a86e4d359f42bf3cbc54b06f4eab7603d31186",
+      "sha256": "2a08f6a72c94de5d8ede9c668dd8d31bffb61f5675ea1ed51837016558e6873e"
     },
     "v3": {
       "repo": "enforcer-v3",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "c6f4a6a8b26c4cb520db95b9d0a424795fe75bf7",
+      "ref": "ed13ea6d29ae2bc6b22ad3a440dbd4392888e6f3",
       "file": "spec/v3.json",
-      "upstream_sha256": "1706a38fc347df68259e23c43cf67e8b948742131e505713dcce87d6d0d1472e",
-      "sha256": "70254e8c9ecf808369491fc1e94191100f6844233fc249e47f428541b7baff9c"
+      "upstream_sha256": "3ccb216e7fda68c78caa2acd359bce6a53a308b513525b37d8b7b192f1a55055",
+      "sha256": "cad9ad68803cf643d02e76e04e800168ddf241c3504e63c5a59b1abf966eb994"
     },
     "files": {
       "repo": "enforcer-files",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "86d4b28f342521911d53f6a907fde2d6cb0370b9",
+      "ref": "a3af8366e9570e2cd9fe2d41e2d9f496d8e0f96f",
       "file": "spec/files.json",
-      "upstream_sha256": "5ea1e9c1e19be24ef1c77d7493c5ae23d80eace1b521a6f2a4e09c228314ff8a",
-      "sha256": "e2b123d1f19a43aa2f09d49b9cde6ef5d0132e7dbd2ac7fc9ef13da6edf0cda4"
+      "upstream_sha256": "d4e32e44383ee6fae71654443135071d2746d679300e28a34f924b03c47a6b00",
+      "sha256": "a52d076c68f690b5f3147eedc192c77b5653b74f57ec4f397e299dfa42c0c24c"
     },
     "governance": {
       "repo": "enforcer-governance",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "ca0c37f4818e73e5686f9e75802c0c2612c7ab42",
+      "ref": "ba7871f146f176cbe8b3f6280920673281f21f88",
       "file": "spec/governance.json",
-      "upstream_sha256": "449c92bb7abe640d54823ba8a42eb97ff0f499003c4f5d08f157066894c21f03",
-      "sha256": "67dea490a61b3bd90c7cda30e65794c084a0fc19a8a04c409714af2a2f6e0113"
+      "upstream_sha256": "674d6155bc484fc984a6d6641af5d073a0de0d670888944b026b111282902643",
+      "sha256": "f590aa074145277099667d7f53be8d8d56f14dcc8719695ffcab12ba340c4358"
     },
     "mcp": {
       "repo": "enforcer-v3-mcp",
       "path": "tool-names.json",
       "kind": "json",
-      "ref": "732bd7425cee7f98a6862678a3e665fb9aae07c8",
+      "ref": "09c072962b43ef186e243546349dfb71bf9855b6",
       "file": "spec/mcp-manifest.json",
       "upstream_sha256": "94b3a2d1e281490c654cf50c47b66a7913bfe90546e0bbbfcd436a6d40011581",
       "sha256": "94b3a2d1e281490c654cf50c47b66a7913bfe90546e0bbbfcd436a6d40011581"
