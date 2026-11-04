@@ -52,7 +52,7 @@
 // and is commonly 0600); a file this creates is 0600.
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, copyFileSync, existsSync, statSync, chmodSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { claudeSettingsPath } from '../../../../hooks/claude/paths.mjs';
@@ -215,6 +215,15 @@ export function ensure(cfg = {}, { signedIn = null, env = process.env } = {}) {
     // a worker the dispatcher started, or anything else given its own exporter in the environment, is left alone
     if (env.OTEL_EXPORTER_OTLP_ENDPOINT && !String(env.OTEL_EXPORTER_OTLP_ENDPOINT).endsWith(OTLP_PATH))
       return { skipped: 'another exporter (OTEL_EXPORTER_OTLP_ENDPOINT in the environment)' };
+    // A worker the dispatcher started with its own credential runs with ENFORCER_HOME set to a per-run directory but
+    // the operator's real HOME (src/dispatch/run.mjs). SHIM() would then name a file inside that directory, which is
+    // deleted when the run ends, while CLAUDE_SETTINGS() is still the operator's own settings.json: writing it would
+    // point the operator's exporter at a helper that soon stops existing (2026-11-03, home-rest_serve). Never write
+    // from a non-shared home. The shim already in the operator's settings reads ENFORCER_HOME itself, so the worker's
+    // own exports still carry the worker's credential. `telemetry on` (enable) remains the explicit way in.
+    const shared = join(home(), '.enforcer');
+    if (env.ENFORCER_HOME && resolve(String(env.ENFORCER_HOME)) !== resolve(shared))
+      return { skipped: `ENFORCER_HOME is not the shared ${shared} (a dispatched worker's own home); settings left alone` };
     const s = readSettings();
     const e = s.env || {};
     const helper = typeof s.otelHeadersHelper === 'string' ? s.otelHeadersHelper : '';

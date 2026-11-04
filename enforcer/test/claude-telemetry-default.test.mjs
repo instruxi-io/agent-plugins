@@ -110,3 +110,18 @@ test('telemetry off is sticky; telemetry on clears it', () => {
   assert.equal(JSON.parse(readFileSync(join(process.env.GOVERNOR_HOME, 'config.json'), 'utf8')).telemetryOn, true);
   assert.match(run('status').stdout, /Claude Code telemetry: on, exporting to/);
 });
+
+test("ensure never writes the operator's settings from a dispatched worker's own ENFORCER_HOME", () => {
+  // 2026-11-03: a worker with its own credential (ENFORCER_HOME = <state>/home-<node-key>, real HOME) wrote its
+  // per-run shim path into the operator's settings.json; the run's directory was deleted and OTel export broke.
+  write({ model: 'opus' });
+  const before = readFileSync(settingsPath, 'utf8');
+  const workerHome = join(home, '.config', 'enforcer', 'dispatch', 'g', 'home-rest_serve');
+  const r = tel.ensure(cfg, { signedIn, env: { ENFORCER_HOME: workerHome } });
+  assert.match(r.skipped || '', /ENFORCER_HOME is not the shared/);
+  assert.equal(readFileSync(settingsPath, 'utf8'), before, 'settings untouched');
+  // the shared home (the default, or the same path spelled with a trailing slash) still writes
+  assert.equal(tel.ensure(cfg, { signedIn, env: { ENFORCER_HOME: join(home, '.enforcer') + '/' } }).changed, true);
+  assert.match(read().otelHeadersHelper, /\.enforcer[\\/]otel-headers\.mjs/);
+  assert.ok(!read().otelHeadersHelper.includes('home-rest_serve'));
+});
