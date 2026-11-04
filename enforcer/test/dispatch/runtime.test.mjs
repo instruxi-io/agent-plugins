@@ -208,6 +208,40 @@ test('a second dispatcher is refused; --takeover replaces a live lease', async (
   assert.equal(await a.renew(), false, 'the old holder sees the lease is lost');
 });
 
+test('a reset lease node (a loop epoch) is set back to done, so the epoch can complete', async () => {
+  const api = new FakeAPI([]);
+  const set = [];
+  api.setNodeStatus = async (g, id, status) => {
+    set.push(status);
+    api.list.find((n) => n.id === id).status = status;
+    return {};
+  };
+  const a = new Lease(api, 'g', { pid: 111, host: 'h' });
+  assert.equal(await a.acquire(), true);
+  assert.equal(api.list[0].status, 'done', 'created done');
+  assert.deepEqual(set, [], 'a done node is left alone');
+  // the server's reset: every live node back to active, data kept
+  api.list[0].status = 'active';
+  api.list[0].data = { ...api.list[0].data, dispatcher: null };
+  const b = new Lease(api, 'g', { pid: 222, host: 'h' });
+  assert.equal(await b.acquire(), true);
+  assert.equal(api.list[0].status, 'done', 'acquire puts it back to done');
+  api.list[0].status = 'active';
+  assert.equal(await b.renew(), true);
+  assert.equal(api.list[0].status, 'done', 'renew does too');
+  assert.deepEqual(set, ['done', 'done']);
+});
+
+test('a failed status write does not cost the lease', async () => {
+  const api = new FakeAPI([{ id: 'L', key: LEASE_KEY, type: 'ops', status: 'active', data: { dispatcher_lease: true } }]);
+  const say = [];
+  api.setNodeStatus = async () => {
+    throw new APIError(403, 'forbidden');
+  };
+  assert.equal(await new Lease(api, 'g', { say: (m) => say.push(m), pid: 1, host: 'h' }).acquire(), true);
+  assert.ok(say.some((m) => /lease node is active, could not set it done: 403/.test(m)));
+});
+
 test('pids.json orphans from a dead dispatcher are reaped', async () => {
   const state = tmp();
   const sh = script(state, 'orphan', 'sleep 60');
