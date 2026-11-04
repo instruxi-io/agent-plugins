@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.9.6
+
+- Claude Code telemetry setup no longer rewrites the operator's ~/.claude/settings.json from a dispatched worker: a worker launched with its own credential has ENFORCER_HOME set to a per-run directory but the operator's HOME, so the session-start ensure() wrote that run's temporary otel-headers.mjs path into the real settings, and OTel export lost its auth header once the run's directory was deleted. ensure() now skips when ENFORCER_HOME is not the shared ~/.enforcer; the shim in the operator's settings already reads ENFORCER_HOME, so a worker's exports still carry its own credential.
+- The API spec lock is re-pinned to what is deployed on 2026-11-03 (graph c0b13c8, v3 ed13ea6, files a3af836, governance ba7871f, MCP manifest 09c0729), the generated types are regenerated, and two drift entries the new specs resolve (graph-scoped observations, run evidence) are removed.
+- The graph-worker agent (Claude and Grok) now checks a join before its first edit: with two or more prerequisites in `upstream`, it confirms each one's work is in its base and names what it relies on from each, and reports `failed` with `needs.kind: "prerequisite"` when one is missing or two conflict. Before a `succeeded` report it leaves one `kind: "decision"` note `{for_dependents: true}` with the names, paths, flags or decisions dependent nodes build on, since the upstream report excerpt is only 400 bytes. Reports mark anything inferred but not run as `UNVERIFIED:`. Bug and incident nodes get the actual error before a theory and test it against a control. A check that can pass without exercising what it guards is not evidence.
+
 ## 1.9.5
 
 - `enforcer dispatch watch` keeps one dispatcher running per graph that the work lobby (`GET /work`) advertises to the caller and restarts it when demand returns after it went idle, woken by `GET /work/stream` and a 30 s poll, with a doubling backoff for dispatchers that die young (one that finished its graph cleanly is not backed off) and a `watch:` line in `enforcer dispatch status`; a systemd user unit example is in `docs/graph/dispatch-watch.service.example`. `enforcer dispatch <graph> --for me|mine` launches only nodes assigned to the caller (the frontier's `for` filter).
