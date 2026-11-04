@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.9.7
+
+- The dispatcher sets its `dispatcher-lease` bookkeeping node back to `done` whenever it takes or renews the lease. A graph reset (each epoch of a loop) returns every live node to `active`, the lease node too, and nothing set it back: the epoch never counted as complete, so an on-completion loop stopped after its second epoch, and the lobby advertised the lease node as open work.
+
 ## 1.9.6
 
 - Claude Code telemetry setup no longer rewrites the operator's ~/.claude/settings.json from a dispatched worker: a worker launched with its own credential has ENFORCER_HOME set to a per-run directory but the operator's HOME, so the session-start ensure() wrote that run's temporary otel-headers.mjs path into the real settings, and OTel export lost its auth header once the run's directory was deleted. ensure() now skips when ENFORCER_HOME is not the shared ~/.enforcer; the shim in the operator's settings already reads ENFORCER_HOME, so a worker's exports still carry its own credential.
