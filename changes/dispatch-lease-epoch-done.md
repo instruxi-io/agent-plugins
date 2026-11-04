@@ -1,0 +1,1 @@
+The dispatcher sets its `dispatcher-lease` bookkeeping node back to `done` whenever it takes or renews the lease. A graph reset (each epoch of a loop) returns every live node to `active`, the lease node too, and nothing set it back: the epoch never counted as complete, so an on-completion loop stopped after its second epoch, and the lobby advertised the lease node as open work.

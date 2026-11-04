@@ -114,6 +114,10 @@ export class API {
   async patchNode(g, n, body) {
     return (await this.call('PATCH', `/graphs/${g}/nodes/${n}`, body)).data;
   }
+  // api-used: sends status; reads data
+  async setNodeStatus(g, n, status) {
+    return (await this.call('POST', `/graphs/${g}/nodes/${n}/status`, { status })).data;
+  }
   // api-used: sends evidence
   addEvidence(g, n, r, body) {
     return this.call('POST', `/graphs/${g}/nodes/${n}/runs/${r}/evidence`, body);
