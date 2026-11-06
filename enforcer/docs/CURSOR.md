@@ -132,11 +132,11 @@ The CLI matches that. `enforcer workspace list`, `switch <name|code|tenant_id>`,
 
 ## Tool inventory
 
-Source: the pinned manifest `enforcer/lib/api/spec/mcp-manifest.json`. The spec lock points `enforcer-v3-mcp` `tool-names.json` at `a164d134f4a65997c9e14d02e6deabdb87e782a3`, the CR-1 main tip Engineering named on 2026-11-06. The previous pin `09c07296` predates CR-1. This environment got HTTP 404 for the private repo, so `tool-names.json` at that tip was not fetched. The vendored file is that previous pin with `workspace_switch` reclassified to effect `write` and `always_confirm` left false. Profiles and `always_confirm` below are that file. This is not a live `tools/list`.
+Source: the pinned manifest `enforcer/lib/api/spec/mcp-manifest.json`. The spec lock points `enforcer-v3-mcp` `tool-names.json` at `a164d134f4a65997c9e14d02e6deabdb87e782a3`, the CR-1 main tip Engineering named on 2026-11-06. The previous pin `09c07296` predates CR-1. Profiles and `always_confirm` below are that file. This is not a live `tools/list`.
 
 Post-CR-1 the workflow profile in this pin is **50** tools: **27 read, 19 write, 4 destructive**. A connector assessment reported a tenant_admin `tools/list` of **46**. Whether production still shows 46 until a CR-4 redeploy is **UNVERIFIED, pending Engineering (CR-4)**. Do not pick 50 or 46 as the live count.
 
-Other profiles in the same pin: `graph` 26, `governance` 12, `gvnr` 29, `full` 2, `readonly` 1 (`enforcer_setup_plan`), `support` 1 (`enforcer_setup_plan`). `gvnr` is a separate profile, not part of the workflow 50.
+Other profiles in the same pin: `graph` 26, `governance` 12, `gvnr` 30, `full` 2, `readonly` 1 (`enforcer_setup_plan`), `support` 1 (`enforcer_setup_plan`). `gvnr` is a separate profile, not part of the workflow 50. `tell_team` is the gvnr write added at this tip (`always_confirm` false).
 
 ### Workflow profile (50)
 
