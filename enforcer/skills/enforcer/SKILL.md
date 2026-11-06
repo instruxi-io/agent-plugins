@@ -17,8 +17,10 @@ The `enforcer` MCP server documents itself from the live spec:
 1. `enforcer_api_search` — find an operation by domain noun ("invite",
    "api key", "role"), not by HTTP verb.
 2. `enforcer_api_describe` — its parameters and shape.
-3. `enforcer_api_read` for reads; `enforcer_api_write` for anything that
-   changes state, which the user confirms first.
+3. `enforcer_api_read` for reads; `enforcer_api_write` for a catalog call
+   that changes state. That tool is marked `always_confirm` in the pinned
+   manifest. A client can still skip the prompt, and dedicated tools such as
+   `graph_reset` are separate writes. See Safety below.
 
 Prefer a dedicated workflow tool when one fits the question (tenant health,
 customer lookup, transfer trace, ticket triage): one call instead of several.
@@ -47,7 +49,12 @@ Tools: `agents_mine` (list agents you own or steward), `agent_brief` (one
 agent: owner, steward, role, credentials, groups, audit events, governance
 sessions), `agent_create`, `agent_update`, `agent_set_enabled`, `agent_groups`,
 `agent_credential_issue`, `agent_credential_rotate`, `agent_credential_revoke`.
-Each write is confirmed by the person.
+Do not issue, rotate, revoke, or disable a credential unless the person asked.
+The governor hooks ask before the three `agent_credential_*` calls when they
+are installed (a headless worker is denied). `agent_create`, `agent_update`,
+`agent_set_enabled`, and `agent_groups` are not in those rules, and the pinned
+MCP manifest does not mark them `always_confirm`. See
+[docs/CURSOR.md](../../docs/CURSOR.md).
 
 - Create an agent for one job with `agent_create`. Pick its role from the roles
   the tenant allows (`getTenantAgentPolicy`); do not invent one. Add it to
@@ -74,10 +81,29 @@ person does not own or steward.
 
 ## Safety
 
-- Writes go through `enforcer_api_write` and the user confirms each one. Never
-  batch destructive operations without showing what they will touch.
-- Never put an API key or token in a file, a command line or a message. Keys
-  are revocable; say so if one may have leaked.
+Nothing here promises that every write waits for approval. Confirmation
+depends on the client and on whether the governor hooks are installed. The
+boundary is [docs/CURSOR.md](../../docs/CURSOR.md).
+
+- Catalog changes go through `enforcer_api_write`. The pinned MCP manifest
+  marks that tool `always_confirm` and `destructive`. That flag is the
+  server's. It is not a guarantee that every MCP client stops and asks, and a
+  client that has allowlisted the tool will not ask again. Show what a
+  destructive call will touch and wait for the person. Do not batch them.
+- Dedicated workflow tools are separate calls. Beside `enforcer_api_write`,
+  the pinned manifest marks only `enforcer_setup_apply`, `graph_share`, and
+  `graph_unshare` as `always_confirm`. `graph_review` and `graph_reset` are
+  writes with `always_confirm` false.
+- With the governor hooks installed, `enforcer_api_write`,
+  `agent_credential_issue`, `agent_credential_rotate`,
+  `agent_credential_revoke`, and `graph_decide` are local ask rules (a
+  headless worker is denied). Under Cursor the hook turns that ask into a
+  deny, because Cursor does not enforce ask. A bare MCP session does not run
+  these hooks.
+- Never put an API key or token in a file, a command line, or a message. The
+  authorization server probed on 2026-11-05 does not advertise a revocation
+  endpoint, so do not promise that a leaked key can be revoked at a URL. Say
+  that it should be revoked in the workspace, and that how is UNVERIFIED.
 
 ## Procedures
 

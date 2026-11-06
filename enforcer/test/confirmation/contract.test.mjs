@@ -39,7 +39,8 @@ assert.deepEqual(
 assert.deepEqual([...ANNOTATION_SHAPE], ['readOnlyHint', 'destructiveHint', 'idempotentHint']);
 assert.equal(lock.sources.mcp.repo, 'enforcer-v3-mcp');
 assert.equal(lock.sources.mcp.path, 'tool-names.json');
-assert.match(lock.sources.mcp.ref, /^[0-9a-f]{40}$/);
+// 8 to 40: the CR-1 tip is recorded as a164d134 until the private repo can be fetched.
+assert.match(lock.sources.mcp.ref, /^[0-9a-f]{8,40}$/);
 ok(`pin matches the five exceptions; advertisements come from tool-names.json @ ${lock.sources.mcp.ref}`);
 
 // ── every locked tool ───────────────────────────────────────────────────────

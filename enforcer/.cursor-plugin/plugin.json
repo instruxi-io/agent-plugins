@@ -2,7 +2,7 @@
   "name": "enforcer",
   "displayName": "Enforcer",
   "version": "1.9.7",
-  "description": "Connects Cursor to your Enforcer workspace: the Enforcer MCP server, the skills, and the governor's hooks that gate and record every tool call.",
+  "description": "Connects Cursor to an Enforcer workspace through the hosted MCP server, with skills for identity, files, plans, and the governor. Its hooks record tool calls and block the writes the governor would ask a person to approve.",
   "author": {
     "name": "Instruxi",
     "url": "https://instruxi.io"
@@ -15,7 +15,9 @@
     "mcp",
     "identity",
     "authorization",
-    "governance"
+    "governance",
+    "workspace",
+    "audit"
   ],
   "skills": "./skills/",
   "mcpServers": "./mcp.json",

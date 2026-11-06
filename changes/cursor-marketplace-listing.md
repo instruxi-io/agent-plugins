@@ -1,0 +1,1 @@
+Cursor marketplace guide for the Enforcer plugin: onboarding, the CR-1 workflow inventory (50 tools, workspace_switch a write), four confirmation layers, and OAuth and hosted OpenAPI gaps left unverified. No license change and no marketplace submission.

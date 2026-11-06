@@ -10,14 +10,25 @@ chooses). One grant means the same on every provider.
 
 ## Finding and inspecting: the MCP server
 
-Use the `enforcer` MCP server's catalog. Search, then read or write:
+Use the `enforcer` MCP server's catalog. Search by the domain noun, then read
+or write the operation id the search returns:
 
-- `enforcer_api_search` with `tag: "files-files"` (files) or `"files-sharing"` (groups)
-- `enforcer_api_read` for lists, metadata, presigned download URLs
-- `enforcer_api_write` for move, copy, and sharing (the user confirms each write)
+- `enforcer_api_search` for "storage provider", "s3 files", "gcs files", or "share"
+- `enforcer_api_read` for lists, metadata, and presigned download URLs
+- `enforcer_api_write` for move, copy, and sharing
 
-Ask `files_getActiveStorageProvider` first when it matters: the provider decides
-which `files_*` operation applies (`files_listS3Files` vs `files_listGcsFiles`).
+The pinned files spec (`lib/api/spec/files.json`) tags these operations
+`files` and names them by operationId: `getActiveStorageProvider`,
+`listS3Files`, `listGcsFiles`, and `listStorjFiles`. There is no `files_`
+prefix on those ids. Ask `getActiveStorageProvider` first when the provider
+matters: it decides which list operation applies. The OAuth scope families
+are `enforcer:files-files` and `enforcer:files-sharing`. Those names are
+scopes, not the OpenAPI tag and not the operationId.
+
+`enforcer_api_write` is marked `always_confirm` in the pinned MCP manifest.
+That is the server's flag, not a promise that every client asks. Do not batch
+destructive calls. The write-safety boundary is
+[docs/CURSOR.md](../../docs/CURSOR.md).
 
 ## Moving bytes: the commands, never the tools
 
@@ -32,11 +43,21 @@ GCS and Storj) and use the `/enforcer:login` sign-in.
 
 ## What a sign-in may do
 
-Scopes are `enforcer:files-<tag>.<effect>`. A browser sign-in carries
-`files-files.write` (list, read, upload, move, copy) and `files-sharing.write`
-(share and unshare with groups). It does NOT carry `.destructive`: trash,
-delete and Storj access grants stay with a person, in the app. Buckets,
-connections and the OCR queue (`files-storage`, `files-ocr`) are admin-only.
+File scopes look like `enforcer:files-<tag>.<effect>`. The default browser
+preset `work` (`enforcer login`, no `--for`) requests
+`enforcer:files-files.write`. It does not request
+`enforcer:files-sharing.write`. Sharing needs that scope; ask for it with
+`--scope` or a preset that includes it. The `work`, `plan`, and `agents`
+presets in `bin/login.mjs` do not request `.destructive` scopes. `--for admin`
+asks for every scope the server offers, including destructive ones when they
+are offered, and the CLI refuses that sign-in when the token is too large
+(HTTP 431).
+
+Which of those scopes a Cursor OAuth grant actually receives is UNVERIFIED,
+pending Engineering (CR-4). The authorization server advertised 69 scopes on
+2026-11-05; tool access is still filtered by server profile.
 
 A refusal with `insufficient_scope` means the credential is narrower than the
-call. Say which scope the message names; do not retry it.
+call. Say which scope the message names; do not retry it. Buckets,
+connections, and the OCR queue are not in the `work` preset; look them up
+with `enforcer_api_search` rather than guessing an admin-only tag.
