@@ -132,11 +132,11 @@ The CLI matches that. `enforcer workspace list`, `switch <name|code|tenant_id>`,
 
 ## Tool inventory
 
-Source: the pinned manifest `enforcer/lib/api/spec/mcp-manifest.json`. The spec lock points `enforcer-v3-mcp` `tool-names.json` at `a164d134f4a65997c9e14d02e6deabdb87e782a3`, the CR-1 main tip Engineering named on 2026-11-06. The previous pin `09c07296` predates CR-1. This environment got HTTP 404 for the private repo, so `tool-names.json` at that tip was not fetched. The vendored file is that previous pin with `workspace_switch` reclassified to effect `write` and `always_confirm` left false. Profiles and `always_confirm` below are that file. This is not a live `tools/list`.
+Source: the pinned manifest `enforcer/lib/api/spec/mcp-manifest.json`. It is `enforcer-v3-mcp` `tool-names.json` at `a164d134f4a65997c9e14d02e6deabdb87e782a3`, byte for byte (sha256 `b8fbd67dc32d1b183c91f37310a346768b3c6b13714955c41a116dd453c288da`), 80 tools. The previous pin `09c07296` predates CR-1. Profiles and `always_confirm` below are that file. This is not a live `tools/list`.
 
 Post-CR-1 the workflow profile in this pin is **50** tools: **27 read, 19 write, 4 destructive**. A connector assessment reported a tenant_admin `tools/list` of **46**. Whether production still shows 46 until a CR-4 redeploy is **UNVERIFIED, pending Engineering (CR-4)**. Do not pick 50 or 46 as the live count.
 
-Other profiles in the same pin: `graph` 26, `governance` 12, `gvnr` 29, `full` 2, `readonly` 1 (`enforcer_setup_plan`), `support` 1 (`enforcer_setup_plan`). `gvnr` is a separate profile, not part of the workflow 50.
+Other profiles in the same pin: `graph` 26, `governance` 12, `gvnr` 30, `full` 2, `readonly` 1 (`enforcer_setup_plan`), `support` 1 (`enforcer_setup_plan`). `gvnr` is a separate profile, not part of the workflow 50. The one tool this pin adds over the previous vendored list is `tell_team` (effect `write`, `always_confirm` false, profile `gvnr` only). It does not change the workflow counts.
 
 ### Workflow profile (50)
 

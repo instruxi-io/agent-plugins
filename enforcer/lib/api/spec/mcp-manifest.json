@@ -634,6 +634,14 @@
       ]
     },
     {
+      "name": "tell_team",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "gvnr"
+      ]
+    },
+    {
       "name": "update_task",
       "effect": "write",
       "always_confirm": false,
