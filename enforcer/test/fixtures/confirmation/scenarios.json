@@ -1,0 +1,153 @@
+{
+  "scenarios": [
+    {
+      "id": "deny-graph-decide",
+      "tool": "graph_decide",
+      "arguments": { "graph": "g1", "node": "n1", "decision": "go" },
+      "decision": "deny",
+      "dispatched": false,
+      "reason": "deny"
+    },
+    {
+      "id": "cancel-enforcer-api-write",
+      "tool": "enforcer_api_write",
+      "arguments": { "operation": "createThing", "body": { "name": "a" } },
+      "decision": "cancel",
+      "dispatched": false,
+      "reason": "cancel"
+    },
+    {
+      "id": "approve-graph-decide-exact",
+      "tool": "graph_decide",
+      "arguments": { "graph": "g1", "node": "n1", "decision": "go" },
+      "decision": "approve",
+      "dispatched": true,
+      "reason": "approved"
+    },
+    {
+      "id": "approve-does-not-swap-arguments",
+      "tool": "graph_decide",
+      "arguments": { "graph": "g1", "node": "n1", "decision": "go" },
+      "approved": { "name": "graph_decide", "arguments": { "graph": "g1", "node": "n1", "decision": "stop" } },
+      "decision": "approve",
+      "dispatched": false,
+      "reason": "not-the-approved-call"
+    },
+    {
+      "id": "approve-does-not-swap-tools",
+      "tool": "graph_decide",
+      "arguments": { "graph": "g1", "node": "n1", "decision": "go" },
+      "approved": { "name": "graph_post", "arguments": { "graph": "g1", "node": "n1", "decision": "go" } },
+      "decision": "approve",
+      "dispatched": false,
+      "reason": "not-the-approved-call"
+    },
+    {
+      "id": "missing-decision-is-unconfirmed",
+      "tool": "graph_share",
+      "arguments": { "graph": "g1", "account": "acct" },
+      "dispatched": false,
+      "reason": "unconfirmed"
+    },
+    {
+      "id": "ask-is-not-approval",
+      "tool": "enforcer_setup_apply",
+      "arguments": { "plan": "p1" },
+      "decision": "ask",
+      "dispatched": false,
+      "reason": "unconfirmed"
+    },
+    {
+      "id": "hook-allow-is-not-approval",
+      "tool": "graph_unshare",
+      "arguments": { "graph": "g1" },
+      "decision": "allow",
+      "dispatched": false,
+      "reason": "unconfirmed"
+    },
+    {
+      "id": "update-task-proceeds-once-without-a-prompt",
+      "tool": "update_task",
+      "arguments": { "id": "t1", "status": "done" },
+      "dispatched": true,
+      "reason": "no-confirmation-required"
+    },
+    {
+      "id": "next-work-deny-writes-nothing",
+      "tool": "graph_next_work",
+      "arguments": { "graph": "g1", "node": "n1", "runner": "r" },
+      "decision": "deny",
+      "dispatched": false,
+      "reason": "deny"
+    },
+    {
+      "id": "heartbeat-cancel-writes-nothing",
+      "tool": "graph_heartbeat",
+      "arguments": { "run": "run1" },
+      "decision": "cancel",
+      "dispatched": false,
+      "reason": "cancel"
+    },
+    {
+      "id": "report-approve-once",
+      "tool": "graph_report",
+      "arguments": { "run": "run1", "status": "succeeded" },
+      "decision": "approve",
+      "dispatched": true,
+      "reason": "approved"
+    },
+    {
+      "id": "remember-deny-writes-nothing",
+      "tool": "graph_remember",
+      "arguments": { "text": "kept" },
+      "decision": "deny",
+      "dispatched": false,
+      "reason": "deny"
+    },
+    {
+      "id": "workspace-switch-deny",
+      "tool": "workspace_switch",
+      "arguments": { "tenant_id": "ten_b" },
+      "decision": "deny",
+      "dispatched": false,
+      "reason": "deny",
+      "preferredTenant": null
+    },
+    {
+      "id": "workspace-switch-cancel",
+      "tool": "workspace_switch",
+      "arguments": { "tenant_id": "ten_b" },
+      "decision": "cancel",
+      "dispatched": false,
+      "reason": "cancel",
+      "preferredTenant": null
+    },
+    {
+      "id": "workspace-switch-unconfirmed",
+      "tool": "workspace_switch",
+      "arguments": { "tenant_id": "ten_b" },
+      "dispatched": false,
+      "reason": "unconfirmed",
+      "preferredTenant": null
+    },
+    {
+      "id": "workspace-switch-approve",
+      "tool": "workspace_switch",
+      "arguments": { "tenant_id": "ten_b" },
+      "decision": "approve",
+      "dispatched": true,
+      "reason": "approved",
+      "preferredTenant": "ten_b"
+    },
+    {
+      "id": "workspace-switch-approve-does-not-apply-a-different-tenant",
+      "tool": "workspace_switch",
+      "arguments": { "tenant_id": "ten_b" },
+      "approved": { "name": "workspace_switch", "arguments": { "tenant_id": "ten_other" } },
+      "decision": "approve",
+      "dispatched": false,
+      "reason": "not-the-approved-call",
+      "preferredTenant": null
+    }
+  ]
+}

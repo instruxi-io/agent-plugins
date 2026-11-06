@@ -1,0 +1,24 @@
+{
+  "unconfirmedWrites": [
+    "graph_next_work",
+    "graph_heartbeat",
+    "graph_report",
+    "graph_remember",
+    "update_task"
+  ],
+  "mustConfirm": [
+    "enforcer_api_write"
+  ],
+  "knownSideEffects": [
+    {
+      "tool": "workspace_switch",
+      "persists": "preferred_tenant_id",
+      "via": "updateMyPerson"
+    }
+  ],
+  "annotationShape": [
+    "readOnlyHint",
+    "destructiveHint",
+    "idempotentHint"
+  ]
+}
