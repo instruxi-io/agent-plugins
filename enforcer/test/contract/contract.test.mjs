@@ -3,6 +3,8 @@
 //   node --test test/contract/contract.test.mjs                       the pinned specs (lib/api/spec, as locked)
 //   CONTRACT_SPEC_DIR=/tmp/specs node --test test/contract/...        a directory of <service>.json (swagger 2 or OpenAPI 3):
 //                                                                      the nightly's deployed and main specs (contract-nightly.yml)
+//   A directory that holds deployed-swagger.json is an explicit "not evaluated" signal from
+//   fetch-live-specs.mjs. It fails this file even if spec JSON is copied in beside the marker.
 //
 // test/contract/used.json is every call site the plugin makes (scripts/extract-api-usage.mjs); a call site the spec cannot
 // serve is a bug in one of the two. Known, understood drift lives in known-drift.json, each entry with its reason; an entry
@@ -14,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { swagger2ToOpenapi3 } from '../../lib/api/convert.mjs';
 import { extract, render, USED_PATH, SERVICES } from '../../scripts/extract-api-usage.mjs';
+import { refuseUnexposedMarker } from '../../scripts/fetch-live-specs.mjs';
 import { check, checkCall, hasField, matchPaths } from './check.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +27,7 @@ const known = JSON.parse(readFileSync(join(here, 'known-drift.json'), 'utf8')).d
 
 function loadDocs() {
   const dir = process.env.CONTRACT_SPEC_DIR;
+  if (dir) refuseUnexposedMarker(dir);
   const docs = {};
   for (const [service, name] of Object.entries(SERVICES)) {
     const file = dir ? join(dir, `${name}.json`) : join(api, lock.sources[name].file);
