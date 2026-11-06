@@ -1,30 +1,129 @@
 name: contract-nightly
-# The plugin's HTTP calls (enforcer/test/contract/used.json) against the APIs as they are NOW, not as pinned:
-# the deployed servers' swagger/doc.json, and the head of each service's main. A red run means a server moved
-# under the plugin (or the plugin under it) before any release noticed. The same test runs on every PR against the pinned specs.
+# Two evidence paths, kept distinct so a green check cannot be read as the other one.
+#
+# authenticated source-main contract (job id: main)
+#   Schedule and workflow_dispatch only. SPEC_SYNC_TOKEN reads docs/swagger.json from each
+#   private service repo at that repo's main, then the contract test runs. That is source
+#   main, not the bytes on the deployed pods. It does not run on pull_request.
+#
+# deployed swagger
+#   The URLs are https://api.instruxi.dev/api/v1/<service>/swagger/doc.json for graph,
+#   enforcer, files, and governance. They returned the live documents through the 2026-10-12
+#   nightly. From 2026-11-01 the public edge answers those four with nginx's HTML 404, while
+#   each service's /health is up. The route is not published. This workflow does not open it.
+#   classify deployed swagger records one mode:
+#     fetched        all four documents came back; deployed contract then runs the test
+#     unexposed      all four are unpublished and every service health is up;
+#                    deployed swagger intentionally unexposed is the check, and the
+#                    contract test does not run
+#     auth-required  all four answered 401/403 and CONTRACT_SPEC_BEARER is unset;
+#                    deployed swagger auth required is the check, and the contract test
+#                    does not run
+#   Any other shape (partial, 5xx, health down, a bearer that was rejected, a 404 that is
+#   not the edge or the app) fails classify deployed swagger. A directory that only holds
+#   the unexposed or auth marker cannot satisfy the contract test.
 on:
   schedule:
     - cron: '17 4 * * *'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/contract-nightly.yml
+      - enforcer/scripts/fetch-live-specs.mjs
+      - enforcer/test/fetch-live-specs.test.mjs
+      - enforcer/test/contract/contract.test.mjs
 
 jobs:
-  deployed:
+  probe:
+    name: classify deployed swagger
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.fetch.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - name: classify the public swagger routes
+        id: fetch
+        working-directory: enforcer
+        env:
+          CONTRACT_SPEC_BEARER: ${{ secrets.CONTRACT_SPEC_BEARER }}
+        run: |
+          set +e
+          node scripts/fetch-live-specs.mjs "$RUNNER_TEMP/live-specs"
+          code=$?
+          set -e
+          mode=failed
+          if [ "$code" -eq 0 ]; then mode=fetched
+          elif [ "$code" -eq 10 ]; then mode=unexposed
+          elif [ "$code" -eq 11 ]; then mode=auth-required
+          else exit "$code"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Deployed swagger classification: \`$mode\`"
+            echo
+            echo "This job does not assert the plugin contract. \`fetched\` is the only mode in which \`deployed contract\` runs the contract test."
+            echo "\`unexposed\` and \`auth-required\` record that the contract was not evaluated. Authenticated source-main evidence is the scheduled \`authenticated source-main contract\` job (SPEC_SYNC_TOKEN, private docs/swagger.json)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deployed-contract:
+    name: deployed contract
+    needs: probe
+    if: needs.probe.outputs.mode == 'fetched'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 20
-      - name: fetch each deployed server's swagger document
+      - name: fetch the deployed documents again
         working-directory: enforcer
-        run: node scripts/fetch-live-specs.mjs "$RUNNER_TEMP/live-specs"
+        env:
+          CONTRACT_SPEC_BEARER: ${{ secrets.CONTRACT_SPEC_BEARER }}
+        run: node scripts/fetch-live-specs.mjs --expect fetched "$RUNNER_TEMP/live-specs"
       - name: contract test against the deployed specs
         working-directory: enforcer
         env:
           CONTRACT_SPEC_DIR: ${{ runner.temp }}/live-specs
         run: node --test test/contract/contract.test.mjs
 
+  deployed-swagger-intentionally-unexposed:
+    name: deployed swagger intentionally unexposed
+    needs: probe
+    if: needs.probe.outputs.mode == 'unexposed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - name: confirm the unexposed signal and do not run the contract test
+        working-directory: enforcer
+        env:
+          CONTRACT_SPEC_BEARER: ${{ secrets.CONTRACT_SPEC_BEARER }}
+        run: node scripts/fetch-live-specs.mjs --expect unexposed "$RUNNER_TEMP/live-specs"
+
+  deployed-swagger-auth-required:
+    name: deployed swagger auth required
+    needs: probe
+    if: needs.probe.outputs.mode == 'auth-required'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 20
+      - name: confirm auth is required and do not run the contract test
+        working-directory: enforcer
+        env:
+          CONTRACT_SPEC_BEARER: ${{ secrets.CONTRACT_SPEC_BEARER }}
+        run: node scripts/fetch-live-specs.mjs --expect auth-required "$RUNNER_TEMP/live-specs"
+
   main:
+    name: authenticated source-main contract
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
