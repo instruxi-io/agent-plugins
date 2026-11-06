@@ -9,4 +9,6 @@ Sign in to Enforcer and print the result verbatim. With no argument this opens a
 
 Run `enforcer login <arguments>` and print the output verbatim. If `enforcer` is not on PATH (Claude Code), run `node "${CLAUDE_PLUGIN_ROOT}/bin/enforcer" login <arguments>`; under Codex or Grok install the CLI once with `npm i -g @instruxi/enforcer`.
 
-When a sign-in replaces an existing one, the tool server keeps its session until it reconnects (run `/mcp`, pick enforcer, reconnect); the output says so.
+When a sign-in replaces an existing one, Claude Code's tool server keeps its session until it reconnects (run `/mcp`, pick enforcer, reconnect); the output says so. That reconnect step is Claude Code. How Cursor reconnects its MCP session after a new sign-in, an expiry, or a workspace switch is UNVERIFIED, pending Engineering (CR-4).
+
+The CLI revokes a previous token only when OAuth discovery publishes `revocation_endpoint`. The authorization server probed on 2026-11-05 does not advertise one. Do not invent a revoke URL. A saved API key removed by `logout` is removed on this machine only; it still exists on the server until it is revoked there, and that product step is UNVERIFIED.

@@ -84,9 +84,14 @@ person can make, **ask in the same turn, before you stop**:
    ("which of these flagged duplicates should be merged?").
 3. **Record each answer at once**, with `graph_decide` (gates) or `graph_review`
    (review items) when the session has them, else by running the `graphwatch`
-   command below yourself. The person's answer is the authorization; do not
-   ask again for permission to record it. Then call `graph_plan_status` once to
-   show what the answer released.
+   command below yourself. The person's answer in the question is what they
+   decided; record that decision. `graph_review` is a write in the pinned MCP
+   manifest, with `always_confirm` false. The pinned graph spec also has a
+   read that lists the queue (`GET /graphs/{graphId}/review`) and a write that
+   resolves one item. Do not treat a `graph_review` call as side-effect free,
+   and do not expect the tool to ask first. Which arguments only list is
+   UNVERIFIED: the MCP tool schema is not in this package. Then call
+   `graph_plan_status` once to show what the answer released.
 4. **No question tool, or a headless worker** (a dispatched worker, a
    subagent, `claude -p`): give the person the exact commands to run, one per
    item, filled in completely so they can paste each after `!` in Claude Code:
@@ -461,10 +466,14 @@ cold:
   (a worker re-judge, or a person approving it in `graph_review`). Do not
   heartbeat it, re-report it or call `graph_plan_status` in a loop waiting for
   it; take other work, or stop.
-- **A reset is a human's call.** `graph_reset` starts a new epoch and can
-  cancel running work. Never reset a graph to get unstuck, to retry, or because
-  a loop looks due (the server's loop worker does that). Only reset when a
-  person asks, through the tool's own confirmation.
+- **A reset is a human's call.** `graph_reset` starts a new epoch. The pinned
+  graph spec's reset body is `expected_epoch`, `force`, and `reason`. There is
+  no preview flag. Omitting `expected_epoch` resets on every call. `force: true`
+  cancels running runs; their heartbeats then answer `finished`. The pinned
+  MCP manifest classifies `graph_reset` as a write with `always_confirm` false,
+  so do not wait for the tool to ask. Never reset to get unstuck, to retry, or
+  because a loop looks due (the server's loop worker does that). Call it only
+  when the person asked, and pass `expected_epoch`.
 
 ## Two conventions that silently invert the plan if reversed
 

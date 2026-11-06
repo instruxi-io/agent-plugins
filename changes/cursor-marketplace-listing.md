@@ -1,0 +1,1 @@
+Cursor marketplace guide for the Enforcer plugin: onboarding, the pinned 50-tool workflow inventory, least privilege, and write safety, with OAuth and hosted OpenAPI gaps marked unverified. No license change and no marketplace submission.
