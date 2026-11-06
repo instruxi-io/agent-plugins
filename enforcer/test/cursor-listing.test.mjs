@@ -72,7 +72,7 @@ test('CR-1 pin classifies workspace_switch as a write and the lock names that ti
   assert.equal(n('write'), 19);
   assert.equal(n('destructive'), 4);
   const lock = JSON.parse(read('lib/api/spec.lock.json'));
-  assert.equal(lock.sources.mcp.ref, 'a164d134');
+  assert.equal(lock.sources.mcp.ref, 'a164d134f4a65997c9e14d02e6deabdb87e782a3');
   assert.match(read('docs/CURSOR.md'), /ship-readiness blocker/);
   assert.doesNotMatch(read('skills/enforcer/SKILL.md'), /which the user confirms first/);
   for (const skill of ['skills/enforcer/SKILL.md', 'skills/files/SKILL.md', 'skills/governor/SKILL.md', 'skills/graph/SKILL.md']) {

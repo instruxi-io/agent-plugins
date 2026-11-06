@@ -132,7 +132,7 @@ The CLI matches that. `enforcer workspace list`, `switch <name|code|tenant_id>`,
 
 ## Tool inventory
 
-Source: the pinned manifest `enforcer/lib/api/spec/mcp-manifest.json`. The spec lock points `enforcer-v3-mcp` `tool-names.json` at `a164d134`, the CR-1 main tip Engineering named on 2026-11-06. The previous pin `09c07296` predates CR-1. This environment got HTTP 404 for the private repo, so a newer main tip was not compared and the 40-character SHA was not fetched. The vendored file is that previous pin with `workspace_switch` reclassified to effect `write` and `always_confirm` left false. Profiles and `always_confirm` below are that file. This is not a live `tools/list`.
+Source: the pinned manifest `enforcer/lib/api/spec/mcp-manifest.json`. The spec lock points `enforcer-v3-mcp` `tool-names.json` at `a164d134f4a65997c9e14d02e6deabdb87e782a3`, the CR-1 main tip Engineering named on 2026-11-06. The previous pin `09c07296` predates CR-1. This environment got HTTP 404 for the private repo, so `tool-names.json` at that tip was not fetched. The vendored file is that previous pin with `workspace_switch` reclassified to effect `write` and `always_confirm` left false. Profiles and `always_confirm` below are that file. This is not a live `tools/list`.
 
 Post-CR-1 the workflow profile in this pin is **50** tools: **27 read, 19 write, 4 destructive**. A connector assessment reported a tenant_admin `tools/list` of **46**. Whether production still shows 46 until a CR-4 redeploy is **UNVERIFIED, pending Engineering (CR-4)**. Do not pick 50 or 46 as the live count.
 
@@ -198,7 +198,7 @@ Four layers get called "approval". They are not interchangeable. `always_confirm
 
 **c. Governor hooks**, only while this plugin's hooks or `enforcer harness install cursor` are actually running. `lib/governor/core/capability.mjs` asks (and denies a headless worker) for `enforcer_api_write`, `agent_credential_issue`, `agent_credential_rotate`, `agent_credential_revoke`, and `graph_decide`. `enforcer_api_write` to a graph route is exempt when the session carries `GRAPH_ID`. No other MCP tool name is in those rules. On Cursor an ask becomes a deny: `hooks/cursor/shim.mjs` does not forward `ask`, because Cursor does not enforce `ask` on `preToolUse`. The shim denies the call and tells the person to approve it in the Enforcer console or change the policy, then retry. That is a block, not an approval dialog. `preToolUse` is `failClosed`. A bare MCP client never runs these hooks.
 
-**d. Host portable confirmation (Engineering CR-5, agent-plugins #413, pending merge).** Separate from server `always_confirm`. Deny or cancel dispatches nothing. Approve runs the approved call once. A missing decision allows only pure reads plus the same five exemptions (`graph_next_work`, `graph_heartbeat`, `graph_report`, `graph_remember`, `update_task`). This package does not ship that contract. It is not merged. Do not treat it as behavior of the server today.
+**d. Host portable confirmation (Engineering CR-5, agent-plugins #413, merged as `2645d818` (tip `618cfe44`)).** Separate from server `always_confirm`. Deny or cancel dispatches nothing. Approve runs the approved call once. A missing decision allows only pure reads plus the same five exemptions (`graph_next_work`, `graph_heartbeat`, `graph_report`, `graph_remember`, `update_task`). Host portable confirmation is in this package’s tests; it is not shipped behavior of the remote MCP server.
 
 ### Intentional exceptions
 
@@ -219,7 +219,7 @@ These are writes, credential operations, or destructive operations that the pin 
 | `enforcer_setup_apply`, `graph_share` | write, confirm | Server flag only | The setup command still asks the person before it calls apply |
 | `graph_unshare` | destructive, confirm | Server flag only. Removing a share is a destructive scope the `work` preset does not request | Do not unshare because a prompt might appear |
 
-Bare MCP use does not run governor hooks and does not treat RUI as an approval dialog. Server `always_confirm` is the only one of these layers that is a flag in the pin. Cursor does not turn an RUI hint or a governor ask into an approval button. The governor ask becomes a deny when the hooks ran. Host portable confirmation (layer d) is not merged.
+Bare MCP use does not run governor hooks and does not treat RUI as an approval dialog. Server `always_confirm` is the only one of these layers that is a flag in the pin. Cursor does not turn an RUI hint or a governor ask into an approval button. The governor ask becomes a deny when the hooks ran. Host portable confirmation (layer d) is in this package’s tests (Engineering CR-5, agent-plugins #413, merged as `2645d818` (tip `618cfe44`)). It is not shipped behavior of the remote MCP server.
 
 ## Listing
 
