@@ -669,7 +669,7 @@
     },
     {
       "name": "workspace_switch",
-      "effect": "read",
+      "effect": "write",
       "always_confirm": false,
       "profiles": [
         "workflow"

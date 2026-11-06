@@ -1,5 +1,5 @@
 {
-  "_readme": "Pinned upstream API contracts the plugin calls. `npm run sync:spec` fetches each at `ref` and rewrites spec/ and the sha256 values; `npm run sync:spec -- --bump` moves the refs to each default branch head. test/api-lock.test.mjs fails when a spec file drifts from its sha256.",
+  "_readme": "Pinned upstream API contracts the plugin calls. `npm run sync:spec` fetches each at `ref` and rewrites spec/ and the sha256 values; `npm run sync:spec -- --bump` moves the refs to each default branch head. test/api-lock.test.mjs fails when a spec file drifts from its sha256. The mcp ref is the CR-1 tip Engineering named (a164d134). This environment got HTTP 404 for the private enforcer-v3-mcp repo, so a newer main tip was not compared and the 40-character SHA was not fetched. The vendored file is the previous pin with workspace_switch.effect set to write and always_confirm left false. Replace the short ref with the full SHA when the repo is readable.",
   "sources": {
     "graph": {
       "repo": "enforcer-graph",
@@ -41,10 +41,10 @@
       "repo": "enforcer-v3-mcp",
       "path": "tool-names.json",
       "kind": "json",
-      "ref": "09c072962b43ef186e243546349dfb71bf9855b6",
+      "ref": "a164d134",
       "file": "spec/mcp-manifest.json",
-      "upstream_sha256": "94b3a2d1e281490c654cf50c47b66a7913bfe90546e0bbbfcd436a6d40011581",
-      "sha256": "94b3a2d1e281490c654cf50c47b66a7913bfe90546e0bbbfcd436a6d40011581"
+      "upstream_sha256": "007e4a630e67f9af73999e23f2a37b470c0a75fd78ba3b8eec6e8d85b9dcb3c2",
+      "sha256": "007e4a630e67f9af73999e23f2a37b470c0a75fd78ba3b8eec6e8d85b9dcb3c2"
     }
   }
 }

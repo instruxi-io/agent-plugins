@@ -18,7 +18,16 @@ test('cursor guide names the unverified gaps and does not publish a revoke URL',
   assert.match(doc, /TODO \(Austin\): terms of use/);
   assert.match(doc, /TODO \(Austin\): privacy notice/);
   assert.match(doc, /Workflow profile \(50\)/);
+  assert.match(doc, /27 read, 19 write, 4 destructive/);
   assert.match(doc, /797/);
+  assert.match(doc, /1,135/);
+  assert.match(doc, /\b46\b/);
+  assert.match(doc, /a164d134/);
+  assert.match(doc, /anthropic\/requiresUserInteraction/);
+  assert.match(doc, /update_task/);
+  assert.match(doc, /agent-plugins #413/);
+  assert.match(doc, /displayName/);
+  assert.doesNotMatch(doc, /classified `read`/);
   assert.doesNotMatch(doc, /oauth\/revoke/i);
   assert.match(doc, /revocation_endpoint/);
   assert.match(doc, /returned 404/);
@@ -47,6 +56,22 @@ test('skills do not use the old files_ operation ids or a reset confirmation the
   assert.doesNotMatch(read('skills/graph/SKILL.md'), /tool's own confirmation/);
   assert.match(read('skills/graph/SKILL.md'), /always_confirm` false/);
   assert.match(read('skills/enforcer/SKILL.md'), /Nothing here promises that every write waits for approval/);
+});
+
+test('CR-1 pin classifies workspace_switch as a write and the lock names that tip', () => {
+  const man = JSON.parse(read('lib/api/spec/mcp-manifest.json'));
+  const sw = man.tools.find((t) => t.name === 'workspace_switch');
+  assert.equal(sw.effect, 'write');
+  assert.equal(sw.always_confirm, false);
+  const wf = man.tools.filter((t) => t.profiles.includes('workflow'));
+  const n = (e) => wf.filter((t) => t.effect === e).length;
+  assert.equal(wf.length, 50);
+  assert.equal(n('read'), 27);
+  assert.equal(n('write'), 19);
+  assert.equal(n('destructive'), 4);
+  const lock = JSON.parse(read('lib/api/spec.lock.json'));
+  assert.equal(lock.sources.mcp.ref, 'a164d134');
+  assert.match(read('docs/CURSOR.md'), /ship-readiness blocker/);
   assert.doesNotMatch(read('skills/enforcer/SKILL.md'), /which the user confirms first/);
   for (const skill of ['skills/enforcer/SKILL.md', 'skills/files/SKILL.md', 'skills/governor/SKILL.md', 'skills/graph/SKILL.md']) {
     const fm = read(skill).split('---\n')[1];
