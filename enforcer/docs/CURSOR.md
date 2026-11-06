@@ -4,7 +4,7 @@ Onboarding for the Cursor plugin in this package (`enforcer/.cursor-plugin/plugi
 
 The shipped Cursor server entry is URL-only. It declares no `${VAR}` placeholder and no static OAuth client id. Cursor's rule "declare every `${VAR}`" is met because there is nothing to declare. A secret does not belong in this repo.
 
-Two facts from Engineering's source read and live probe on 2026-11-05 are used below and marked as such. Anything this repo cannot prove is marked **UNVERIFIED, pending Engineering (CR-4)** or **pending Engineering (CR-3)**.
+Two facts from Engineering's source read and live probe on 2026-11-05 are used below and marked as such. Anything this repo cannot prove about Cursor auth, scopes, or the live tool list is marked **UNVERIFIED, pending Engineering (CR-4)**. The public swagger URLs are a separate case: they are intentionally unpublished, not an unverified defect.
 
 ## Install in Cursor
 
@@ -168,24 +168,23 @@ The contract you can read in this repo is the pin, counted from these files on 2
 
 The other 436 operationIds use a method other than GET or HEAD. That is not a write count. Some of those methods are still reads.
 
-**Pending Engineering (CR-3).** These hosted documents returned 404 on 2026-11-05. They are the intended source of truth and they are not working links today. Do not send a reader there expecting a spec:
+The public swagger URLs are intentionally unpublished pending a product decision to re-expose them. CR-3 (agent-plugins #414, merged as `4d5835ae`) records that: edge nginx returns 404 while each service's health check is up, and the nightly treats that as `deployed swagger intentionally unexposed`. That 404 is the unpublished route. It is not a defect waiting on Engineering. Do not send a reader there for a spec. The operation count to cite is the pin, **797**.
 
 - `https://api.instruxi.dev/api/v1/graph/swagger/doc.json`
 - `https://api.instruxi.dev/api/v1/enforcer/swagger/doc.json`
 - `https://api.instruxi.dev/api/v1/files/swagger/doc.json`
 - `https://api.instruxi.dev/api/v1/governance/swagger/doc.json`
-- `https://docs.instruxi.dev/openapi.json`
 
-`docs.instruxi.dev`'s figure of 216 operations is a docs publish gap, not either of the counts below.
+`docs.instruxi.dev`'s figure of 216 operations, and `https://docs.instruxi.dev/openapi.json`, are a docs publish gap. They are not the API edge's unpublished swagger routes. Use the pin for the operation count.
 
 Two operation counts, both kept:
 
 | Count | What it is | When | Source |
 |---|---|---|---|
 | **797** operationIds (361 GET or HEAD, 436 other methods) | This package's pinned OpenAPI specs | Counted 2026-11-06 from the files above | `enforcer/lib/api/spec/{v3,graph,files,governance}.json` |
-| **about 1,135** operations (about 524 reads) | What `enforcer_api_search` reported on the live server | Connector assessment supplied with the listing request. Not re-measured here. Hosted swagger returned 404 on 2026-11-05 | That assessment. Pending Engineering (CR-3) before it can be checked again |
+| **about 1,135** operations (about 524 reads) | What `enforcer_api_search` reported on the live server | Connector assessment supplied with the listing request. Not re-measured from the public swagger URLs, which are intentionally unpublished | That assessment |
 
-Neither number replaces the other. 797 is the pin. About 1,135 is the live figure that could not be reproduced while the hosted contracts 404.
+Neither number replaces the other. **797** is the pin and the count to cite. About 1,135 stays as the connector assessment. It was not re-measured, because those public swagger URLs are intentionally unpublished pending a product decision to re-expose them.
 
 ## Write safety
 
@@ -236,7 +235,7 @@ Bare MCP use does not run governor hooks and does not treat RUI as an approval d
 | `displayName` | `Enforcer`, left as already set. Cursor's public manifest docs do not list this field. Whether a GUI load accepts it is **UNVERIFIED, pending Engineering (CR-4)** |
 | Version | `1.9.7`, unchanged by this documentation change |
 
-`docs.instruxi.dev` is not used as the homepage. Its operation count and its OpenAPI link are the publish gap in CR-3.
+`docs.instruxi.dev` is not used as the homepage. Its 216-operation figure is a docs publish gap. The operation count to cite is the pin, 797.
 
 ## Support and legal
 
@@ -255,9 +254,9 @@ TODO (Austin): privacy notice. This package does not add a privacy commitment. T
 | Access-token and refresh-token TTL | UNVERIFIED. A refresh grant exists. No revoke URL is advertised |
 | How to revoke a Cursor-issued token or an API key in the product | UNVERIFIED. No `revocation_endpoint` |
 | Cursor MCP reconnect after sign-in, expiry, or workspace switch | UNVERIFIED, pending Engineering (CR-4) |
-| Hosted Swagger/OpenAPI documents and `docs.instruxi.dev/openapi.json` | Pending Engineering (CR-3). They returned 404. Use the pin |
+| Public swagger URLs `/api/v1/{graph,enforcer,files,governance}/swagger/doc.json` | Intentionally unpublished pending a product decision to re-expose them (CR-3, #414, `4d5835ae`). Edge nginx returns 404 while health is up. Cite the pin: 797 |
 | `docs.instruxi.dev` "216 operations" | Docs publish gap |
-| Live `enforcer_api_search` total of about 1,135 (about 524 reads) | Connector assessment supplied with the listing request. Not re-measured. Kept beside the pinned 797. Pending Engineering (CR-3) |
+| Live `enforcer_api_search` total of about 1,135 (about 524 reads) | Connector assessment supplied with the listing request. Not re-measured. Kept beside the pinned 797. The public swagger URLs are intentionally unpublished, not a pending fix |
 | `graph_review` MCP arguments (list versus resolve) | UNVERIFIED. The pin classifies the tool as a write. The OpenAPI spec has both a list and a resolve |
 | Server confirmation copy, including project allowlisting of `always_confirm` | UNVERIFIED |
 | Cursor GUI load of this plugin, and acceptance of the existing `displayName` field | UNVERIFIED, pending Engineering (CR-4). Public manifest docs do not list `displayName`. The field is unchanged |

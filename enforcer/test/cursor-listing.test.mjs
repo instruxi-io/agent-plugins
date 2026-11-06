@@ -13,7 +13,9 @@ const read = (p) => readFileSync(join(root, p), 'utf8');
 test('cursor guide names the unverified gaps and does not publish a revoke URL', () => {
   const doc = read('docs/CURSOR.md');
   assert.match(doc, /UNVERIFIED, pending Engineering \(CR-4\)/);
-  assert.match(doc, /pending Engineering \(CR-3\)/);
+  assert.match(doc, /intentionally unpublished pending a product decision to re-expose them/);
+  assert.doesNotMatch(doc, /pending Engineering \(CR-3\)/);
+  assert.doesNotMatch(doc, /broken contract/);
   assert.match(doc, /TODO \(Austin\): support channel/);
   assert.match(doc, /TODO \(Austin\): terms of use/);
   assert.match(doc, /TODO \(Austin\): privacy notice/);
