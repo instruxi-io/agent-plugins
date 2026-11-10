@@ -22,6 +22,8 @@ const t = async (label, fn) => {
     console.log('FAIL  ' + label + '\n  ' + e.message);
   }
 };
+// cases that lean on a real `git` on PATH, the execute bit, or a dispatcher start: none of which Windows has here
+const tPosix = process.platform === 'win32' ? async (label) => console.log(`skip  ${label} (needs POSIX commands on PATH; the dispatcher is not supported on Windows)`) : t;
 
 // a stub gh that is signed in, a repo root holding one of the two repos the plan names
 const bin = join(tmp, 'bin');
@@ -315,7 +317,7 @@ await t('skills: data.repo comes from the node list when the frontier row has no
   }
 });
 
-await t('skills: a configured source is synced and named with its commit; throttled and unchanged are success', async () => {
+await tPosix('skills: a configured source is synced and named with its commit; throttled and unchanged are success', async () => {
   const get = [200, { success: true, data: { source: SRC, skills: [{ slug: 'deliver' }, { slug: 'go-service' }] } }];
   const skills = { n1: [repoSkill('deliver', { provides: ['delivery'], requires: ['git'] })] };
   for (const sync of [{ changed: false, throttled: true }, { changed: false }])
@@ -362,7 +364,7 @@ await t('skills: a sync failure fails naming the server code, and the nodes are 
   ),
 );
 
-await t('skills: a requires command missing from PATH fails naming the skill; `enforcer` needs no PATH entry', async () => {
+await tPosix('skills: a requires command missing from PATH fails naming the skill; `enforcer` needs no PATH entry', async () => {
   const skills = {
     n1: [
       repoSkill('deliver', { provides: ['delivery'], requires: ['gh pr create', 'enforcer land <pr>', 'no-such-cmd-9f3 --x'] }),
@@ -402,7 +404,7 @@ await t('skills: at most 20 frontier nodes are probed, and the line says so', ()
   }),
 );
 
-await t('enforcer dispatch: a skills failure stops the start; no dispatcher is launched', async () => {
+await tPosix('enforcer dispatch: a skills failure stops the start; no dispatcher is launched', async () => {
   const saved = [planNodes, frontier, nodeSkills];
   planNodes = [{ id: 'n1', key: 'n1', type: 'task', data: { repo: 'present', acceptance: ['`true` exits 0'] } }];
   frontier = [repoNode('n1')];

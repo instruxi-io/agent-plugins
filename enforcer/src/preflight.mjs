@@ -417,14 +417,19 @@ export async function readSkillSource(base, graph, h) {
 /** Whether `cmd` (a bare command name) is an executable file in a directory on env.PATH. No shell. */
 export function onPath(cmd, env = process.env) {
   if (!cmd || cmd.includes('/') || cmd.includes('\\')) return false;
-  for (const dir of String(env.PATH || '').split(delimiter)) {
+  // Windows: PATH may be spelled Path, a command is `git.exe` (PATHEXT), and there is no execute bit to test
+  const win = process.platform === 'win32';
+  const names = win ? [cmd, ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((x) => cmd + x.toLowerCase())] : [cmd];
+  for (const dir of String(env.PATH || (win && env.Path) || '').split(delimiter)) {
     if (!dir || !isAbsolute(dir)) continue;
-    const p = join(dir, cmd);
-    try {
-      if (!statSync(p).isFile()) continue;
-      accessSync(p, constants.X_OK);
-      return true;
-    } catch {}
+    for (const name of names) {
+      const p = join(dir, name);
+      try {
+        if (!statSync(p).isFile()) continue;
+        if (!win) accessSync(p, constants.X_OK);
+        return true;
+      } catch {}
+    }
   }
   return false;
 }
