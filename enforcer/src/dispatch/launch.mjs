@@ -420,7 +420,13 @@ export function removeAgentMcpConfigs(stateDir, key = null) {
 }
 
 /** The argv of a worker launch. `session` names (or with `resume`, continues) a claude session. */
-export function launchCmd(prompt, model, args, key, { session = null, resume = false, maxTurns = null, mcpConfig = null, harness = null } = {}) {
+export function launchCmd(
+  prompt,
+  model,
+  args,
+  key,
+  { session = null, resume = false, maxTurns = null, mcpConfig = null, harness = null, endpoint = false } = {},
+) {
   harness = harness || args.harness || 'claude';
   if (harness === 'grok') {
     const cmd = [args.grok || process.env.GROK_BIN || 'grok', '-p', prompt, '--output-format', 'streaming-messages-json'];
@@ -461,7 +467,10 @@ export function launchCmd(prompt, model, args, key, { session = null, resume = f
   if (session) cmd.push(resume ? '--resume' : '--session-id', session);
   if (maxTurns) cmd.push('--max-turns', String(maxTurns));
   cmd.push('--allowedTools', allowedTools().join(','), '--permission-prompts', 'none', '--output-format', 'stream-json', '--verbose', '--name', 'graph:' + key);
-  if (args.maxBudgetUsd) cmd.push('--max-budget-usd', String(args.maxBudgetUsd));
+  // No spend cap on a self-hosted endpoint: its tokens are not a provider bill (ROUTES.md section 2), and with a cap
+  // Claude Code adds a "USD budget: $x/$y" system message every turn whose numbers change, which defeats vLLM's prefix
+  // cache (measured on the DGX Spark: 0 hits over 435,883 prompt tokens with the cap, ~25k cached per turn without).
+  if (args.maxBudgetUsd && !endpoint) cmd.push('--max-budget-usd', String(args.maxBudgetUsd));
   if (args.autocompact && args.autocompact !== 'auto') cmd.push('--autocompact', String(args.autocompact));
   return cmd;
 }

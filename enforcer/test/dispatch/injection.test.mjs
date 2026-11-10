@@ -65,6 +65,13 @@ test('budget cap is set by default', () => {
   assert.equal(cmd[cmd.indexOf('--max-budget-usd') + 1], '5');
 });
 
+test('no budget cap on a self-hosted endpoint route', () => {
+  const cmd = launchCmd('p', 'qwen3.8-flash-next', defaultArgs(), 'k1', { endpoint: true });
+  assert.equal(cmd.includes('--max-budget-usd'), false);
+  const hosted = launchCmd('p', 'opus', defaultArgs(), 'k1', { endpoint: false });
+  assert.equal(hosted[hosted.indexOf('--max-budget-usd') + 1], '5');
+});
+
 test('only a release node worker gets the release marker', () => {
   assert.equal(workerEnv('g', {}, {}).ENFORCER_RELEASE_NODE, undefined);
   assert.equal(workerEnv('g', {}, { release: true }).ENFORCER_RELEASE_NODE, '1');
