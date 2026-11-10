@@ -115,6 +115,10 @@ graph-level skills first, then the node's own. A skill says where the work
 lives, how it is handed over and what counts as done (a pull request, a posted
 journal entry, a filed document). Do that, and nothing beyond it.
 
+A graph may load its skills from a repo (`enforcer skills source set`); such a
+skill comes first on the card and carries the repo and commit it was read from.
+Its `requires` commands were checked on the dispatcher's host at preflight.
+
 If no skill says how to deliver, do not invent a procedure: do not push, open
 pull requests or write to any outside system on your own. Report what you
 produced (paths, ids, values) and where it is, and let the criteria be judged

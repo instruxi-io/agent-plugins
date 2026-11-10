@@ -7,6 +7,7 @@
 //   enforcer hook <event> [handler]                          alias of: event <event> --graph-only
 //   enforcer ingest-key --harness <h> [--json]               telemetry-only key for a harness (src/ingest-key.mjs)
 //   enforcer dispatch ...                                    graph dispatcher (src/dispatch-command.mjs); an exhausted node is completed failed with data.needs_person
+//   enforcer skills source show|set|sync|rm <graph>         a graph's skill source: SKILL.md files from a public repo (src/skills-source.mjs)
 // V8 compile cache (node >= 22.1): the governor's module graph loads in a few ms instead of tens.
 try { process.getBuiltinModule?.('node:module')?.enableCompileCache?.(join(process.getBuiltinModule('node:os').tmpdir(), `enforcer-v8-${process.getuid?.() ?? 0}`)); } catch {}
 // A hook runs each capability pattern once or twice and exits: compiling a pattern straight to
@@ -96,6 +97,11 @@ if (area === 'dispatch') {
   process.exit(await dispatchMain([sub, ...rest].filter((x) => x !== undefined)));
 }
 
+if (area === 'skills') {
+  const { main: skillsMain } = await import('../src/skills-source.mjs');
+  process.exit(await skillsMain([sub, ...rest].filter((x) => x !== undefined)));
+}
+
 if (area === 'plan') {
   if (sub !== 'check') { process.stderr.write('usage: enforcer plan check <graph> [--repo-root dir]\n'); process.exit(2); }
   const { main: planCheckMain } = await import('../src/plan-check.mjs');
@@ -174,5 +180,5 @@ if (area === 'harness' && (sub === 'install' || sub === 'uninstall') && ['grok',
   process.exit(r.ok ? 0 : 1);
 }
 
-process.stderr.write(`usage: enforcer doctor\n       enforcer conformance [--harnesses claude,codex,grok,gemini] [--status <graph>]\n       enforcer uninstall [--purge] [--yes]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer gemini telemetry [on|off|status]   (Gemini CLI telemetry to governance; on after sign-in)\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer harness <install|status> openclaw   (prints the OpenClaw install; shows its telemetry state)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
+process.stderr.write(`usage: enforcer doctor\n       enforcer conformance [--harnesses claude,codex,grok,gemini] [--status <graph>]\n       enforcer uninstall [--purge] [--yes]\n       enforcer skills source <show|set|sync|rm> <graph> [--repo owner/name] [--ref x] [--path skills] [--include a,b]\n       enforcer login [args] | logout | status | workspace <list|switch|current>\n       enforcer event <${EVENT_NAMES.join('|')}> [--graph-only]\n       enforcer governor <${GOV.join('|')}> [args]\n         set <name> <value> | enable|disable <${Object.keys(CHECKS).join('|')}> | telemetry [on|off|status]\n       enforcer gemini telemetry [on|off|status]   (Gemini CLI telemetry to governance; on after sign-in)\n       enforcer harness <install|uninstall> <grok|codex> [--dry-run]   (removes the old runtime copy; prints the native install)\n       enforcer harness <install|uninstall> cursor [--repo <dir>] [--dry-run] [--force]   (Cursor hooks: ~/.cursor/hooks.json, or <dir>/.cursor/hooks.json for cloud agents)\n       enforcer harness <install|status> openclaw   (prints the OpenClaw install; shows its telemetry state)\n       enforcer hook <${Object.keys(HOOKS).join('|')}> [handler]\n       enforcer ingest-key --harness <codex|gemini-cli|hermes|openclaw> [--json]   (telemetry-only key; exit 3 = signed out, 5 = log in again)\n`);
 process.exit(2);

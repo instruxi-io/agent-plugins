@@ -114,6 +114,8 @@ export async function watchLine(env = process.env) {
   parts.push(`dispatching ${w.running?.length ? w.running.join(', ') : 'nothing'}`);
   const off = Object.keys(w.backoff || {});
   if (off.length) parts.push(`backing off ${off.join(', ')}`);
+  const parked = Object.keys(w.parked || {});
+  if (parked.length) parts.push(`waiting for a change on ${parked.join(', ')} (nodes left for a person)`);
   return parts.join('; ');
 }
 

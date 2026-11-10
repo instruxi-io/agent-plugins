@@ -319,6 +319,99 @@
       "headers": []
     },
     {
+      "id": "src/preflight.mjs GET /graphs/{}/skill-source",
+      "file": "src/preflight.mjs",
+      "service": "graph",
+      "method": "GET",
+      "path": "/graphs/{}/skill-source",
+      "sends": [],
+      "reads": [
+        "data.source",
+        "data.skills"
+      ],
+      "headers": []
+    },
+    {
+      "id": "src/preflight.mjs GET /graphs/{}/nodes/{}/skills",
+      "file": "src/preflight.mjs",
+      "service": "graph",
+      "method": "GET",
+      "path": "/graphs/{}/nodes/{}/skills",
+      "sends": [],
+      "reads": [
+        "data"
+      ],
+      "headers": []
+    },
+    {
+      "id": "src/preflight.mjs POST /graphs/{}/skill-source/sync",
+      "file": "src/preflight.mjs",
+      "service": "graph",
+      "method": "POST",
+      "path": "/graphs/{}/skill-source/sync",
+      "sends": [],
+      "reads": [
+        "data.changed",
+        "data.to",
+        "data.commit",
+        "data.skills"
+      ],
+      "headers": []
+    },
+    {
+      "id": "src/skills-source.mjs DELETE /graphs/{}/skill-source",
+      "file": "src/skills-source.mjs",
+      "service": "graph",
+      "method": "DELETE",
+      "path": "/graphs/{}/skill-source",
+      "sends": [],
+      "reads": [],
+      "headers": []
+    },
+    {
+      "id": "src/skills-source.mjs PUT /graphs/{}/skill-source",
+      "file": "src/skills-source.mjs",
+      "service": "graph",
+      "method": "PUT",
+      "path": "/graphs/{}/skill-source",
+      "sends": [
+        "repo",
+        "ref",
+        "path",
+        "include"
+      ],
+      "reads": [],
+      "headers": []
+    },
+    {
+      "id": "src/skills-source.mjs POST /graphs/{}/skill-source/sync",
+      "file": "src/skills-source.mjs",
+      "service": "graph",
+      "method": "POST",
+      "path": "/graphs/{}/skill-source/sync",
+      "sends": [],
+      "reads": [
+        "data.changed",
+        "data.throttled",
+        "data.from",
+        "data.to"
+      ],
+      "headers": []
+    },
+    {
+      "id": "src/skills-source.mjs GET /graphs/{}/skill-source",
+      "file": "src/skills-source.mjs",
+      "service": "graph",
+      "method": "GET",
+      "path": "/graphs/{}/skill-source",
+      "sends": [],
+      "reads": [
+        "data.source",
+        "data.skills"
+      ],
+      "headers": []
+    },
+    {
       "id": "bin/files.mjs GET /storage/provider",
       "file": "bin/files.mjs",
       "service": "files",
