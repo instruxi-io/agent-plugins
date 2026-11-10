@@ -563,7 +563,7 @@ export class Dispatcher {
     // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
     if (harness === 'codex') prompt += '\n' + codexGitRules();
     else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
-    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior || warmed), maxTurns: turnsCap, mcpConfig, harness });
+    const cmd = launchCmd(prompt, model, a, n.key, { session, resume: Boolean(prior || warmed), maxTurns: turnsCap, mcpConfig, harness, endpoint: Boolean(r?.endpoint) });
     const res = [...resourcesOf(n)].sort().join(',') || '-';
     if (a.dryRun) {
       this.say(
