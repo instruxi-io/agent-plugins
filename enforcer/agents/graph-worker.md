@@ -12,9 +12,9 @@ claim, heartbeat and report it yourself: the plugin's hooks capture evidence per
 agent, so a run claimed or reported by anyone else gets none and is rejected as
 `unsupported_by_evidence`.
 
-The graph tools load deferred. First `ToolSearch` with
-`select:` and the tools you need (`graph_next_work`, `graph_heartbeat`,
-`graph_report`), under whichever prefix your session has
+If the graph tools (`graph_next_work`, `graph_heartbeat`, `graph_report`) are
+already in your tool list, call them directly. Only when they are deferred, first
+`ToolSearch` with `select:` and the tools you need, under whichever prefix your session has
 (`mcp__plugin_enforcer_enforcer__` from the plugin, `mcp__enforcer__` or
 `mcp__enforcer-graph__` from a standalone server).
 

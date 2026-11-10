@@ -1,7 +1,7 @@
 {
   "name": "enforcer",
   "displayName": "Enforcer",
-  "version": "1.9.8",
+  "version": "1.9.9",
   "description": "Connects Cursor to an Enforcer workspace through the hosted MCP server, with skills for identity, files, plans, and the governor. Its hooks record tool calls and block the writes the governor would ask a person to approve.",
   "author": {
     "name": "Instruxi",

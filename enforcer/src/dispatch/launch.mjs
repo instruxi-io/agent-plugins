@@ -160,6 +160,10 @@ export function endpointEnv(out, route, env = process.env) {
   out.ANTHROPIC_AUTH_TOKEN = token || 'none';
   for (const k of ENDPOINT_MODEL_VARS) out[k] = String(route.model);
   out.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+  // Load the graph MCP tools up front instead of deferring them behind ToolSearch. On a vLLM endpoint the
+  // ToolSearch result (tool_reference blocks) is rejected by the model's chat template (400 "Unexpected item type
+  // in content", three times per worker), and the retry that follows reprocesses the whole prompt uncached.
+  out.ENABLE_TOOL_SEARCH = 'false';
   return out;
 }
 
