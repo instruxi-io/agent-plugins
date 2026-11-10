@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.9.8
+
+- Portable confirmation tests: a deny or cancel dispatches no mutation and an approval dispatches the approved call once. The five work-loop writes stay the only unconfirmed mutations, and workspace_switch is not treated as a pure read. Native Cursor and Grok Bot dialogs remain unverified. The contract is asserted by test/confirmation/.
+- Cursor marketplace guide for the Enforcer plugin: onboarding, the CR-1 workflow inventory (50 tools, workspace_switch a write), four confirmation layers, and OAuth and hosted OpenAPI gaps left unverified. No license change and no marketplace submission.
+- The nightly deployed swagger check no longer treats an edge 404 of the four public swagger documents as a contract failure or as a pass. When those routes are unpublished and each service health is up, the check is "deployed swagger intentionally unexposed" and the contract is not evaluated; the scheduled authenticated source-main job remains the evidence against private docs/swagger.json. A directory that carries that signal cannot satisfy the contract test.
+- The dispatcher no longer passes `--max-budget-usd` to a worker whose route points at a self-hosted endpoint. Those tokens are not a provider bill, and with a cap Claude Code adds a "USD budget" system message every turn whose numbers change, which defeated vLLM's prefix cache: on the DGX Spark a Qwen worker got 0 cache hits and took about 4 minutes per small step. Hosted routes keep the $5 default.
+- The locked MCP manifest is enforcer-v3-mcp tool-names.json at a164d134 (80 tools, including tell_team). The lock hash is that file.
+
 ## 1.9.7
 
 - The dispatcher sets its `dispatcher-lease` bookkeeping node back to `done` whenever it takes or renews the lease. A graph reset (each epoch of a loop) returns every live node to `active`, the lease node too, and nothing set it back: the epoch never counted as complete, so an on-completion loop stopped after its second epoch, and the lobby advertised the lease node as open work.
