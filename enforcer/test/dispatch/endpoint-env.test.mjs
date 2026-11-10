@@ -45,6 +45,7 @@ test('a claude endpoint route drops the OAuth token and sets ANTHROPIC_BASE_URL'
   assert.equal(e.ANTHROPIC_AUTH_TOKEN, TOKEN);
   for (const k of ENDPOINT_MODEL_VARS) assert.equal(e[k], 'Qwen3.8-27B', k);
   assert.equal(e.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, '1');
+  assert.equal(e.ENABLE_TOOL_SEARCH, 'false');
   // token_env names the variable; the variable itself is not passed under its own name
   assert.equal(e.GPU1_TOKEN, undefined);
 });

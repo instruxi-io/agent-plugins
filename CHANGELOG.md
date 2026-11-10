@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.9.9
+
+- A worker on a self-hosted endpoint route starts with `ENABLE_TOOL_SEARCH=false`, so Claude Code loads the graph MCP tools up front instead of behind ToolSearch, and the graph-worker agent calls them directly when they are already listed. On vLLM the ToolSearch result was rejected by the model's chat template (three 400s per worker) and the retry reprocessed the whole prompt uncached.
+
 ## 1.9.8
 
 - Portable confirmation tests: a deny or cancel dispatches no mutation and an approval dispatches the approved call once. The five work-loop writes stay the only unconfirmed mutations, and workspace_switch is not treated as a pure read. Native Cursor and Grok Bot dialogs remain unverified. The contract is asserted by test/confirmation/.
