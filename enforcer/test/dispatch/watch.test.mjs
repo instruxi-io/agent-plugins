@@ -420,3 +420,15 @@ test('graphFingerprint moves with node state, skills, the source commit and the 
   epoch.graph.epoch = 2;
   assert.notEqual(await fp(epoch), base);
 });
+
+test('an UNPARK file releases a parked graph whose fingerprint has not moved, and is removed', async () => {
+  const { existsSync, writeFileSync } = await import('node:fs');
+  const { unparkFile } = await import('../../src/dispatch/watch.mjs');
+  const h = await parkedHarness('nva');
+  await h.next();
+  assert.ok(readWatchState(h.cfgHome).parked.nva, 'still parked while unchanged');
+  writeFileSync(unparkFile(h.cfgHome, 'nva'), 'now\n');
+  await h.next();
+  assert.equal(readWatchState(h.cfgHome).parked.nva, undefined);
+  assert.equal(existsSync(unparkFile(h.cfgHome, 'nva')), false);
+});

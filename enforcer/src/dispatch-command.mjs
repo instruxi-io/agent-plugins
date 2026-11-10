@@ -18,6 +18,7 @@ export const HELP = `usage: enforcer dispatch <graph> [--workers N] [--model M] 
        enforcer dispatch prune [--yes] [--repo-root dir]                               list (or with --yes remove) worktrees whose PR merged and no live worker holds
        enforcer dispatch stop <graph>                                                  finish running workers, start no new ones, then exit
        enforcer dispatch watch [--for me|mine] [--agent name] [--max-graphs N]         daemon: keep a dispatcher on every graph the work lobby offers you (watch --help)
+       enforcer dispatch unpark <graph-id>                                              let the watcher start a graph it parked after nodes were left for a person
 defaults: ${DEFAULTS.workers} workers, no model cap (each tier's model, or its route's), routes from --routes / ENFORCER_ROUTES / the graph / routes.json, handoff notes ${DEFAULTS.handoff} (--handoff off), warm sessions ${DEFAULTS.warm} (--warm; claude only)
 state: ~/.config/enforcer/dispatch/<graph> (dispatcher.log, pids.json, STOP)
        enforcer dispatch --dry-run <graph>                                             print the planned launches; launch nothing
@@ -414,6 +415,20 @@ export async function main(argv, env = process.env) {
       return 0;
     }
     if (sub === 'run') return await (await import('./dispatch/run.mjs')).main(rest, env); // the foreground dispatcher `start` detaches
+    if (sub === 'unpark') {
+      // a parked graph (its dispatcher exited 6) starts again on the watcher's next pass, whatever its fingerprint says
+      const graph = rest[0];
+      if (!graph || !/^[A-Za-z0-9._-]+$/.test(graph)) {
+        process.stderr.write('usage: enforcer dispatch unpark <graph-id>\n');
+        return 2;
+      }
+      const { unparkFile } = await import('./dispatch/watch.mjs');
+      const f = unparkFile(configHome(env), graph);
+      mkdirSync(dirname(f), { recursive: true });
+      writeFileSync(f, `${new Date().toISOString()}\n`);
+      process.stdout.write(`unpark requested for ${graph}; the watcher releases it on its next pass\n`);
+      return 0;
+    }
     if (sub === 'watch') {
       const { main: watchMain } = await import('./dispatch/watch.mjs');
       return await watchMain(rest, env, {

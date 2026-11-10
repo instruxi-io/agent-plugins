@@ -12,7 +12,7 @@
 // State: <config home>/dispatch/watch.json (this process, its graphs, its backoffs, its parked graphs), read by
 // `enforcer dispatch status`; parked graphs are read back at start, so a watcher restart keeps them parked.
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveConfig } from '../config.mjs';
 import { headers as authHeaders } from '../preflight.mjs';
@@ -86,6 +86,9 @@ const isValueOf = (argv, i) => DISPATCH_VALUE_FLAGS.includes(argv[i - 1]);
  * priority); `running` is the set of graph ids with a live dispatcher; `backoff` maps graph id -> epoch seconds until
  * which it is not started. Returns {start: [graph ids], skipped: [[graph id, why]]}.
  */
+/** The file `enforcer dispatch unpark <graph>` leaves for the watcher: its next pass releases the parked graph and removes it. */
+export const unparkFile = (cfgHome, graph) => join(cfgHome, 'dispatch', String(graph), 'UNPARK');
+
 export function pickGraphs(rows, { running = new Set(), backoff = new Map(), parked = new Map(), maxGraphs = 2, now = Date.now() / 1000 } = {}) {
   const start = [];
   /** @type {Array<[string, string]>} */
@@ -295,6 +298,14 @@ export class Watcher {
       const g = r?.graph_id;
       const p = g && this.parked.get(g);
       if (!p || fresh.has(g) || running.has(g) || !(Number(r.workers_wanted) > 0)) continue;
+      // `enforcer dispatch unpark <graph>`: a person says the cause was fixed somewhere the fingerprint cannot see
+      const flag = this.d.cfgHome && unparkFile(this.d.cfgHome, g);
+      if (flag && existsSync(flag)) {
+        rmSync(flag, { force: true });
+        this.parked.delete(g);
+        this.say(`${g} unparked by hand (enforcer dispatch unpark); it can start again`);
+        continue;
+      }
       const fp = await this.fingerprint(g, p.nodes || []);
       if (!fp) continue;
       if (!p.fingerprint)
