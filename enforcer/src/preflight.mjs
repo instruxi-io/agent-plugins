@@ -419,7 +419,15 @@ export function onPath(cmd, env = process.env) {
   if (!cmd || cmd.includes('/') || cmd.includes('\\')) return false;
   // Windows: PATH may be spelled Path, a command is `git.exe` (PATHEXT), and there is no execute bit to test
   const win = process.platform === 'win32';
-  const names = win ? [cmd, ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((x) => cmd + x.toLowerCase())] : [cmd];
+  const names = win
+    ? [
+        cmd,
+        ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+          .split(';')
+          .filter(Boolean)
+          .map((x) => cmd + x.toLowerCase()),
+      ]
+    : [cmd];
   for (const dir of String(env.PATH || (win && env.Path) || '').split(delimiter)) {
     if (!dir || !isAbsolute(dir)) continue;
     for (const name of names) {

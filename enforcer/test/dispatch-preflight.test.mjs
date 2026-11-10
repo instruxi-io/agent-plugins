@@ -23,7 +23,8 @@ const t = async (label, fn) => {
   }
 };
 // cases that lean on a real `git` on PATH, the execute bit, or a dispatcher start: none of which Windows has here
-const tPosix = process.platform === 'win32' ? async (label) => console.log(`skip  ${label} (needs POSIX commands on PATH; the dispatcher is not supported on Windows)`) : t;
+const tPosix =
+  process.platform === 'win32' ? async (label) => console.log(`skip  ${label} (needs POSIX commands on PATH; the dispatcher is not supported on Windows)`) : t;
 
 // a stub gh that is signed in, a repo root holding one of the two repos the plan names
 const bin = join(tmp, 'bin');
