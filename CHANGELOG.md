@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.12.0
+
+- `enforcer evidence run` and `enforcer plan check` run more read-only acceptance shapes, each argv-exact with every path inside the checkout: `go build <./pkg/...>` (never `-o`, `-toolexec`, `-ldflags`), `bun run <test|lint|format:check|typecheck>`, `bun test [paths]`, `bunx|npx vitest run [--reporter=<name>] [--config <path>] [paths]` (only when the checkout has `node_modules/.bin/vitest`, so nothing is downloaded), `npm view <[@scope/]pkg[@range]> version [--registry https://<host>]` (no npm token reaches it), `terraform fmt -check [...]` and `terraform validate` (never init, plan, apply, import or state), `make check-charts` (no other target), `test ! -e|-f|-d|-s <relative path>`, and `timeout <N>[s|m|h] <another allowed line>` (N at most 1800 s, not around gh or another timeout). Graph 987957b0 had most of its lines skipped as "not an allowed command shape", so good work was judged on no evidence. Absolute paths (`test ! -e /etc/...`), `scripts/*.sh` and every other make target stay refused.
+
 ## 1.11.1
 
 - A codex worker's token usage is recorded on its graph run. Codex completes its run through MCP before it exits, without usage, so every codex run showed "tokens not reported"; after the worker exits the dispatcher now posts the totals from its `--json` stream to `POST /graphs/{g}/nodes/{n}/runs/{r}/usage` as the run's claimant (the worker's own credential, before it is revoked), in graph's convention: `input_tokens` excludes cache reads and writes (Codex's includes them; floored at 0), `cache_read_input_tokens` is Codex's cached input, `cache_creation_input_tokens` its cache writes (else 0), `output_tokens` already holds reasoning, plus `turns`, the route's `model` and `source: "reported"`; no `cost_usd`. A stream without usage posts nothing. A graph server without the route (405, or a 404 that is not graph/node/run_not_found) is skipped and said once; any other error is logged and never fails the node. The dispatch log says `usage <key>: recorded …` or why it skipped. Behind an optional adapter capability (`usageAfterExit`) only codex has; Claude workers are unchanged.

@@ -80,11 +80,16 @@ const pattern = (t) => typeof t === 'string' && t.length > 0 && !t.startsWith('-
 const paths = (list, root, base) => list.every((p) => inRepo(p, root, base));
 
 const NPM_SCRIPTS = new Set(['test', 'lint', 'format:check', 'typecheck']);
-const GO_BOOL = /^-(v|race|short|cover|failfast|json)$/;
-const GO_VALUED = { '-count': /^\d+$/, '-p': /^\d+$/, '-run': /^[^-\n].*$/, '-tags': /^[A-Za-z0-9_,.]+$/, '-timeout': /^\d+[a-z]*$/ };
+const GO_TEST_FLAGS = {
+  bool: /^-(v|race|short|cover|failfast|json)$/,
+  valued: { '-count': /^\d+$/, '-p': /^\d+$/, '-run': /^[^-\n].*$/, '-tags': /^[A-Za-z0-9_,.]+$/, '-timeout': /^\d+[a-z]*$/ },
+};
+// `go build` takes no -o (it would write a binary anywhere), no -toolexec, -exec, -ldflags or -gcflags: only these
+const GO_BUILD_FLAGS = { bool: /^-(v|race)$/, valued: { '-p': /^\d+$/, '-tags': /^[A-Za-z0-9_,.]+$/ } };
 
-/** `go [-C <dir>] test|vet <flags and packages>`: packages are `./...`-style paths inside the checkout. */
-function goShape(a, root, sub, allowFlags) {
+/** `go [-C <dir>] test|vet|build <flags and packages>`: packages are `./...`-style paths inside the checkout. `flags` is
+ *  the set the subcommand takes ({bool, valued}), or null for none. */
+function goShape(a, root, sub, flags) {
   if (a[0] !== 'go') return false;
   let i = 1,
     dir = root;
@@ -98,11 +103,11 @@ function goShape(a, root, sub, allowFlags) {
   for (i++; i < a.length; i++) {
     const t = a[i];
     if (t.startsWith('-')) {
-      if (!allowFlags) return false;
-      if (GO_BOOL.test(t)) continue;
+      if (!flags) return false;
+      if (flags.bool.test(t)) continue;
       const eq = t.indexOf('=');
       const name = eq > 0 ? t.slice(0, eq) : t;
-      const re = GO_VALUED[name];
+      const re = flags.valued[name];
       if (!re) return false;
       const value = eq > 0 ? t.slice(eq + 1) : a[++i];
       if (value === undefined || !re.test(value)) return false;
@@ -146,6 +151,41 @@ function grepShape(a, root, lead, re, minPaths) {
   i++;
   if (a[i] === '--') i++;
   return a.length - i >= minPaths && paths(a.slice(i), root);
+}
+
+const MAKE_TARGETS = new Set(['check-charts']);
+const NPM_PKG = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(@[A-Za-z0-9._^~*-]+)?$/;
+const HTTPS_URL = /^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/;
+export const TIMEOUT_MAX_S = 1800;
+const TIMEOUT_UNIT = { '': 1, s: 1, m: 60, h: 3600 };
+
+/** Seconds in a `timeout` duration (`600`, `600s`, `10m`), or 0 when it is not one or is above TIMEOUT_MAX_S. */
+function timeoutSeconds(t) {
+  const m = /^(\d{1,5})([smh]?)$/.exec(t ?? '');
+  if (!m) return 0;
+  const n = Number(m[1]) * TIMEOUT_UNIT[m[2]];
+  return n > 0 && n <= TIMEOUT_MAX_S ? n : 0;
+}
+
+/** `bunx|npx vitest run [--reporter=<name>] [--config <path>] [paths]`, only when the checkout has its own vitest. */
+function vitestShape(a, root) {
+  if ((a[0] !== 'bunx' && a[0] !== 'npx') || a[1] !== 'vitest' || a[2] !== 'run') return false;
+  if (!existsSync(join(root, 'node_modules', '.bin', 'vitest')) || !inRepo(join('node_modules', '.bin', 'vitest'), root)) return false;
+  for (let i = 3; i < a.length; i++) {
+    const t = a[i];
+    if (/^--reporter=[a-z][a-z-]*$/.test(t)) continue;
+    if (t === '--reporter' && /^[a-z][a-z-]*$/.test(a[i + 1] ?? '')) {
+      i++;
+      continue;
+    }
+    if (t.startsWith('--config=') && inRepo(t.slice('--config='.length), root)) continue;
+    if (t === '--config' && inRepo(a[i + 1], root)) {
+      i++;
+      continue;
+    }
+    if (!inRepo(t, root)) return false;
+  }
+  return true;
 }
 
 /**
@@ -201,9 +241,14 @@ export const ACCEPTANCE_SHAPES = Object.freeze(
     {
       name: 'go test',
       usage: 'go [-C <dir>] test <./pkg/...> [-v -race -short -cover -failfast -json -count -p -run -tags -timeout]',
-      match: (a, root) => goShape(a, root, 'test', true),
+      match: (a, root) => goShape(a, root, 'test', GO_TEST_FLAGS),
     },
-    { name: 'go vet', usage: 'go [-C <dir>] vet <./pkg/...>', match: (a, root) => goShape(a, root, 'vet', false) },
+    { name: 'go vet', usage: 'go [-C <dir>] vet <./pkg/...>', match: (a, root) => goShape(a, root, 'vet', null) },
+    {
+      name: 'go build',
+      usage: 'go [-C <dir>] build <./pkg/...> [-v -race -p -tags] (never -o)',
+      match: (a, root) => goShape(a, root, 'build', GO_BUILD_FLAGS),
+    },
     { name: 'ls', usage: 'ls [-1aAlRdhFtrS] [relative path]...', match: flagged('ls', /^-[1aAlRdhFtrS]+$/, 0) },
     { name: 'cat', usage: 'cat <relative path>...', match: flagged('cat', /^-n$/, 1) },
     { name: 'head', usage: 'head [-n N | -N] <relative path>...', match: (a, root) => headTail('head', a, root) },
@@ -211,8 +256,14 @@ export const ACCEPTANCE_SHAPES = Object.freeze(
     { name: 'wc', usage: 'wc [-l|-c|-w|-m] <relative path>...', match: flagged('wc', /^-[lcwm]+$/, 1) },
     {
       name: 'test',
-      usage: 'test -f|-d|-e|-s <relative path> | test $(grep -c <literal> <path>) -ge N | test $(wc -l|-c <path>) -le N',
-      match: (a, root) => a.length === 3 && a[0] === 'test' && /^-[fdes]$/.test(a[1]) && inRepo(a[2], root),
+      usage: 'test [!] -f|-d|-e|-s <relative path> | test $(grep -c <literal> <path>) -ge N | test $(wc -l|-c <path>) -le N',
+      // the negated form proves a file is absent; the path stays inside the checkout (an absolute path is refused, so a
+      // line cannot probe the operator's machine for what exists)
+      match: (a, root) => {
+        if (a[0] !== 'test') return false;
+        const i = a[1] === '!' ? 2 : 1;
+        return a.length === i + 2 && /^-[fdes]$/.test(a[i]) && inRepo(a[i + 1], root);
+      },
     },
     {
       name: 'grep',
@@ -247,6 +298,81 @@ export const ACCEPTANCE_SHAPES = Object.freeze(
           return false;
         }
         return true;
+      },
+    },
+    {
+      // bun runs the same read-only scripts npm and pnpm may; `bun run build`, `bun x`, `bun install` stay refused
+      name: 'bun run',
+      usage: 'bun run <test|lint|format:check|typecheck>',
+      match: (a) => a.length === 3 && a[0] === 'bun' && a[1] === 'run' && NPM_SCRIPTS.has(a[2]),
+    },
+    {
+      name: 'bun test',
+      usage: 'bun test [relative path]... (no flags)',
+      match: (a, root) => a[0] === 'bun' && a[1] === 'test' && paths(a.slice(2), root),
+    },
+    {
+      // only a vitest the checkout already installed (node_modules/.bin/vitest), so bunx/npx never download and run a
+      // package from the registry
+      name: 'vitest run',
+      usage: 'bunx|npx vitest run [--reporter=<name>] [--config <path>] [relative path]... (vitest installed in the checkout)',
+      match: (a, root) => vitestShape(a, root),
+    },
+    {
+      // a registry read: the package name is pattern-checked, the field is only `version`, and the line runs with the
+      // isolated env and a temporary HOME, so no npm token reaches the registry
+      name: 'npm view version',
+      usage: 'npm view <[@scope/]pkg[@range]> version [--registry https://<host>[/path]]',
+      match: (a) => {
+        if (a[0] !== 'npm' || a[1] !== 'view' || !NPM_PKG.test(a[2] ?? '') || a[3] !== 'version') return false;
+        if (a.length === 4) return true;
+        if (a.length === 5) return a[4].startsWith('--registry=') && HTTPS_URL.test(a[4].slice('--registry='.length));
+        return a.length === 6 && a[4] === '--registry' && HTTPS_URL.test(a[5]);
+      },
+    },
+    {
+      // `fmt` only with -check (without it fmt rewrites files) and `validate`; init, plan, apply, import, state, console,
+      // providers and every other subcommand stay refused
+      name: 'terraform check',
+      usage: 'terraform [-chdir=<dir>] fmt -check [-recursive -diff -no-color] [relative dir] | terraform [-chdir=<dir>] validate [-no-color]',
+      match: (a, root) => {
+        if (a[0] !== 'terraform') return false;
+        let i = 1;
+        if (a[1]?.startsWith('-chdir=')) {
+          if (!inRepo(a[1].slice('-chdir='.length), root)) return false;
+          i = 2;
+        }
+        const rest = a.slice(i + 1);
+        if (a[i] === 'validate') return rest.every((t) => t === '-no-color');
+        if (a[i] !== 'fmt' || !rest.includes('-check')) return false;
+        const dirs = rest.filter((t) => !/^-(check|recursive|diff|no-color)$/.test(t));
+        return dirs.length <= 1 && dirs.every((d) => inRepo(d, root));
+      },
+    },
+    {
+      // make runs only targets named here, each a read-only check; `make roll-*`, `make apply` and anything else refused
+      name: 'make check',
+      usage: `make [-C <dir>] <${[...MAKE_TARGETS].join('|')}>`,
+      match: (a, root) => {
+        if (a[0] !== 'make') return false;
+        let i = 1;
+        if (a[1] === '-C') {
+          if (!inRepo(a[2], root)) return false;
+          i = 3;
+        }
+        return a.length === i + 1 && MAKE_TARGETS.has(a[i]);
+      },
+    },
+    {
+      // a time limit around a line that is itself allowed: the inner argv must match another shape here (not a count
+      // threshold, not gh, not another timeout), and the limit is at most TIMEOUT_MAX_S seconds
+      name: 'timeout',
+      usage: `timeout <N>[s|m|h] <an allowed command> (N at most ${TIMEOUT_MAX_S} s; no timeout flags)`,
+      match: (a, root) => {
+        if (a[0] !== 'timeout' || !timeoutSeconds(a[1]) || a.length < 3) return false;
+        const inner = a.slice(2);
+        if (inner[0] === 'timeout' || inner[0] === 'gh') return false;
+        return ACCEPTANCE_SHAPES.some((s) => s.name !== 'timeout' && s.match(inner, root));
       },
     },
   ].map((s) => Object.freeze(s)),
@@ -317,7 +443,8 @@ const ghToken = (env) => env?.GH_TOKEN || env?.GITHUB_TOKEN || '';
 
 /** Add the flags a Go test needs for `--- PASS: <Name>` to appear, as argv (the string form is evidence-run's goTestFlags). */
 export function goTestArgv(argv, literals = []) {
-  const at = argv[0] === 'go' ? argv.indexOf('test') : -1;
+  const goAt = argv[0] === 'timeout' && argv[2] === 'go' ? 2 : argv[0] === 'go' ? 0 : -1;
+  const at = goAt < 0 ? -1 : argv.indexOf('test', goAt);
   if (at < 0) return argv;
   const names = [...new Set(literals.flatMap((l) => [...l.matchAll(/--- PASS: ([A-Za-z0-9_]+)/g)].map((m) => m[1])))];
   if (!names.length) return argv;

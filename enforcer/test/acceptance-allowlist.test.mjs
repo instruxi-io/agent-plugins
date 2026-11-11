@@ -306,3 +306,127 @@ test('a runnable line gets a temporary HOME', () => {
   assert.equal(e.GH_TOKEN, undefined);
   assert.equal(e.ENFORCER_API_KEY, undefined);
 });
+
+// graph 987957b0 (2026-11-11): most of its acceptance lines were skipped as "not an allowed command shape", so good work
+// was judged on no evidence. These are its real lines; each runs now, and each near miss stays refused.
+const RUNNER_SHAPES = [
+  'timeout 600 bunx vitest run src/pages/travel src/components/travel src/lib/travel',
+  'bun run typecheck',
+  'bun run lint',
+  'bun test',
+  'bun test src/lib',
+  'bunx vitest run',
+  'npx vitest run --reporter=verbose src/pages/travel',
+  'go build ./...',
+  'go -C graphwatch build ./...',
+  'timeout 900 go test ./... -count=1',
+  'terraform fmt -check -recursive',
+  'terraform fmt -check -diff graphwatch',
+  'terraform validate',
+  'terraform -chdir=graphwatch validate -no-color',
+  'make check-charts',
+  'make -C graphwatch check-charts',
+  'npm view @instruxi-io/xeni-hooks version --registry https://npm.pkg.github.com',
+  'npm view @instruxi-io/xeni-hooks@0.1.4 version',
+  'test ! -e secrets.tfvars',
+  'test ! -f f.txt',
+  'timeout 10m bun run typecheck',
+];
+const RUNNER_REFUSED = [
+  'timeout 600 rm -rf x',
+  'timeout 600 bash -c ls',
+  'timeout 1801 bun run typecheck',
+  'timeout 1h bun run typecheck',
+  'timeout -k 5 600 bun run typecheck',
+  'timeout 600 timeout 600 bun run typecheck',
+  'timeout 600 gh pr view 1',
+  'timeout 600',
+  'bun run build',
+  'bun run dev',
+  'bun install',
+  'bun x vitest run',
+  'bun test --preload ../outside/evil.mjs',
+  'bun test ../outside',
+  'bunx vitest run ../x',
+  'bunx vitest run --config ../outside/evil.mjs',
+  'bunx vitest',
+  'bunx vitest watch',
+  'npx vitest run --coverage.reportsDirectory=/tmp/x',
+  'npx some-package run',
+  'terraform apply',
+  'terraform plan',
+  'terraform init',
+  'terraform fmt',
+  'terraform fmt -recursive',
+  'terraform fmt -check /etc',
+  'terraform -chdir=.. validate',
+  'terraform state list',
+  'make roll-apply',
+  'make apply',
+  'make check-charts apply',
+  'make -C .. check-charts',
+  'make check-charts DEPLOY=1',
+  'go build -o /tmp/x ./...',
+  'go build -o x ./...',
+  'go build -toolexec ../outside/evil ./...',
+  'go build -ldflags=-X ./...',
+  'go build ../outside/...',
+  'npm view x; rm y',
+  'npm view x',
+  'npm view x versions',
+  'npm view x version --registry http://evil.example',
+  'npm view x version --userconfig ../outside/npmrc',
+  'npm publish',
+  'test ! -e /etc/passwd',
+  'test ! -e ../outside/secret',
+  'test ! ! -e f.txt',
+];
+
+test('the evidence runner shapes run, and their near misses stay refused', () => {
+  // the checkout has its own vitest, so bunx/npx resolve it locally and never fetch one
+  mkdirSync(join(repo, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(join(repo, 'node_modules', '.bin', 'vitest'), '#!/bin/sh\n');
+  try {
+    for (const l of RUNNER_SHAPES) {
+      const r = allow.allowedCommand(l, { root: repo });
+      assert.equal(r.skip, undefined, `${l}: ${r.skip}`);
+      assert.equal(planCheck.skipReason(l, repo), null, l);
+    }
+    for (const l of RUNNER_REFUSED) {
+      const r = allow.allowedCommand(l, { root: repo });
+      assert.match(r.skip ?? '', /not run: not an allowed command shape/, `${l} was allowed as ${r.shape}`);
+    }
+    // through evidence run: the allowed lines spawn as argv with no shell, the refused ones never spawn
+    const log = [];
+    const ok = evidenceRun.runEvidence(node(RUNNER_SHAPES.map((l) => `${l} exits 0`)), { cwd: repo, graph: 'g1', run: spy(log) });
+    assert.deepEqual(ok.skipped, [], JSON.stringify(ok.skipped));
+    assert.equal(log.length, RUNNER_SHAPES.length);
+    for (const l of log) assert.equal(l.opts.shell, false);
+    assert.deepEqual(
+      log.find((l) => l.cmd === 'timeout').args,
+      ['600', 'bunx', 'vitest', 'run', 'src/pages/travel', 'src/components/travel', 'src/lib/travel'],
+    );
+    const bad = [];
+    const no = evidenceRun.runEvidence(node(RUNNER_REFUSED.map((l) => `${l} exits 0`)), { cwd: repo, graph: 'g1', run: spy(bad) });
+    assert.deepEqual(bad, []);
+    assert.equal(no.skipped.length, RUNNER_REFUSED.length);
+  } finally {
+    rmSync(join(repo, 'node_modules'), { recursive: true, force: true });
+  }
+  // without a vitest in the checkout, bunx/npx would download one: refused
+  assert.match(allow.allowedCommand('bunx vitest run', { root: repo }).skip ?? '', /not an allowed command shape/);
+  assert.match(allow.allowedCommand('npx vitest run', { root: repo }).skip ?? '', /not an allowed command shape/);
+  // a Go test under timeout still gets its -run/-v flags for `--- PASS: <Name>`
+  assert.deepEqual(allow.goTestArgv(['timeout', '600', 'go', 'test', './...'], ['--- PASS: TestX']), [
+    'timeout',
+    '600',
+    'go',
+    'test',
+    '-tags',
+    'integration',
+    '-v',
+    '-run',
+    '^(TestX)$',
+    './...',
+  ]);
+});
