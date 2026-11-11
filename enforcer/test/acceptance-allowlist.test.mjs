@@ -402,10 +402,15 @@ test('the evidence runner shapes run, and their near misses stay refused', () =>
     assert.deepEqual(ok.skipped, [], JSON.stringify(ok.skipped));
     assert.equal(log.length, RUNNER_SHAPES.length);
     for (const l of log) assert.equal(l.opts.shell, false);
-    assert.deepEqual(
-      log.find((l) => l.cmd === 'timeout').args,
-      ['600', 'bunx', 'vitest', 'run', 'src/pages/travel', 'src/components/travel', 'src/lib/travel'],
-    );
+    assert.deepEqual(log.find((l) => l.cmd === 'timeout').args, [
+      '600',
+      'bunx',
+      'vitest',
+      'run',
+      'src/pages/travel',
+      'src/components/travel',
+      'src/lib/travel',
+    ]);
     const bad = [];
     const no = evidenceRun.runEvidence(node(RUNNER_REFUSED.map((l) => `${l} exits 0`)), { cwd: repo, graph: 'g1', run: spy(bad) });
     assert.deepEqual(bad, []);
