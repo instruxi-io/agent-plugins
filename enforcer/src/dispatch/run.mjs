@@ -8,7 +8,7 @@ import { hostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { API, APIError } from './api.mjs';
+import { API, APIError, usageRouteMissing } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
 import { worktreeFor, worktreeSetup, BaseMissing, StaleWorktree, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
@@ -221,6 +221,7 @@ export class Dispatcher {
     this.routes = null; // the route table in force (docs/graph/ROUTES.md); null is today's --harness and TIER_MODEL
     this.probes = new ProbeCache({ ttl: args.routeProbeTtl ?? DEFAULT_PROBE_TTL, env: args.routesEnv || process.env });
     this.saidOnce = new Set(); // notes said once per dispatcher (adapter prepare notes)
+    this.usageRouteSaid = false; // a graph server without the run usage route (404/405) is said once per dispatcher
     this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
     this.holdNoted = new Map();
     this.attempts = new Map();
@@ -678,6 +679,9 @@ export class Dispatcher {
     });
     proc.done.then(() => this.wakeUp());
     proc.done.then(async () => {
+      // The run's usage, for a harness that cannot report it itself (codex), posted as the run's claimant: the
+      // worker's own credential, so it goes before the revoke below. Never throws.
+      if (adapter.usageAfterExit) await this.recordUsage(w, this.claimantApi(token));
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
       if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
@@ -848,6 +852,69 @@ export class Dispatcher {
     } catch (e) {
       this.say(`needs_person ${w.key}: could not flag run ${s.run_id}: ${e.message}`);
     }
+  }
+
+  /**
+   * The client that speaks as a worker's run claimant. The worker claims its run through the enforcer MCP server on
+   * its own credential (`token`: the minted worker token when ENFORCER_WORKER_AGENT_ID is set, which is the worker
+   * agent's account and not necessarily the dispatcher's --agent account; else the agent key, which IS the
+   * dispatcher's; null: the operator's sign-in, which the dispatcher also speaks as). The graph's usage route admits
+   * only the claimant, so the post goes out on that credential. `workerApi` is a test seam.
+   */
+  claimantApi(token) {
+    if (!token) return this.api;
+    if (this.workerApi) return this.workerApi(token);
+    return typeof this.api.withHeaders === 'function' ? this.api.withHeaders(async () => ({ 'X-API-Key': token })) : this.api;
+  }
+
+  /**
+   * After a worker exits, on a harness whose adapter has usageAfterExit (codex): post its run's token usage, once,
+   * from the finished stream. A codex worker completes its run through MCP before it exits, without usage; the totals
+   * are only known from its --json stream afterwards. Skipped (one line) with no run id or no usage in the stream; a
+   * server without the route (404/405) is said once per dispatcher. Never throws and never fails the node.
+   */
+  async recordUsage(w, api = this.api) {
+    let adapter;
+    try {
+      adapter = adapterFor(workerHarness(w));
+    } catch {
+      return null;
+    }
+    if (!adapter.usageAfterExit) return null;
+    let s;
+    let body;
+    try {
+      s = summarize(w.logPath, workerHarness(w));
+      body = adapter.usageAfterExit(s, { model: w.model || null, endpoint: w.endpoint || null });
+    } catch (e) {
+      this.say(`usage ${w.key}: skipped: could not read the stream: ${e.message}`);
+      return null;
+    }
+    if (!s.run_id) {
+      this.say(`usage ${w.key}: skipped: no run id in the stream`);
+      return null;
+    }
+    if (!body) {
+      this.say(`usage ${w.key}: skipped: the stream reported no usage (run ${s.run_id})`);
+      return null;
+    }
+    try {
+      await api.recordUsage(this.g, w.node.id, s.run_id, body);
+    } catch (e) {
+      if (usageRouteMissing(e)) {
+        if (!this.usageRouteSaid) {
+          this.usageRouteSaid = true;
+          this.say(`usage ${w.key}: skipped: this graph server has no run usage route (HTTP ${e.status}); said once`);
+        }
+        return null;
+      }
+      this.say(`usage ${w.key}: could not record on run ${s.run_id}: ${typeof e.detail === 'function' ? e.detail() : e.message}`);
+      return null;
+    }
+    this.say(
+      `usage ${w.key}: recorded run=${s.run_id} input=${body.input_tokens} cache_read=${body.cache_read_input_tokens} cache_creation=${body.cache_creation_input_tokens} output=${body.output_tokens} turns=${body.turns ?? '-'}`,
+    );
+    return body;
   }
 
   /** A codex worker reported succeeded: commit its worktree on the card branch, push, open the PR, land it with

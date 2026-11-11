@@ -24,6 +24,22 @@ export class APIError extends Error {
   }
 }
 
+/** A 405, or a 404 that is not the graph's own graph/node/run_not_found: the server has no such route (an older build). */
+export function usageRouteMissing(e) {
+  if (!(e instanceof APIError)) return false;
+  if (e.status === 405) return true;
+  if (e.status !== 404) return false;
+  let code = null;
+  try {
+    const j = JSON.parse(e.body);
+    const err = j?.error;
+    code = (err && typeof err === 'object' ? err.code : err) || j?.code || null;
+  } catch {
+    /* not json: a router's plain 404 */
+  }
+  return !/^(graph|node|run)_not_found$/.test(String(code || ''));
+}
+
 const one = (d) => (Array.isArray(d) ? d[0] : d);
 
 export class API {
@@ -121,6 +137,19 @@ export class API {
   // api-used: sends evidence
   addEvidence(g, n, r, body) {
     return this.call('POST', `/graphs/${g}/nodes/${n}/runs/${r}/evidence`, body);
+  }
+  /**
+   * Record a run's token usage after its worker exited (OVERWRITE: the body is the run's totals, not a delta). The
+   * graph allows it to the run's claimant while it runs or within a window after it ends. An older server has no
+   * such route: 405, or a 404 that is not graph/node/run_not_found (usageRouteMissing).
+   */
+  // api-used: sends model,input_tokens,output_tokens,cache_read_input_tokens,cache_creation_input_tokens,turns,source
+  recordUsage(g, n, r, body) {
+    return this.call('POST', `/graphs/${g}/nodes/${n}/runs/${r}/usage`, body);
+  }
+  /** The same client (base, retries, timeout) speaking as another credential: `headers` is an async () => object. */
+  withHeaders(headers) {
+    return new API(this.base, { ...this.o, headers });
   }
   // api-used: reads data
   async runs(g, n) {
