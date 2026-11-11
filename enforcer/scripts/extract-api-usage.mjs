@@ -31,6 +31,8 @@ const SOURCES = [
   call('src/graph/hooks/session.mjs', 'graph', /\bpost\(cfg,\s*'(\w+)',\s*`([^`]+)`/g, 1, 2),
   call('src/graph/hooks/heartbeat.mjs', 'graph', /\bpost\(cfg,\s*'(\w+)',\s*`([^`]+)`/g, 1, 2),
   call('src/preflight.mjs', 'graph', /\bget\(base,\s*`([^`]+)`/g, 'GET', 1),
+  call('src/preflight.mjs', 'graph', /\bsend\(base,\s*'(\w+)',\s*`([^`]+)`/g, 1, 2),
+  call('src/skills-source.mjs', 'graph', /\bcall\(base, h, '(\w+)', `([^`]+)`/g, 1, 2),
   call('bin/files.mjs', 'files', /\bcall\(fetchImpl, base, [`']([^`']+)[`']/g, 'scan', 1, '/storage'),
   call('bin/login.mjs', 'enforcer', /\$\{base\}\$\{API\}(\/[^`]*)`/g, 'scan', 1),
   call('bin/enforcer-workspace.mjs', 'enforcer', /\$\{base\}\$\{API\}(\/[^`]*)`/g, 'scan', 1),

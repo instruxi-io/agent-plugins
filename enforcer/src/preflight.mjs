@@ -1,9 +1,9 @@
 // `enforcer dispatch preflight <graph>`: every way a dispatch fails before it spends, as one line each.
-// Checks: credential, gh, repos, acceptance, governor-lander, frontier. Exit 2 when any fails.
+// Checks: credential, gh, repos, acceptance, governor-lander, frontier, skills. Exit 2 when any fails.
 import { defaultFetch } from '../lib/api/client.mjs';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, dirname, delimiter, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { authHeaders, signInProblem } from './credentials.mjs';
@@ -12,6 +12,8 @@ import { identityCheck, readAgentKey } from './dispatch/agent.mjs';
 import { DOT } from '../hooks/claude/paths.mjs';
 import { allowedCommand } from './acceptance-allowlist.mjs';
 import { safeIdent, pyRepr, unsafeIdent } from './dispatch/ident.mjs';
+import { DELIVER_SKILL } from './dispatch/summarize.mjs';
+import { mergeTarget } from './dispatch/select.mjs';
 
 const OWN_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const DISPATCH_TYPES = 'task,bug,chore,merge,scout,milestone,ops'.split(',');
@@ -341,9 +343,11 @@ export async function preflight(
     );
 
   // 6 frontier: claimable, not claimed
+  let frontierNodes = null;
   if (authed) {
     try {
       const r = await get(base, `/graphs/${graph}/frontier`, h);
+      if (r.status === 200) frontierNodes = r.body.data || [];
       const ok =
         r.status === 200 &&
         (r.body.data || []).some((n) => (types === null || types.includes(n.type)) && [undefined, null, 'looking_for_work'].includes(n.work_state));
@@ -360,7 +364,156 @@ export async function preflight(
       add('frontier', false, e.message);
     }
   } else add('frontier', false, 'skipped: no credential');
+
+  // 7 skills: the graph's skill source syncs, and every agent node with a repo carries a delivery skill whose commands exist here
+  if (!authed) add('skills', false, 'skipped: no credential');
+  else if (!frontierNodes) add('skills', false, 'skipped: cannot read the frontier');
+  else {
+    try {
+      const r = await skillsCheck({ base, graph, h, frontier: frontierNodes, nodes: nodes || [], types, env });
+      add('skills', r.ok, r.line);
+    } catch (e) {
+      add('skills', false, `cannot check skills: ${e.message}`);
+    }
+  }
   return res;
+}
+
+/** At most this many frontier nodes have their resolved skills read per preflight. */
+export const SKILLS_NODE_CAP = 20;
+const SHA7 = (s) => String(s || '').slice(0, 7);
+
+async function send(base, method, path, h) {
+  const r = await defaultFetch(base.replace(/\/$/, '') + path, { method, headers: { ...h, 'content-type': 'application/json' }, body: '{}' });
+  let body = {};
+  try {
+    body = await r.json();
+  } catch {}
+  return { status: r.status, body };
+}
+
+/** The server's machine code and detail from an error body (`{error, detail}`), as `code: detail`. */
+export const errorCode = (status, body) => {
+  const e = body?.error;
+  const code = (e && typeof e === 'object' ? e.code : e) || body?.code || `HTTP ${status}`;
+  const detail = (typeof body?.detail === 'string' && body.detail) || (e && typeof e === 'object' && e.message) || '';
+  return detail ? `${code}: ${detail}` : String(code);
+};
+
+/** A 404/405 that is not the server's own `skill_source_not_found`: the route itself is missing (an older server). */
+const noRoute = (r) => r.status === 405 || (r.status === 404 && errorCode(r.status, r.body) !== 'skill_source_not_found');
+
+/** GET /graphs/{g}/skill-source as {source, skills} (source null when none is set, or the server has no such route). */
+export async function readSkillSource(base, graph, h) {
+  const r = await get(base, `/graphs/${graph}/skill-source`, h); // api-used: reads data.source,data.skills
+  if (r.status === 404 || r.status === 405) return { source: null, skills: [], route: !noRoute(r) };
+  if (r.status !== 200) throw new Error(`GET skill-source: ${errorCode(r.status, r.body)}`);
+  const d = r.body?.data ?? r.body ?? {};
+  const source = d.source !== undefined ? d.source : d.repo ? d : null;
+  const skills = d.skills ?? source?.skills ?? [];
+  return { source: source || null, skills: Array.isArray(skills) ? skills : [], route: true };
+}
+
+/** Whether `cmd` (a bare command name) is an executable file in a directory on env.PATH. No shell. */
+export function onPath(cmd, env = process.env) {
+  if (!cmd || cmd.includes('/') || cmd.includes('\\')) return false;
+  // Windows: PATH may be spelled Path, a command is `git.exe` (PATHEXT), and there is no execute bit to test
+  const win = process.platform === 'win32';
+  const names = win
+    ? [
+        cmd,
+        ...String(env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+          .split(';')
+          .filter(Boolean)
+          .map((x) => cmd + x.toLowerCase()),
+      ]
+    : [cmd];
+  for (const dir of String(env.PATH || (win && env.Path) || '').split(delimiter)) {
+    if (!dir || !isAbsolute(dir)) continue;
+    for (const name of names) {
+      const p = join(dir, name);
+      try {
+        if (!statSync(p).isFile()) continue;
+        if (!win) accessSync(p, constants.X_OK);
+        return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
+/** The skill rows of a node's resolved list (`GET …/nodes/{id}/skills`) as {slug, provides, requires}. */
+export function skillFacts(row) {
+  const s = row && typeof row === 'object' ? (row.skill && typeof row.skill === 'object' ? row.skill : row) : {};
+  const m = s.metadata && typeof s.metadata === 'object' ? s.metadata : {};
+  const list = (v) => (Array.isArray(v) ? v.map(String) : []);
+  return { slug: String(s.slug || ''), provides: list(m.provides ?? s.provides), requires: list(m.requires ?? s.requires) };
+}
+
+/**
+ * The `skills` preflight line (SKILL_SOURCE_CONTRACT §7): sync the graph's skill source when it has one; every frontier
+ * node of a dispatched type with `data.repo` (first SKILLS_NODE_CAP of them) must carry a skill that provides `delivery`
+ * (or the legacy `deliver-via-github-pr`), and each `requires` command of its skills must be on this host's PATH. A server
+ * without the skill-source routes is a graph with no source. Returns {ok, line}.
+ */
+export async function skillsCheck({ base, graph, h, frontier, nodes = [], types = DISPATCH_TYPES, env = process.env, cap = SKILLS_NODE_CAP }) {
+  const problems = [];
+  let summary = 'no skill source';
+  const src = await readSkillSource(base, graph, h);
+  if (src.source) {
+    const repo = src.source.repo || '?';
+    let commit = src.source.resolved_commit || src.source.commit || '';
+    let count = src.skills.length;
+    const r = await send(base, 'POST', `/graphs/${graph}/skill-source/sync`, h); // api-used: reads data.changed,data.to,data.commit,data.skills
+    if (r.status === 200) {
+      const d = r.body?.data ?? r.body ?? {};
+      // the server answers the snapshot's commit and skill count (SKILL_SOURCE_CONTRACT §13); older answers re-read it
+      if (typeof d.commit === 'string' && d.commit && typeof d.skills === 'number') {
+        commit = d.commit;
+        count = d.skills;
+      } else if (d.changed === true) {
+        const again = await readSkillSource(base, graph, h).catch(() => null);
+        commit = again?.source?.resolved_commit || d.to || commit;
+        count = again ? again.skills.length : count;
+      }
+      summary = `${count} from ${repo}@${SHA7(commit)}`;
+    } else if (noRoute(r) || errorCode(r.status, r.body) === 'skill_source_not_found') {
+      summary = 'no skill source';
+    } else {
+      problems.push(`skill source ${repo} did not sync: ${errorCode(r.status, r.body)}`);
+      summary = `${count} from ${repo}@${SHA7(commit)} (last good)`;
+    }
+  }
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const want = frontier
+    .map((n) => ({ ...(byId.get(n.id) || {}), ...n, data: n.data ?? byId.get(n.id)?.data ?? {} }))
+    .filter((n) => (types === null || types.includes(n.type)) && n.data?.repo && !mergeTarget(n));
+  const probe = want.slice(0, cap);
+  const noDelivery = [];
+  const missing = new Map(); // "slug requires cmd" -> true
+  for (const n of probe) {
+    const r = await get(base, `/graphs/${graph}/nodes/${n.id}/skills`, h); // api-used: reads data
+    if (r.status !== 200) {
+      problems.push(`cannot read the skills of ${n.key || n.id}: ${errorCode(r.status, r.body)}`);
+      continue;
+    }
+    const facts = (Array.isArray(r.body?.data) ? r.body.data : []).map(skillFacts);
+    if (!facts.some((f) => f.provides.includes('delivery') || f.slug === DELIVER_SKILL)) noDelivery.push(n.key || n.id);
+    for (const f of facts)
+      for (const req of f.requires) {
+        const cmd = req.trim().split(/\s+/)[0];
+        // the dispatcher is `enforcer` itself, and workers get the plugin's bin on PATH even when this process does not
+        if (cmd === 'enforcer' || onPath(cmd, env)) continue;
+        missing.set(`skill ${f.slug} requires ${cmd}`, true);
+      }
+  }
+  if (noDelivery.length)
+    problems.push(
+      `no delivery skill: ${noDelivery.slice(0, 5).join(', ')}${noDelivery.length > 5 ? ` (+${noDelivery.length - 5} more)` : ''}; set a skill source (enforcer skills source set ${graph} --repo owner/name) or attach ${DELIVER_SKILL}`,
+    );
+  if (missing.size) problems.push(`${[...missing.keys()].join(', ')} (not on this host's PATH)`);
+  const capped = want.length > probe.length ? `; checked the first ${probe.length} of ${want.length} frontier nodes with data.repo` : '';
+  return problems.length ? { ok: false, line: `${problems.join('; ')}${capped}` } : { ok: true, line: `ok (${summary}${capped})` };
 }
 
 export async function main(args, out = process.stdout) {

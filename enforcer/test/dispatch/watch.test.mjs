@@ -17,6 +17,8 @@ import {
   BACKOFF_MIN,
   BACKOFF_MAX,
   SHORT_LIFE,
+  leftKeys,
+  graphFingerprint,
 } from '../../src/dispatch/watch.mjs';
 import { API } from '../../src/dispatch/api.mjs';
 import { parseDispatchArgs } from '../../src/dispatch/run.mjs';
@@ -284,4 +286,149 @@ test('a dispatcher that finished its graph is not backed off, however quickly it
   assert.match(log, /dispatcher for fast exited after 30s \(graph went idle or finished\)/);
   assert.match(log, /dispatcher for crash exited after 30s; not restarting it for 60s/);
   assert.equal(h.started.filter(([g]) => g === 'fast').length, 2, 'fast is restarted at once when the lobby still offers it');
+});
+
+const EXIT6 = '18:02:11 nothing runnable or running; exiting 6: failed or denied nodes remain: build, push-it (peak 1)';
+
+test('leftKeys reads the exit-6 line and nothing else', () => {
+  assert.deepEqual(leftKeys(EXIT6), ['build', 'push-it']);
+  assert.equal(leftKeys('18:02:11 nothing runnable or running; exiting (peak 3 concurrent)'), null);
+  assert.equal(leftKeys(''), null);
+});
+
+/** A harness whose dispatcher for `g` exits 6 after `lived` seconds, with the graph's fingerprint under the test's control. */
+async function parkedHarness(g, { lived = SHORT_LIFE + 60 } = {}) {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const h = harness([[row(g)]]);
+  const fp = { [g]: 'fp-1' };
+  const reads = [];
+  h.w.d.fingerprint = async (api, graph, keys) => {
+    reads.push([graph, keys]);
+    return fp[graph];
+  };
+  await h.next(); // starts g
+  mkdirSync(join(h.cfgHome, 'dispatch', g), { recursive: true });
+  writeFileSync(join(h.cfgHome, 'dispatch', g, 'dispatcher.log'), `18:00:00 launch build\n${EXIT6}\n`);
+  h.aliveSet.delete(g);
+  h.advance(lived);
+  await h.next(); // reaps the exit-6 dispatcher
+  return { ...h, fp, reads };
+}
+
+test('a dispatcher that exited 6 is not started again while the graph is unchanged, and is once it changes', async () => {
+  const h = await parkedHarness('nva');
+  assert.equal(h.started.length, 1);
+  assert.match(
+    h.out.join(''),
+    /dispatcher for nva exited after \d+s leaving failed or denied nodes for a person \(build, push-it\); not starting it again until the graph changes/,
+  );
+  assert.match(h.out.join(''), /skip nva: failed or denied nodes left for a person \(build, push-it\)/);
+  assert.deepEqual(h.reads[0], ['nva', ['build', 'push-it']]);
+  for (let i = 0; i < 4; i++) {
+    h.advance(BACKOFF_MAX + 1); // long past any backoff: only the park holds it
+    await h.next();
+  }
+  assert.equal(h.started.length, 1, 'unchanged graph: never relaunched');
+  const st = readWatchState(h.cfgHome);
+  assert.equal(st.parked.nva.fingerprint, 'fp-1');
+  assert.deepEqual(st.parked.nva.nodes, ['build', 'push-it']);
+  h.fp.nva = 'fp-2'; // a person attached the skill or reset the node
+  await h.next();
+  assert.equal(h.started.length, 2);
+  assert.match(h.out.join(''), /nva changed since its dispatcher stopped on nodes left for a person; it can start again/);
+  assert.equal(readWatchState(h.cfgHome).parked.nva, undefined);
+});
+
+test('an exit 6 parks the graph however young the dispatcher died (no backoff to wait out)', async () => {
+  const h = await parkedHarness('young', { lived: 20 });
+  h.advance(BACKOFF_MIN * 2);
+  await h.next();
+  assert.equal(h.started.length, 1);
+  assert.doesNotMatch(h.out.join(''), /not restarting it for/);
+});
+
+test('a parked graph stays parked across a watcher restart (watch.json), and starts once it changes', async () => {
+  const h = await parkedHarness('nva');
+  const started = [];
+  const mk = () =>
+    new Watcher({ for: null, agent: null, maxGraphs: 2, poll: 30, once: true, dryRun: false }, [], {
+      api: { call: async () => ({ data: { items: [row('nva')], total: 1 } }) },
+      env: {},
+      cfgHome: h.cfgHome,
+      start: async (g) => (started.push(g), 0),
+      alive: () => null,
+      out: () => {},
+      now: () => 99999,
+      fingerprint: async () => h.fp.nva,
+    });
+  await mk().pass_();
+  assert.deepEqual(started, [], 'a fresh watcher reads the park back');
+  h.fp.nva = 'fp-3';
+  await mk().pass_();
+  assert.deepEqual(started, ['nva']);
+});
+
+test('a parked graph whose fingerprint cannot be read is not started', async () => {
+  const h = await parkedHarness('nva');
+  h.w.d.fingerprint = async () => {
+    throw new Error('HTTP 503');
+  };
+  await h.next();
+  assert.equal(h.started.length, 1);
+  assert.match(h.out.join(''), /cannot read nva to tell whether it changed \(HTTP 503\)/);
+});
+
+test('graphFingerprint moves with node state, skills, the source commit and the epoch, not with the lease node', async () => {
+  const state = () => ({
+    graph: { epoch: 1, updated_at: 't0' },
+    nodes: [
+      { id: 'i1', key: 'build', status: 'failed', updated_at: 't1' },
+      { id: 'i2', key: 'dispatcher-lease', status: 'done', updated_at: 't2' },
+    ],
+    skills: { i1: [] },
+    source: null,
+  });
+  const fakeApi = (st) => ({
+    call: async (m, path) => {
+      if (path === '/graphs/g') return { data: st.graph };
+      if (path.startsWith('/graphs/g/nodes?')) return { data: st.nodes, meta: { total: st.nodes.length } };
+      if (path === '/graphs/g/skill-source') {
+        if (!st.source) throw new Error('HTTP 404');
+        return { data: { source: { resolved_commit: st.source } } };
+      }
+      const m2 = /^\/graphs\/g\/nodes\/([^/]+)\/skills$/.exec(path);
+      if (m2) return { data: st.skills[m2[1]] || [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  const fp = (st) => graphFingerprint(fakeApi(st), 'g', ['build']);
+  const base = await fp(state());
+  assert.equal(await fp(state()), base, 'stable');
+  const lease = state();
+  lease.nodes[1].updated_at = 't9';
+  assert.equal(await fp(lease), base, 'the lease node is ignored');
+  const reset = state();
+  reset.nodes[0] = { ...reset.nodes[0], status: 'todo', updated_at: 't5' };
+  assert.notEqual(await fp(reset), base);
+  const skill = state();
+  skill.skills.i1 = [{ skill: { slug: 'deliver-via-github-pr', version: 2, id: 's1' } }];
+  assert.notEqual(await fp(skill), base);
+  const src = state();
+  src.source = 'a'.repeat(40);
+  assert.notEqual(await fp(src), base);
+  const epoch = state();
+  epoch.graph.epoch = 2;
+  assert.notEqual(await fp(epoch), base);
+});
+
+test('an UNPARK file releases a parked graph whose fingerprint has not moved, and is removed', async () => {
+  const { existsSync, writeFileSync } = await import('node:fs');
+  const { unparkFile } = await import('../../src/dispatch/watch.mjs');
+  const h = await parkedHarness('nva');
+  await h.next();
+  assert.ok(readWatchState(h.cfgHome).parked.nva, 'still parked while unchanged');
+  writeFileSync(unparkFile(h.cfgHome, 'nva'), 'now\n');
+  await h.next();
+  assert.equal(readWatchState(h.cfgHome).parked.nva, undefined);
+  assert.equal(existsSync(unparkFile(h.cfgHome, 'nva')), false);
 });

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.10.0
+
+- `enforcer dispatch` preflight has a `skills` line (enforcer-graph SKILL_SOURCE_CONTRACT §7): it syncs the graph's skill source when it has one (a refused sync fails with the server's code), fails `no delivery skill: <keys>` while a frontier node with `data.repo` carries no skill that provides `delivery` (or the legacy `deliver-via-github-pr`), and fails `skill <slug> requires <cmd>` when a skill's `requires` command is not on this host's PATH (`enforcer` always counts as present). It reads at most 20 nodes and says so. A server without the skill-source routes is a graph with no source. New `enforcer skills source show|set|sync|rm <graph>` wraps the four skill-source routes. `enforcer dispatch watch` no longer restarts a graph whose dispatcher exited 6 (failed or denied nodes left for a person) until the graph's fingerprint changes (node status or `updated_at`, attached skills, skill source commit, epoch); parked graphs are kept in watch.json across restarts. On 2026-11-10 a graph with `skills: []` passed preflight and watch relaunched it four times (8 failed runs).
+
 ## 1.9.9
 
 - A worker on a self-hosted endpoint route starts with `ENABLE_TOOL_SEARCH=false`, so Claude Code loads the graph MCP tools up front instead of behind ToolSearch, and the graph-worker agent calls them directly when they are already listed. On vLLM the ToolSearch result was rejected by the model's chat template (three 400s per worker) and the retry reprocessed the whole prompt uncached.

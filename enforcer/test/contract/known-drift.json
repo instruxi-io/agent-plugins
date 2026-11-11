@@ -35,6 +35,36 @@
       "kind": "read",
       "field": "data.tenant_id",
       "reason": "Tolerant fallback for tenant.id (the schema nests the tenant). The /auth/me schema has no top-level tenant_id."
+    },
+    {
+      "id": "src/preflight.mjs GET /graphs/{}/skill-source",
+      "kind": "path",
+      "reason": "Ahead of the spec: the skill-source routes (enforcer-graph docs/SKILL_SOURCE_CONTRACT.md §5) are written against that contract before the server ships them. Callers treat a 404 without skill_source_not_found, or a 405, as no source. Delete this entry when the spec lock is re-pinned to a graph build that serves the route."
+    },
+    {
+      "id": "src/preflight.mjs POST /graphs/{}/skill-source/sync",
+      "kind": "path",
+      "reason": "Ahead of the spec: the skill-source routes (enforcer-graph docs/SKILL_SOURCE_CONTRACT.md §5) are written against that contract before the server ships them. Callers treat a 404 without skill_source_not_found, or a 405, as no source. Delete this entry when the spec lock is re-pinned to a graph build that serves the route."
+    },
+    {
+      "id": "src/skills-source.mjs DELETE /graphs/{}/skill-source",
+      "kind": "path",
+      "reason": "Ahead of the spec: the skill-source routes (enforcer-graph docs/SKILL_SOURCE_CONTRACT.md §5) are written against that contract before the server ships them. Callers treat a 404 without skill_source_not_found, or a 405, as no source. Delete this entry when the spec lock is re-pinned to a graph build that serves the route."
+    },
+    {
+      "id": "src/skills-source.mjs PUT /graphs/{}/skill-source",
+      "kind": "path",
+      "reason": "Ahead of the spec: the skill-source routes (enforcer-graph docs/SKILL_SOURCE_CONTRACT.md §5) are written against that contract before the server ships them. Callers treat a 404 without skill_source_not_found, or a 405, as no source. Delete this entry when the spec lock is re-pinned to a graph build that serves the route."
+    },
+    {
+      "id": "src/skills-source.mjs POST /graphs/{}/skill-source/sync",
+      "kind": "path",
+      "reason": "Ahead of the spec: the skill-source routes (enforcer-graph docs/SKILL_SOURCE_CONTRACT.md §5) are written against that contract before the server ships them. Callers treat a 404 without skill_source_not_found, or a 405, as no source. Delete this entry when the spec lock is re-pinned to a graph build that serves the route."
+    },
+    {
+      "id": "src/skills-source.mjs GET /graphs/{}/skill-source",
+      "kind": "path",
+      "reason": "Ahead of the spec: the skill-source routes (enforcer-graph docs/SKILL_SOURCE_CONTRACT.md §5) are written against that contract before the server ships them. Callers treat a 404 without skill_source_not_found, or a 405, as no source. Delete this entry when the spec lock is re-pinned to a graph build that serves the route."
     }
   ]
 }

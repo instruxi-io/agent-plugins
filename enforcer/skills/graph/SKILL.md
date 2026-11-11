@@ -393,11 +393,17 @@ cold:
   `node_defaults` per node type (outputs, checks, tier, profile) and graph
   skills (filtered by node type). The delivery procedure is a skill, not part
   of the worker: software-delivery attaches `deliver-via-github-pr` (worktree,
-  push, PR, `land-pr.sh`), accounting-close attaches its own. The worker
+  push, PR, `land-pr.sh`), accounting-close attaches its own. A graph can
+  instead load its skills from a repo: `enforcer skills source set <graph>
+  --repo owner/name` (a public GitHub repo with `skills/<slug>/SKILL.md`; the
+  card then names the commit). The worker
   follows the card's skills in order, graph-level first, and with none it only
   reports what it produced. So a node says WHAT (the outcome and acceptance),
   never HOW, and does not repeat the defaults. The dispatcher's salvage of a
   denied push applies only to nodes whose skills include `deliver-via-github-pr`.
+  `enforcer dispatch` preflight refuses to start while a frontier node with
+  `data.repo` has no delivery skill (`provides: [delivery]`, or that slug), or
+  while a skill's `requires` command is missing from the host's PATH.
 - **On a software-delivery graph, a code task's acceptance includes "landed".** The worker opens the PR and
   lands it with `land-pr.sh` inside its own node, so one of the acceptance lines
   reads like "PR merged to the base branch (merge commit on origin/main)". Do

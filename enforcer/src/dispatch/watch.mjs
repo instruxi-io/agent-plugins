@@ -5,14 +5,21 @@
 // read starts it again when demand returns. GET /work/stream wakes the loop early; a timer re-reads the lobby anyway,
 // because a lapsing lease opens a seat without writing anything the stream could carry.
 //
-// State: <config home>/dispatch/watch.json (this process, its graphs, its backoffs), read by `enforcer dispatch status`.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+// A dispatcher that exits 6 (only failed or denied nodes remain, left for a person) parks its graph: watch does not start
+// it again until the graph's fingerprint (graphFingerprint) differs from the one taken at that exit, even though the
+// lobby still advertises those nodes. Without that, every relaunch spent fresh attempts on a node nobody had fixed.
+//
+// State: <config home>/dispatch/watch.json (this process, its graphs, its backoffs, its parked graphs), read by
+// `enforcer dispatch status`; parked graphs are read back at start, so a watcher restart keeps them parked.
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveConfig } from '../config.mjs';
 import { headers as authHeaders } from '../preflight.mjs';
 import { API } from './api.mjs';
 import { readAgentKey } from './agent.mjs';
 import { FOR_VALUES } from './run.mjs';
+import { LEASE_KEY } from './lease.mjs';
 
 /** The contract asks lobby pollers to poll at 10 s or slower (WORK_LOBBY_CONTRACT §8). */
 export const MIN_POLL = 10;
@@ -79,7 +86,10 @@ const isValueOf = (argv, i) => DISPATCH_VALUE_FLAGS.includes(argv[i - 1]);
  * priority); `running` is the set of graph ids with a live dispatcher; `backoff` maps graph id -> epoch seconds until
  * which it is not started. Returns {start: [graph ids], skipped: [[graph id, why]]}.
  */
-export function pickGraphs(rows, { running = new Set(), backoff = new Map(), maxGraphs = 2, now = Date.now() / 1000 } = {}) {
+/** The file `enforcer dispatch unpark <graph>` leaves for the watcher: its next pass releases the parked graph and removes it. */
+export const unparkFile = (cfgHome, graph) => join(cfgHome, 'dispatch', String(graph), 'UNPARK');
+
+export function pickGraphs(rows, { running = new Set(), backoff = new Map(), parked = new Map(), maxGraphs = 2, now = Date.now() / 1000 } = {}) {
   const start = [];
   /** @type {Array<[string, string]>} */
   const skipped = [];
@@ -94,6 +104,12 @@ export function pickGraphs(rows, { running = new Set(), backoff = new Map(), max
     if (!(Number(r.workers_wanted) > 0)) continue;
     if (Array.isArray(r.my_can) && !r.my_can.includes('claim')) {
       skipped.push([g, `advertised to this caller, but its role (${r.my_role || '?'}) cannot claim: share the graph with it as editor`]);
+      continue;
+    }
+    const park = parked.get(g);
+    if (park) {
+      const keys = park.nodes?.length ? ` (${park.nodes.slice(0, 5).join(', ')}${park.nodes.length > 5 ? ', ...' : ''})` : '';
+      skipped.push([g, `failed or denied nodes left for a person${keys}; not starting it until something on the graph changes`]);
       continue;
     }
     const until = backoff.get(g) || 0;
@@ -115,6 +131,61 @@ export function pickGraphs(rows, { running = new Set(), backoff = new Map(), max
 export function nextBackoff(prev, livedS) {
   if (livedS >= SHORT_LIFE) return 0;
   return Math.min(BACKOFF_MAX, prev ? prev * 2 : BACKOFF_MIN);
+}
+
+/** The node keys a dispatcher log's last line says were left for a person (`exiting 6: failed or denied nodes remain:
+ *  a, b (peak N)`), or null when it ended any other way. */
+export function leftKeys(lastLine) {
+  const m = /nothing runnable or running; exiting 6: failed or denied nodes remain: (.*?) \(peak/.exec(lastLine || '');
+  return m ? m[1].split(/,\s*/).filter(Boolean) : null;
+}
+
+/** At most this many left nodes have their resolved skills read for a fingerprint. */
+export const FINGERPRINT_SKILL_NODES = 20;
+
+/**
+ * What a person changes when they fix a node left for them, as one hash: the graph's epoch and updated_at, its skill
+ * source commit, every node's (id, status, updated_at) except the dispatcher's lease node, and the resolved skills
+ * (slug, version, id, source commit) of the left nodes. Throws when the graph or its nodes cannot be read.
+ */
+export async function graphFingerprint(api, g, keys = []) {
+  const graph = (await api.call('GET', `/graphs/${g}`)).data || {};
+  const nodes = [];
+  for (let off = 0; ; off += 200) {
+    const d = await api.call('GET', `/graphs/${g}/nodes?limit=200&offset=${off}`);
+    nodes.push(...(d.data || []));
+    if (!(d.data || []).length || off + 200 >= (d.meta?.total ?? nodes.length)) break;
+  }
+  let source = null;
+  try {
+    const d = (await api.call('GET', `/graphs/${g}/skill-source`)).data || {};
+    source = d.source?.resolved_commit ?? null;
+  } catch {
+    /* no source, or a server without the route */
+  }
+  const byKey = new Map(nodes.map((n) => [n.key, n]));
+  const skills = [];
+  for (const k of keys.slice(0, FINGERPRINT_SKILL_NODES)) {
+    const n = byKey.get(k);
+    if (!n?.id) continue;
+    let rows = [];
+    try {
+      rows = (await api.call('GET', `/graphs/${g}/nodes/${n.id}/skills`)).data || [];
+    } catch {
+      rows = ['unreadable'];
+    }
+    skills.push([k, rows.map((r) => (r?.skill ? [r.skill.slug, r.skill.version, r.skill.id, r.skill.metadata?.source?.commit ?? null] : r))]);
+  }
+  const rec = {
+    graph: [graph.epoch ?? null, graph.updated_at ?? null],
+    source,
+    nodes: nodes
+      .filter((n) => n.key !== LEASE_KEY)
+      .map((n) => [n.id, n.status, n.updated_at ?? null])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    skills,
+  };
+  return createHash('sha256').update(JSON.stringify(rec)).digest('hex').slice(0, 16);
 }
 
 /** Every lobby row (GET /work?kind=work[&for=]), all pages. */
@@ -171,6 +242,9 @@ export class Watcher {
     this.backoffLen = new Map(); // graph -> current backoff length, seconds
     this.lastPass = null;
     this.lastError = null;
+    // graph -> {fingerprint, nodes, since}: exited 6, not started again until the fingerprint changes; kept across restarts
+    this.parked = new Map(Object.entries((deps.cfgHome && readWatchState(deps.cfgHome)?.parked) || {}));
+    this.toPark = [];
   }
 
   say(m) {
@@ -182,14 +256,64 @@ export class Watcher {
    *  nodes are still advertised, so restarting at once would only churn. */
   finished(g) {
     if (typeof this.d.finished === 'function') return Boolean(this.d.finished(g));
-    if (!this.d.cfgHome) return false;
+    return /nothing runnable or running; exiting \(peak/.test(this.lastLogLine(g));
+  }
+
+  /** The keys a dispatcher that exited 6 left for a person, or null (see leftKeys). */
+  leftForPerson(g) {
+    if (typeof this.d.leftForPerson === 'function') return this.d.leftForPerson(g);
+    return leftKeys(this.lastLogLine(g));
+  }
+
+  lastLogLine(g) {
+    if (!this.d.cfgHome) return '';
     try {
       const lines = readFileSync(join(this.d.cfgHome, 'dispatch', g, 'dispatcher.log'), 'utf8')
         .trimEnd()
         .split('\n');
-      return /nothing runnable or running; exiting \(peak/.test(lines[lines.length - 1] || '');
+      return lines[lines.length - 1] || '';
     } catch {
-      return false;
+      return '';
+    }
+  }
+
+  /** The graph's fingerprint, or null when it cannot be read (the graph then stays as it is: parked or not). */
+  async fingerprint(g, keys) {
+    try {
+      return await (this.d.fingerprint || graphFingerprint)(this.d.api, g, keys);
+    } catch (e) {
+      this.say(`cannot read ${g} to tell whether it changed (${e.message})`);
+      return null;
+    }
+  }
+
+  /** Park the graphs reaped this pass, and release parked ones the lobby offers whose fingerprint moved. */
+  async reviewParked(rows, running) {
+    const fresh = new Set();
+    for (const [g, keys] of this.toPark.splice(0)) {
+      this.parked.set(g, { fingerprint: await this.fingerprint(g, keys), nodes: keys, since: new Date(this.d.now() * 1000).toISOString() });
+      fresh.add(g);
+    }
+    for (const r of rows) {
+      const g = r?.graph_id;
+      const p = g && this.parked.get(g);
+      if (!p || fresh.has(g) || running.has(g) || !(Number(r.workers_wanted) > 0)) continue;
+      // `enforcer dispatch unpark <graph>`: a person says the cause was fixed somewhere the fingerprint cannot see
+      const flag = this.d.cfgHome && unparkFile(this.d.cfgHome, g);
+      if (flag && existsSync(flag)) {
+        rmSync(flag, { force: true });
+        this.parked.delete(g);
+        this.say(`${g} unparked by hand (enforcer dispatch unpark); it can start again`);
+        continue;
+      }
+      const fp = await this.fingerprint(g, p.nodes || []);
+      if (!fp) continue;
+      if (!p.fingerprint)
+        p.fingerprint = fp; // the read at exit failed: this one is the baseline
+      else if (fp !== p.fingerprint) {
+        this.parked.delete(g);
+        this.say(`${g} changed since its dispatcher stopped on nodes left for a person; it can start again`);
+      }
     }
   }
 
@@ -202,10 +326,21 @@ export class Watcher {
         continue;
       }
       const lived = this.d.now() - s.at;
+      this.started.delete(g);
+      const left = this.leftForPerson(g);
+      if (left) {
+        // exit 6: the nodes it left are still advertised; starting it again would only spend attempts on them
+        this.backoffLen.delete(g);
+        this.backoff.delete(g);
+        this.toPark.push([g, left]);
+        this.say(
+          `dispatcher for ${g} exited after ${Math.round(lived)}s leaving failed or denied nodes for a person (${left.join(', ')}); not starting it again until the graph changes`,
+        );
+        continue;
+      }
       // a dispatcher that finished the graph is not one that died young: with workers reaped on exit a whole graph
       // can now finish inside SHORT_LIFE (a 20-step plan in 155-194 s), and that was backed off as a failure
       const len = this.finished(g) ? 0 : nextBackoff(this.backoffLen.get(g) || 0, lived);
-      this.started.delete(g);
       if (len) {
         this.backoffLen.set(g, len);
         this.backoff.set(g, this.d.now() + len);
@@ -234,7 +369,8 @@ export class Watcher {
     }
     // a dispatcher a person (or an earlier watcher) started counts as running: one per graph, whoever started it
     for (const r of rows) if (r?.graph_id && IDENT.test(r.graph_id) && this.d.alive(r.graph_id)) running.add(r.graph_id);
-    const { start, skipped } = pickGraphs(rows, { running, backoff: this.backoff, maxGraphs: this.o.maxGraphs, now: this.d.now() });
+    await this.reviewParked(rows, running);
+    const { start, skipped } = pickGraphs(rows, { running, backoff: this.backoff, parked: this.parked, maxGraphs: this.o.maxGraphs, now: this.d.now() });
     for (const [g, why] of skipped) if (this.lastSkip?.get(g) !== why) this.say(`skip ${g}: ${why}`);
     this.lastSkip = new Map(skipped);
     for (const g of start) {
@@ -285,6 +421,7 @@ export class Watcher {
         lobby_rows: rows,
         running: [...running].sort(),
         backoff: Object.fromEntries([...this.backoff].map(([g, t]) => [g, new Date(t * 1000).toISOString()])),
+        parked: Object.fromEntries(this.parked),
       };
       writeFileSync(p + '.tmp', JSON.stringify(rec), { mode: 0o600 });
       renameSync(p + '.tmp', p);
