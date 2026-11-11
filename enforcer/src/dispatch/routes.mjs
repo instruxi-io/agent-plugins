@@ -5,14 +5,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { HARNESSES, harnessRefusal, harnessKnowsModel } from './launch.mjs';
+import { ADAPTERS } from './harness/index.mjs';
 import { routeFor, rank, TIER_MODEL, ROUTE_TIERS } from './model.mjs';
 
 export { ROUTE_TIERS, rank };
 export const ROUTE_FIELDS = ['harness', 'model', 'endpoint', 'fallback'];
 export const ENDPOINT_FIELDS = ['url', 'api', 'token_env'];
 export const ROUTE_APIS = ['anthropic', 'openai'];
-/** Which endpoint API each harness can speak (ROUTES.md section 4). grok and gemini have no endpoint form yet. */
-export const HARNESS_APIS = { claude: ['anthropic'], codex: ['openai'], grok: [] };
+/** Which endpoint API each harness can speak (ROUTES.md section 4), from its adapter. grok and gemini have no endpoint form yet. */
+export const HARNESS_APIS = Object.fromEntries(Object.entries(ADAPTERS).map(([k, a]) => [k, a.apis]));
 export const DEFAULT_PROBE_TTL = 60;
 export const PROBE_TIMEOUT_MS = 5000;
 export const HOLD_NOTE_SECONDS = 600;

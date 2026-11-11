@@ -31,9 +31,8 @@ import {
   LAND_PR,
   DEFAULT_WORKER_RULES,
   WORKER_RULES_MODES,
-  writeAgentMcpConfig,
-  mcpConfigPath,
-  removeAgentMcpConfigs,
+  sweepWorkerFiles,
+  adapterFor,
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
@@ -45,8 +44,8 @@ import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimit
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
-import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
-import { codexGitRules, landForCodex } from './codex-land.mjs';
+import { checkDestructiveMerge } from './git-guard.mjs';
+import { landForCodex } from './codex-land.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -189,6 +188,23 @@ export async function dispatchClients(env, headers) {
   return { api: new API(cfg.graphUrl, o), credApi: new API(cfg.enforcerUrl, o) };
 }
 
+/**
+ * The branch a codex worker's pull request targets: the node's data.base, else the repo's default branch as the
+ * worktree resolved it (origin/HEAD, gh, origin/main|master), else main. Before 1.11.0 this was data.base or a literal
+ * 'main', so a repo whose default branch is master got "Base ref must be a branch" and nothing landed.
+ */
+export function codexLandBase(node, repoRoot, repo, branchOf = defaultBranch) {
+  const own = String(node?.data?.base || '').trim();
+  if (own) return own.replace(/^origin\//, '');
+  let ref = null;
+  try {
+    ref = repoRoot && repo ? branchOf(join(repoRoot, repo)) : null;
+  } catch {
+    ref = null;
+  }
+  return ref ? String(ref).replace(/^origin\//, '') : 'main';
+}
+
 export class Dispatcher {
   // credApi is v3: worker credentials are minted and revoked there, the graph service has no /agents routes.
   constructor(api, args, out = (s) => process.stdout.write(s), credApi = api) {
@@ -204,6 +220,7 @@ export class Dispatcher {
     this.workers = new Map();
     this.routes = null; // the route table in force (docs/graph/ROUTES.md); null is today's --harness and TIER_MODEL
     this.probes = new ProbeCache({ ttl: args.routeProbeTtl ?? DEFAULT_PROBE_TTL, env: args.routesEnv || process.env });
+    this.saidOnce = new Set(); // notes said once per dispatcher (adapter prepare notes)
     this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
     this.holdNoted = new Map();
     this.attempts = new Map();
@@ -557,17 +574,18 @@ export class Dispatcher {
     if (warmed) t2 += ` (warm: node ${warmed.nodes + 1} of session ${warmed.session}, after ${warmed.lastKey})`;
     const session = prior || warmed?.session || randomUUID();
     const mode = prior ? 'warm --resume' : warmed ? 'warm' : 'cold';
-    // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
-    const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
-    const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
-    if (harness === 'codex') prompt += '\n' + codexGitRules();
-    else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
+    // The harness's per-worker files (claude: an agent run's own MCP connection, see writeAgentMcpConfig), as paths only:
+    // they are written after the credential is minted, just before the spawn.
+    const adapter = adapterFor(harness);
+    const plan = adapter.plan({ state: this.state, key: n.key, args: a, route: r });
+    // non-claude harnesses get git rules (codex cannot write git metadata in its sandbox: the dispatcher lands, landCodex)
+    const rules = adapter.promptRules();
+    if (rules) prompt += '\n' + rules;
     const cmd = launchCmd(prompt, model, a, n.key, {
       session,
       resume: Boolean(prior || warmed),
       maxTurns: turnsCap,
-      mcpConfig,
+      ...plan,
       harness,
       endpoint: Boolean(r?.endpoint),
     });
@@ -616,12 +634,27 @@ export class Dispatcher {
         return;
       }
     }
-    if (mcpConfig) {
+    let prepared = { env: {}, cleanup: [] };
+    if (adapter.prepare) {
       try {
-        writeAgentMcpConfig(this.state, n.key, a.mcpUrl, token || a.agentKey);
+        prepared = await adapter.prepare(plan, {
+          state: this.state,
+          key: n.key,
+          args: a,
+          token,
+          route: r,
+          env: a.routesEnv || process.env,
+          deps: this.harnessDeps || {},
+        });
       } catch (e) {
-        this.say(`refuse ${n.key}: could not write its MCP config: ${e.message}`);
+        this.say(`refuse ${n.key}: could not ${adapter.prepareWhat || 'prepare its harness files'}: ${e.message}`);
         return;
+      }
+      // said once per dispatcher (e.g. codex workers without telemetry): the same reason every launch is noise
+      for (const m of prepared.notes || []) {
+        if (this.saidOnce.has(m)) continue;
+        this.saidOnce.add(m);
+        this.say(m);
       }
     }
     const env = workerEnv(this.g, process.env, {
@@ -635,11 +668,12 @@ export class Dispatcher {
       routeEnv: a.routesEnv || process.env,
       harness,
     });
+    Object.assign(env, prepared.env);
     const proc = spawnWorker(cmd, {
       cwd: path,
       logPath,
       env,
-      cleanup: mcpConfig ? [mcpConfig] : [],
+      cleanup: prepared.cleanup,
       secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
     proc.done.then(() => this.wakeUp());
@@ -837,7 +871,7 @@ export class Dispatcher {
         runId: run.runId,
         cwd: w.path,
         branch: w.branch,
-        base: w.node.data?.base || 'main',
+        base: codexLandBase(w.node, this.args.repoRoot, w.repo),
         landPr: LAND_PR,
         landTimeout: this.args.landTimeout,
         logDir: this.logs,
@@ -990,7 +1024,7 @@ export class Dispatcher {
       const u = s.usage || {};
       const compactions = harness === 'claude' ? countCompactions(w.logPath) : 0;
       this.say(
-        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
+        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${harness === 'codex' ? ` input=${u.input_tokens ?? '-'} reasoning=${u.reasoning_output_tokens ?? '-'}` : ''}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
       // codex cannot commit in its sandbox: the dispatcher commits, pushes and lands its worktree, then posts the records
       const codexFail = harness === 'codex' ? await this.landCodex(w) : null;
@@ -1177,7 +1211,7 @@ export class Dispatcher {
       }
     }
     this.workers.clear();
-    if (this.state) removeAgentMcpConfigs(this.state);
+    if (this.state) sweepWorkerFiles(this.state);
     this.writePids();
     await this.lease.release();
   }
@@ -1199,7 +1233,7 @@ export class Dispatcher {
         mkdirSync(this.state, { recursive: true, mode: 0o700 });
         chmodSync(this.state, 0o700);
         await this.reapOrphans();
-        removeAgentMcpConfigs(this.state); // a SIGKILLed dispatcher leaves the per-run configs (and their key) behind
+        sweepWorkerFiles(this.state); // a SIGKILLed dispatcher leaves the per-run configs (mcp-*.json, codex-*/) and their keys behind
         try {
           mkdirSync(this.logs, { recursive: true, mode: 0o700 });
           redactLogsDir(this.logs, [a.agentKey].filter(Boolean));

@@ -213,7 +213,7 @@ A worker delivers a node only the way the skills on its claim card say (agents/g
 
 ## Gemini workers (`--harness gemini`, experimental)
 
-`--harness gemini --experimental` launches `gemini -p <prompt> -o stream-json --approval-mode yolo [-m <model>]` (Gemini CLI 0.38; `GEMINI_BIN` or `args.gemini` overrides the binary). `-m` is passed only for a model starting `gemini` or `auto`. The NDJSON stream (`init`, `message` deltas, `tool_use`, `tool_result`, `result{stats}`) is read by `geminiEvents` in `src/dispatch/stream.mjs`, written from the recorded run in `test/fixtures/gemini-stream.jsonl`: a run of assistant deltas is one turn, each `tool_use` one more, and `run_shell_command` is reported as `Bash`. Usage comes from `result.stats` (`input_tokens`, `output_tokens`, `cached`).
+`--harness gemini --experimental` launches `gemini -p <prompt> -o stream-json --approval-mode yolo [-m <model>]` (Gemini CLI 0.38; `GEMINI_BIN` or `args.gemini` overrides the binary). `-m` is passed only for a model starting `gemini` or `auto`. The NDJSON stream (`init`, `message` deltas, `tool_use`, `tool_result`, `result{stats}`) is read by `geminiEvents` in `src/dispatch/harness/gemini.mjs` (the gemini adapter), written from the recorded run in `test/fixtures/gemini-stream.jsonl`: a run of assistant deltas is one turn, each `tool_use` one more, and `run_shell_command` is reported as `Bash`. Usage comes from `result.stats` (`input_tokens`, `output_tokens`, `cached`).
 
 The graph MCP server is wired with `enforcer harness install gemini`, which prints `gemini mcp add --scope user --transport http --trust enforcer "$ENFORCER_BASE_URL/mcp" -H "X-API-Key: $ENFORCER_API_KEY"` (there is no runtime copy to migrate). The gaps:
 
@@ -221,6 +221,51 @@ The graph MCP server is wired with `enforcer harness install gemini`, which prin
 - **No per-launch MCP config.** `--mcp-config`/`--strict-mcp-config` and `--agent` credentials have no gemini equivalent: the worker uses the user-scope `enforcer` server and that key.
 - **No `--max-turns`, `--max-budget-usd`, `--allowedTools`, session resume or `--name`.** The dispatcher still counts turns from the stream and stops a worker past the cap; `--approval-mode yolo` approves every tool.
 - **Auth is the user's.** The CLI needs a working sign-in (`GEMINI_API_KEY` in `~/.gemini/.env` with `selectedType: gemini-api-key`, or Vertex AI); the personal Code Assist OAuth tier is refused by Google (`IneligibleTierError`).
+
+## Codex workers (`--harness codex` or a codex route, experimental)
+
+Everything that differs per harness lives in one adapter per harness, `src/dispatch/harness/<claude|codex|grok|gemini>.mjs` (the shape is documented in `harness/index.mjs`: capabilities, endpoint APIs, argv, environment, per-worker files, prompt rules, stream parser, preflight checks, sweep). A codex worker is launched as
+
+```
+codex exec --json --sandbox workspace-write -c sandbox_workspace_write.network_access=true [--model <model>] <prompt>
+```
+
+with **stdin closed** (`/dev/null`; every worker gets that, see `WORKER_STDIO` in `launch.mjs`): `codex exec` with an open stdin blocks on "Reading additional input from stdin..." and never starts. The sandbox is always `workspace-write`; the dispatcher never passes `danger-full-access` or `--dangerously-bypass-approvals-and-sandbox`, and there is no fallback to either.
+
+**On a route with an endpoint** (`api: openai`, docs/graph/ROUTES.md section 4) the worker gets a CODEX_HOME of its own, `<state-dir>/codex-<node-key>/` (mode 0700), holding:
+
+- `config.toml` (0600): the route's model, an OpenAI-compatible provider (`base_url = <url>/v1`, `wire_api = "responses"`, `env_key = "ENFORCER_ROUTE_TOKEN"`), `model_reasoning_effort = "medium"`, no update check, no analytics, file-only credential stores (so no keyring login or MCP OAuth token of the operator's is picked up), the `enforcer` MCP server with `env_http_headers = { "X-API-Key" = "ENFORCER_API_KEY" }` and `default_tools_approval_mode = "approve"`, and the `[otel]` export to governance;
+- `AGENTS.md` (0600): the graph-worker instructions (`agents/graph-worker.md` without its Claude Code frontmatter), which Codex reads from CODEX_HOME as global instructions.
+
+The directory is removed when the worker exits, on dispatcher shutdown, and at dispatcher start. Neither the route's token nor the worker's credential is in the file or in argv: the route token is in the worker's environment as `ENFORCER_ROUTE_TOKEN` (`none` when the route names no `token_env`) and the credential as `ENFORCER_API_KEY` (the minted worker token, or the `--agent` key); `OPENAI_API_KEY` is set to `none` and the operator's `OPENAI_BASE_URL`, `CODEX_HOME` and `CODEX_API_KEY` are never passed. Codex warns `Model metadata for <model> not found. Defaulting to fallback metadata` for a self-hosted model; it is harmless and left alone (Codex 0.164 has `model_context_window` and a `model_catalog_json` file for this, but the route table carries no context window and the catalog's format is not pinned here).
+
+**Telemetry.** The `[otel]` block is the codex telemetry adapter's own (`applyOtel` in `lib/governor/adapters/codex/telemetry.mjs`: full signal paths, protocol `binary`, the `X-API-Key` header written literally because Codex does not expand variables there, `trace_exporter = "none"`, prompt and response logging forced off), with this machine's telemetry-only ingest key for harness `codex` (`ensureIngestKey`, `src/ingest-key.mjs`). That key is the only secret in the file, and it can only write telemetry. When `codexTelemetry` is off in the governor config, or no key can be had within 8 s (signed out, agent disabled, Enforcer unreachable), the worker launches without telemetry and the dispatcher says why once: `codex workers run without telemetry: <reason>`. Telemetry never fails a worker.
+
+**Without an endpoint** nothing is written: the worker runs on the operator's CODEX_HOME (its ChatGPT login, its installed plugin and hooks, its own `[otel]`), with the enforcer server given on the command line (`-c mcp_servers.enforcer={url=..., default_tools_approval_mode="approve", env_http_headers={"X-API-Key"="ENFORCER_API_KEY"}}`). A per-worker CODEX_HOME there would need the operator's `auth.json`, whose refresh token rotates: a copy would sign the operator out, as with Claude's.
+
+**The graph tools** are the `enforcer` server's tools under Codex; with the worker's credential in `ENFORCER_API_KEY` the server answers as the worker's agent. The stream parser (`codexEvents`) names an MCP call `mcp__<server>__<tool>`, so a codex worker's `graph_next_work` and `graph_report` give the dispatcher its run id and its report exactly as Claude Code's do. Without a worker credential (no `--agent`, no `ENFORCER_WORKER_AGENT_ID`) an endpoint worker has no way to sign in to the server (its CODEX_HOME holds no OAuth token): run codex routes with `--agent`.
+
+**What the dispatcher still does for Codex.** The sandbox keeps a linked worktree's git metadata read-only, so a codex worker only edits and checks, then reports; the dispatcher commits its worktree, pushes, opens the PR and lands it, then posts the runner records (`codex-land.mjs`). The worker's prompt says so (`codexGitRules`). On an endpoint route Codex runs none of the plugin's hooks (its CODEX_HOME has no plugin installed): no governor check, no automatic heartbeat, no report gating; its evidence is what it passes in `graph_report` plus the dispatcher's runner records. No session resume (`HARNESS_CAPS.codex.resume` is false) and no `--max-turns`; the dispatcher counts turns from the stream.
+
+**The done line** for a codex worker adds `input=` and `reasoning=` to the usual `cache_read=` (Codex's `cached_input_tokens`) and `output=`, summed over the run's `turn.completed` events; a `turn.failed` ends as result `error_turn_failed` with its message.
+
+**The sandbox needs a host fix on Ubuntu 24.04.** Codex's Linux sandbox is bubblewrap with a new user and network namespace. Ubuntu restricts unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns = 1`), and without an AppArmor profile that grants `/usr/bin/bwrap` the `userns` permission every sandboxed command fails with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. The fix (measured on the DGX Spark, 2026-11-10; with it `workspace-write` writes in the worktree and still denies writes outside it with `Read-only file system`) is a profile such as this, as `/etc/apparmor.d/bwrap`, loaded with `sudo apparmor_parser -r /etc/apparmor.d/bwrap`:
+
+```
+abi <abi/4.0>,
+include <tunables/global>
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+```
+
+(Some Ubuntu releases ship `/etc/apparmor.d/bwrap-userns-restrict`, which does the same.) Codex also refuses to create its helper binaries when CODEX_HOME is under `/tmp`; the dispatcher's state dir is under `~/.config/enforcer`, which is fine.
+
+**Preflight.** `enforcer dispatch` checks every harness the run can launch (`--harness`, each route's harness, each `route:<harness>` fallback). For codex it prints two lines and fails the start (exit 2, nothing claimed) when either fails:
+
+- `codex: <bin>: codex-cli <version>` from `codex --version` (`--codex` or `CODEX_BIN` names the binary);
+- `codex-sandbox: ...` from the cheapest probe that fails the way Codex does: `bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true` (`/usr/bin/bwrap` first, the path the AppArmor profiles attach to). Exit 0 passes; a failure prints bwrap's own error and the fix above. With no bwrap at all it fails only where `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is 1. Not on Linux, it is not probed. The route's `/v1/models` probe (the `route` lines) still says whether the endpoint serves the model.
 
 ## Worker rules (`--worker-rules on|off`)
 
@@ -258,7 +303,7 @@ Claude Code prefers a stored `/mcp` OAuth sign-in for the plugin's MCP server ov
 ## Secret hygiene and what a worker can read
 
 - The agent key stays in the dispatcher. When `ENFORCER_WORKER_AGENT_ID` is set, each worker gets a minted one-day token (scopes `graph:read`, `graph:write`) as `GRAPH_API_KEY` and `ENFORCER_API_KEY`, and in its MCP config. When it is not set, the agent key is the only credential there is and is passed to workers as before: the trust boundary is that a worker, its Bash tool and any test it runs can print it. Set the variable to avoid that.
-- On start the dispatcher removes every stale `mcp-*.json`, redacts every existing `logs/*.jsonl`, and sets the state dir to 0700 and `pids.json` to 0600. Redaction also removes any bare `ag_` or `env3_` token.
+- On start the dispatcher removes every stale `mcp-*.json` and `codex-*/` (a codex worker's CODEX_HOME), redacts every existing `logs/*.jsonl`, and sets the state dir to 0700 and `pids.json` to 0600. Redaction also removes any bare `ag_` or `env3_` token.
 - A worker's environment is an explicit list: `PATH`, `HOME`, `LANG`, `TERM`, `TMPDIR`, `SHELL`, `USER`, `LOGNAME`, `LC_ALL`, `LC_CTYPE`, `LC_MESSAGES`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the plugin and graph variables, and `GH_TOKEN` only from `ENFORCER_WORKER_GH_TOKEN`. No `CLAUDE_*` or `LC_*` prefix passes.
 - A worker keeps the operator's `HOME`, so `gh`, `git` and `ssh` credentials there are reachable. A per-worker `HOME` was considered and not done: copying Claude's single-use refresh token into another `HOME` would sign the operator out.
 

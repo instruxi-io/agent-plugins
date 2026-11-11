@@ -130,20 +130,43 @@ Drop, even though `ENV_ALLOW` passes them today: `CLAUDE_CODE_OAUTH_TOKEN` (it w
 
 ### Codex (`api: openai`)
 
-Codex reads providers from its config, not from flags alone. The dispatcher writes `<state>/codex-<key>/config.toml` (mode 0600, removed when the worker exits, like `mcp-<key>.json`) and launches with `CODEX_HOME=<state>/codex-<key>`:
+**Built** in 1.11.0 (`src/dispatch/harness/codex.mjs`; behaviour in DISPATCHER.md "Codex workers"). The dispatcher writes `<state>/codex-<key>/config.toml` (directory 0700, file 0600, removed when the worker exits, on shutdown and at start, like `mcp-<key>.json`) and launches with `CODEX_HOME=<state>/codex-<key>`:
 
 ```toml
-model = "Qwen3.8-27B"
+model = "qwen3.8-flash-next"
 model_provider = "route"
+model_reasoning_effort = "medium"
+check_for_update_on_startup = false
+cli_auth_credentials_store = "file"
+mcp_oauth_credentials_store = "file"
 
 [model_providers.route]
 name = "route mechanical"
-base_url = "http://gpu1:8000/v1"
+base_url = "http://127.0.0.1:11434/v1"
 env_key = "ENFORCER_ROUTE_TOKEN"
-wire_api = "chat"
+wire_api = "responses"
+
+[mcp_servers.enforcer]
+url = "https://api.instruxi.dev/mcp"
+env_http_headers = { "X-API-Key" = "ENFORCER_API_KEY" }
+default_tools_approval_mode = "approve"
+
+[analytics]
+enabled = false
+
+[otel]
+# the managed block from lib/governor/adapters/codex/telemetry.mjs, with the codex ingest key
 ```
 
-The token goes in the environment as `ENFORCER_ROUTE_TOKEN` (the file names the variable, never the value). `OPENAI_API_KEY` and `OPENAI_BASE_URL` are not passed. `HARNESS_CAPS.codex` must first become `supported: true` (the stream parser it lacks today); until then a route naming codex is refused at validation with the existing `harnessRefusal` message.
+What differs from the design it replaced:
+
+- `wire_api = "responses"`, not `"chat"`: Codex 0.164 supports only the Responses API, which vLLM serves.
+- `base_url` is the route's `url` plus `/v1` (validation keeps `url` at the root, and the probe reads `<url>/v1/models`).
+- The token goes in the environment as `ENFORCER_ROUTE_TOKEN`, or `none` when the route names no `token_env`; `OPENAI_API_KEY` is set to `none` (as measured on the Spark) and the operator's `OPENAI_BASE_URL`, `CODEX_HOME` and `CODEX_API_KEY` are not passed.
+- The same file carries the enforcer MCP server (its header read from `ENFORCER_API_KEY`, the worker's credential, by name) and the governance `[otel]` export, and an `AGENTS.md` with the graph-worker instructions sits next to it.
+- A codex route WITHOUT an endpoint gets no CODEX_HOME of its own: it keeps the operator's (its login, plugin and hooks).
+- `HARNESS_CAPS.codex` stays `experimental: true` until a codex route is proven end to end; a route naming codex needs `--experimental`.
+- A codex route with `api: anthropic` is refused at validation: `routes.<tier>.endpoint.api: codex cannot speak anthropic`.
 
 ### Grok
 
