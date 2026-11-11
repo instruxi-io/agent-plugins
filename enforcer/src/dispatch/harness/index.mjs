@@ -13,6 +13,8 @@
 //   prepareWhat?         what prepare does, for the refusal line when it throws
 //   promptRules() -> string                              appended to the worker prompt ('' for none)
 //   events(path) -> Iterable                             the worker stream as Claude-shaped events (summarize reads them)
+//   sweep?(state)                                        remove every per-worker file it leaves in the state dir (start, shutdown)
+//   preflight?(args, sys) -> [{name, ok, line}]          host checks for a run that will launch it (codex: binary, sandbox)
 import claude from './claude.mjs';
 import codex from './codex.mjs';
 import grok from './grok.mjs';
@@ -20,7 +22,7 @@ import gemini from './gemini.mjs';
 
 /** @typedef {{ name: string, caps: {supported: boolean, experimental: boolean, models: string[]|null, resume: boolean, why?: string},
  *   apis: string[], command: Function, env?: Function, endpointEnv?: Function, plan: Function, prepare?: Function,
- *   prepareWhat?: string, promptRules: () => string, events: (path: string) => Iterable<any>, preflight?: Function }} HarnessAdapter */
+ *   prepareWhat?: string, promptRules: () => string, events: (path: string) => Iterable<any>, preflight?: Function, sweep?: Function }} HarnessAdapter */
 
 /** @type {Record<string, HarnessAdapter>} */
 export const ADAPTERS = { claude, codex, grok, gemini };
@@ -31,4 +33,25 @@ export function adapterFor(harness) {
   const a = ADAPTERS[harness || 'claude'];
   if (!a) throw new Error(`unknown harness ${harness}: must be one of ${HARNESSES.join(', ')}`);
   return a;
+}
+
+/** Every adapter's per-worker files left in the state dir (a SIGKILLed dispatcher leaves them, and their secrets, behind). */
+export function sweepWorkerFiles(state) {
+  for (const a of Object.values(ADAPTERS)) a.sweep?.(state);
+}
+
+/** The harnesses a run can launch: --harness, every route's harness, and every route:<harness> fallback. */
+export function runHarnesses(table, defaultHarness = 'claude') {
+  const out = new Set([defaultHarness || 'claude']);
+  for (const r of Object.values(table?.routes || {})) {
+    if (r.harness) out.add(r.harness);
+    const t = typeof r.fallback === 'string' && r.fallback.startsWith('route:') ? r.fallback.slice(6) : null;
+    if (t && ADAPTERS[t]) out.add(t);
+  }
+  return [...out].filter((h) => ADAPTERS[h]);
+}
+
+/** The host checks for the harnesses a run can launch ([{name, ok, line}]); a harness without checks adds none. */
+export function harnessPreflight(harnesses, args = {}, sys = {}) {
+  return harnesses.flatMap((h) => ADAPTERS[h]?.preflight?.(args, sys) || []);
 }

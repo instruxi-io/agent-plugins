@@ -31,7 +31,7 @@ import {
   LAND_PR,
   DEFAULT_WORKER_RULES,
   WORKER_RULES_MODES,
-  removeAgentMcpConfigs,
+  sweepWorkerFiles,
   adapterFor,
   governorLane,
   drainGovernorLane,
@@ -203,6 +203,7 @@ export class Dispatcher {
     this.workers = new Map();
     this.routes = null; // the route table in force (docs/graph/ROUTES.md); null is today's --harness and TIER_MODEL
     this.probes = new ProbeCache({ ttl: args.routeProbeTtl ?? DEFAULT_PROBE_TTL, env: args.routesEnv || process.env });
+    this.saidOnce = new Set(); // notes said once per dispatcher (adapter prepare notes)
     this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
     this.holdNoted = new Map();
     this.attempts = new Map();
@@ -619,10 +620,24 @@ export class Dispatcher {
     let prepared = { env: {}, cleanup: [] };
     if (adapter.prepare) {
       try {
-        prepared = await adapter.prepare(plan, { state: this.state, key: n.key, args: a, token, route: r, env: a.routesEnv || process.env });
+        prepared = await adapter.prepare(plan, {
+          state: this.state,
+          key: n.key,
+          args: a,
+          token,
+          route: r,
+          env: a.routesEnv || process.env,
+          deps: this.harnessDeps || {},
+        });
       } catch (e) {
         this.say(`refuse ${n.key}: could not ${adapter.prepareWhat || 'prepare its harness files'}: ${e.message}`);
         return;
+      }
+      // said once per dispatcher (e.g. codex workers without telemetry): the same reason every launch is noise
+      for (const m of prepared.notes || []) {
+        if (this.saidOnce.has(m)) continue;
+        this.saidOnce.add(m);
+        this.say(m);
       }
     }
     const env = workerEnv(this.g, process.env, {
@@ -992,7 +1007,7 @@ export class Dispatcher {
       const u = s.usage || {};
       const compactions = harness === 'claude' ? countCompactions(w.logPath) : 0;
       this.say(
-        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
+        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${harness === 'codex' ? ` input=${u.input_tokens ?? '-'} reasoning=${u.reasoning_output_tokens ?? '-'}` : ''}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
       // codex cannot commit in its sandbox: the dispatcher commits, pushes and lands its worktree, then posts the records
       const codexFail = harness === 'codex' ? await this.landCodex(w) : null;
@@ -1179,7 +1194,7 @@ export class Dispatcher {
       }
     }
     this.workers.clear();
-    if (this.state) removeAgentMcpConfigs(this.state);
+    if (this.state) sweepWorkerFiles(this.state);
     this.writePids();
     await this.lease.release();
   }
@@ -1201,7 +1216,7 @@ export class Dispatcher {
         mkdirSync(this.state, { recursive: true, mode: 0o700 });
         chmodSync(this.state, 0o700);
         await this.reapOrphans();
-        removeAgentMcpConfigs(this.state); // a SIGKILLed dispatcher leaves the per-run configs (and their key) behind
+        sweepWorkerFiles(this.state); // a SIGKILLed dispatcher leaves the per-run configs (mcp-*.json, codex-*/) and their keys behind
         try {
           mkdirSync(this.logs, { recursive: true, mode: 0o700 });
           redactLogsDir(this.logs, [a.agentKey].filter(Boolean));

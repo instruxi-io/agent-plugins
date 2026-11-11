@@ -28,6 +28,7 @@ export {
   removeAgentMcpConfigs,
 } from './harness/claude.mjs';
 export { HARNESSES, adapterFor };
+export { sweepWorkerFiles } from './harness/index.mjs';
 // `resume`: the harness can continue a session by id (a --warm launch, a remediation). Only claude is verified; codex
 // (`codex exec resume <id>`) and gemini (`--resume <id>`) document one, but neither argv is checked against the CLI
 // versions these launches target, so they start cold until it is (docs/graph/DISPATCHER.md "Warm sessions and handoffs").
@@ -418,6 +419,9 @@ export function killNonce(nonce) {
   return pids;
 }
 
+/** A worker's stdio: stdin ignored (/dev/null), stdout and stderr to its log. Exported so a test can hold it to that. */
+export const WORKER_STDIO = (fd) => /** @type {['ignore', number, number]} */ (['ignore', fd, fd]);
+
 /** A launched process: `detached` (its own session and group, group id = pid), output to a log file.
  *  .exited is null while it runs, then {code, signal}; .done resolves at exit. .nonce is the launch nonce put in its
  *  environment (NONCE_ENV) and .start its start time, both recorded in pids.json so a later reap can prove the pid is ours. */
@@ -427,7 +431,7 @@ export function spawnWorker(cmd, { cwd, logPath, env = process.env, cleanup = []
   const tidy = () => {
     for (const f of cleanup)
       try {
-        rmSync(f, { force: true });
+        rmSync(f, { force: true, recursive: true }); // a file, or a per-worker dir (codex's CODEX_HOME)
       } catch {
         /* gone */
       }
@@ -435,7 +439,9 @@ export function spawnWorker(cmd, { cwd, logPath, env = process.env, cleanup = []
   const fd = openStream(logPath);
   let child;
   try {
-    child = spawn(cmd[0], cmd.slice(1), { cwd, env, detached: true, stdio: ['ignore', fd, fd] });
+    // stdin is /dev/null for every harness, and must stay so: `codex exec` with an open stdin blocks forever on
+    // "Reading additional input from stdin..." (codex 0.164); claude -p and the others only ever get EOF there.
+    child = spawn(cmd[0], cmd.slice(1), { cwd, env, detached: true, stdio: WORKER_STDIO(fd) });
   } finally {
     closeSync(fd);
   }

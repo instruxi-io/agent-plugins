@@ -154,5 +154,6 @@ export default {
   },
 
   promptRules: () => '',
+  sweep: (state) => removeAgentMcpConfigs(state),
   events: claudeEvents,
 };
