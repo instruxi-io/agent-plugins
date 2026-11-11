@@ -351,9 +351,11 @@ test('route validation: codex speaks openai on an endpoint, never anthropic', ()
 
 // ---- preflight
 
+// a Linux host with /usr/bin/bwrap, whatever host runs the test (the macOS runner has no bwrap)
 const sys = (o = {}) => ({
   platform: 'linux',
   env: { PATH: '/nonexistent' },
+  exists: (p) => p === '/usr/bin/bwrap',
   readFile: () => '1\n',
   run: (bin, args) => {
     if (args[0] === '--version') return { status: 0, stdout: 'codex-cli 0.164.0\n', stderr: '' };
@@ -378,23 +380,20 @@ test('sandbox probe: bwrap unsharing user+net passes; the RTM_NEWADDR failure fa
     }),
   );
   assert.equal(ok.ok, true);
-  if (existsSync('/usr/bin/bwrap')) {
-    assert.deepEqual(ran, ['/usr/bin/bwrap', '--unshare-user', '--unshare-net', '--ro-bind', '/', '/', '--', '/bin/true']);
-    const bad = sandboxProbe(sys({ run: bwrapFails }));
-    assert.equal(bad.ok, false);
-    assert.match(bad.line, /Failed RTM_NEWADDR: Operation not permitted/);
-    assert.ok(bad.line.includes(SANDBOX_FIX));
-    assert.match(bad.line, /apparmor_parser -r/);
-    assert.match(bad.line, /Never run codex workers with danger-full-access/);
-  }
+  assert.deepEqual(ran, ['/usr/bin/bwrap', '--unshare-user', '--unshare-net', '--ro-bind', '/', '/', '--', '/bin/true']);
+  const bad = sandboxProbe(sys({ run: bwrapFails }));
+  assert.equal(bad.ok, false);
+  assert.match(bad.line, /Failed RTM_NEWADDR: Operation not permitted/);
+  assert.ok(bad.line.includes(SANDBOX_FIX));
+  assert.match(bad.line, /apparmor_parser -r/);
+  assert.match(bad.line, /Never run codex workers with danger-full-access/);
   assert.equal(sandboxProbe(sys({ platform: 'darwin' })).ok, true);
 });
 
-test('sandbox probe without any bwrap: fails only where user namespaces are restricted', {
-  skip: existsSync('/usr/bin/bwrap') && 'this host has /usr/bin/bwrap',
-}, () => {
-  assert.equal(sandboxProbe(sys({ readFile: () => '1' })).ok, false);
-  assert.equal(sandboxProbe(sys({ readFile: () => '0' })).ok, true);
+test('sandbox probe without any bwrap: fails only where user namespaces are restricted', () => {
+  const none = () => false;
+  assert.equal(sandboxProbe(sys({ exists: none, readFile: () => '1' })).ok, false);
+  assert.equal(sandboxProbe(sys({ exists: none, readFile: () => '0' })).ok, true);
 });
 
 test('codex preflight: the binary and its version, then the sandbox', () => {

@@ -249,9 +249,9 @@ export const SANDBOX_FIX =
 export const USERNS_SYSCTL = '/proc/sys/kernel/apparmor_restrict_unprivileged_userns';
 
 /** The first `bwrap` on PATH (/usr/bin/bwrap first: the path Ubuntu's AppArmor profiles attach to), or null. */
-function findBwrap(env) {
+function findBwrap(env, exists = existsSync) {
   const dirs = ['/usr/bin', ...String(env.PATH || '').split(':')].filter(Boolean);
-  for (const d of dirs) if (existsSync(join(d, 'bwrap'))) return join(d, 'bwrap');
+  for (const d of dirs) if (exists(join(d, 'bwrap'))) return join(d, 'bwrap');
   return null;
 }
 
@@ -259,9 +259,15 @@ function findBwrap(env) {
  * Can Codex's Linux sandbox start here? The cheapest probe that fails the way Codex does: bwrap with a new user and
  * network namespace (bwrap brings up loopback in the new netns, which is exactly the RTM_NEWADDR step a userns without
  * capabilities refuses). Not Linux: Codex uses Seatbelt (macOS), nothing to probe. Returns {ok, line}.
- * `sys` is a test seam: {platform, readFile, run, env}.
+ * `sys` is a test seam: {platform, readFile, run, env, exists}.
  */
-export function sandboxProbe({ platform = process.platform, env = process.env, readFile = (p) => readFileSync(p, 'utf8'), run = spawnSync } = {}) {
+export function sandboxProbe({
+  platform = process.platform,
+  env = process.env,
+  readFile = (p) => readFileSync(p, 'utf8'),
+  run = spawnSync,
+  exists = existsSync,
+} = {}) {
   if (platform !== 'linux') return { ok: true, line: `not Linux (${platform}): Codex uses its own sandbox there, not probed` };
   let restricted = null;
   try {
@@ -269,7 +275,7 @@ export function sandboxProbe({ platform = process.platform, env = process.env, r
   } catch {
     restricted = false;
   }
-  const bwrap = findBwrap(env);
+  const bwrap = findBwrap(env, exists);
   if (!bwrap) {
     return restricted
       ? { ok: false, line: `no bwrap on PATH and ${USERNS_SYSCTL} is 1. ${SANDBOX_FIX}` }
