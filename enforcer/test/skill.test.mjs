@@ -161,8 +161,7 @@ test("plan: a node that says 'see plan section' or a brief over 5 files / 30 KB 
   for (const need of ['at most 5 files and 30 KB', '`scout`', 'WORKER_BRIEF.md', '8 KB', 'description IS its spec'])
     assert.ok(skill.includes(need), `SKILL.md missing: ${need}`);
   for (const need of ['maxTurns: 80', 'WORKER_BRIEF.md', 'turn 12', 'turn 20', 'ONLY']) assert.ok(agentText.includes(need), `graph-worker.md missing: ${need}`);
-  for (const need of ['A decision is not a procedure', 'A gate decides; it does not do work'])
-    assert.ok(skill.includes(need), `SKILL.md missing: ${need}`);
+  for (const need of ['A decision is not a procedure', 'A gate decides; it does not do work']) assert.ok(skill.includes(need), `SKILL.md missing: ${need}`);
   assert.ok(skill.includes('`git push -u origin graph/<key>`'), 'SKILL.md must say to push alone');
   assert.match(skill, /never chained/);
 });
