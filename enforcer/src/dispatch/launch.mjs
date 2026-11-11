@@ -1,87 +1,48 @@
-// Launching workers: the claude/grok/codex/gemini command lines, the worker environment, detached spawn,
-// and process-group kill (SIGTERM, a grace period, then SIGKILL) by process.kill(-pid).
+// Launching workers: the worker environment, detached spawn, and process-group kill (SIGTERM, a grace period, then
+// SIGKILL) by process.kill(-pid). What differs per harness (argv, environment, files, stream) is its adapter's job
+// (./harness/<name>.mjs); launchCmd and endpointEnv here only pick the adapter.
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
-import { assertIdent } from './ident.mjs';
-import { readFileSync, closeSync, realpathSync, openSync, writeSync, chmodSync, rmSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
-import { openStream, redactFile, addSecret } from './logs.mjs';
-import { join, dirname, delimiter } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, closeSync, chmodSync, rmSync, readdirSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
+import { openStream, redactFile } from './logs.mjs';
+import { join, delimiter } from 'node:path';
 import { resolveConfig, DEFAULT_BASE_URL, BASE_URL_VAR } from '../config.mjs';
-import { DOT } from '../../hooks/claude/paths.mjs';
 import { PROFILE_NAME } from '../../lib/governor/profiles/headless-worker.mjs';
+import { ADAPTERS, HARNESSES, adapterFor } from './harness/index.mjs';
+import { PLUGIN_DIR, pluginDirs, knowsModel } from './harness/common.mjs';
 
-export const PLUGIN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const LAND_PR = join(PLUGIN_DIR, 'bin', 'land-pr.sh');
-export const AGENT = process.env.GRAPH_DISPATCH_AGENT || 'enforcer:graph-worker';
-export const GRAPH_TOOLS = ['graph_next_work', 'graph_heartbeat', 'graph_report', 'graph_remember', 'graph_plan_status'];
-export const PREFIXES = ['mcp__plugin_enforcer_enforcer__', 'mcp__enforcer__', 'mcp__enforcer-graph__'];
-export const BASE_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'ToolSearch'];
-export const HARNESSES = ['claude', 'codex', 'grok', 'gemini'];
+export { PLUGIN_DIR, LAND_PR, pluginNameOf, pluginDirs, routeToken } from './harness/common.mjs';
+export {
+  AGENT,
+  GRAPH_TOOLS,
+  PREFIXES,
+  BASE_TOOLS,
+  DISABLED_PLUGINS,
+  workerSettings,
+  allowedTools,
+  ENDPOINT_DROP,
+  ENDPOINT_MODEL_VARS,
+  agentMcpConfig,
+  mcpConfigPath,
+  writeAgentMcpConfig,
+  removeAgentMcpConfigs,
+} from './harness/claude.mjs';
+export { HARNESSES, adapterFor };
 // `resume`: the harness can continue a session by id (a --warm launch, a remediation). Only claude is verified; codex
 // (`codex exec resume <id>`) and gemini (`--resume <id>`) document one, but neither argv is checked against the CLI
 // versions these launches target, so they start cold until it is (docs/graph/DISPATCHER.md "Warm sessions and handoffs").
-export const HARNESS_CAPS = {
-  claude: { supported: true, experimental: false, models: null, resume: true },
-  grok: { supported: true, experimental: true, models: ['grok'], resume: false },
-  codex: { supported: true, experimental: true, models: ['gpt', 'o1', 'o3', 'o4', 'codex'], resume: false },
-  gemini: { supported: true, experimental: true, models: ['gemini', 'auto'], resume: false },
-};
+export const HARNESS_CAPS = Object.fromEntries(Object.entries(ADAPTERS).map(([k, a]) => [k, a.caps]));
 
 export const harnessCanResume = (harness) => HARNESS_CAPS[harness || 'claude']?.resume === true;
 
-/** Per-launch settings: the installed release is off for the child, so the --plugin-dir checkout is the only copy of the hooks and MCP server. */
-export const DISABLED_PLUGINS = { 'enforcer@instruxi': false };
-export const workerSettings = () => JSON.stringify({ enabledPlugins: DISABLED_PLUGINS });
-
-export const allowedTools = () => [...BASE_TOOLS, ...PREFIXES.flatMap((p) => GRAPH_TOOLS.map((t) => p + t))];
-
-export function harnessKnowsModel(harness, model) {
-  const pre = HARNESS_CAPS[harness]?.models;
-  return Boolean(model) && (!pre || pre.some((p) => String(model).startsWith(p)));
-}
+export const harnessKnowsModel = (harness, model) => knowsModel(HARNESS_CAPS[harness], model);
 
 /** The refusal message for a harness that cannot run workers, else null. */
 export function harnessRefusal(harness, experimental) {
-  const cap = HARNESS_CAPS[harness] || {};
+  const cap = /** @type {any} */ (HARNESS_CAPS[harness] || {});
   if (cap.supported === false) return `--harness ${harness} is not supported: ${cap.why || 'no capability'}`;
   if (cap.experimental && !experimental) return `--harness ${harness} is experimental: pass --experimental to use it`;
   return null;
-}
-
-export function pluginNameOf(d) {
-  for (const rel of ['plugin.json', join(DOT + '-plugin', 'plugin.json')]) {
-    try {
-      const n = JSON.parse(readFileSync(join(d, rel), 'utf8')).name;
-      if (n) return String(n);
-    } catch {
-      /* next */
-    }
-  }
-  return null;
-}
-
-/** This plugin, then each extra dir, once per real path AND once per plugin name (first wins):
- *  the same plugin twice means two governors answer every tool call. */
-export function pluginDirs(extra = []) {
-  const out = [];
-  const seen = new Set();
-  const names = new Set();
-  for (const d of [PLUGIN_DIR, ...(extra || [])]) {
-    let r;
-    try {
-      r = realpathSync(d);
-    } catch {
-      r = d;
-    }
-    if (seen.has(r)) continue;
-    const n = pluginNameOf(d);
-    if (n && names.has(n)) continue;
-    seen.add(r);
-    if (n) names.add(n);
-    out.push(d);
-  }
-  return out;
 }
 
 /** The only inherited variables: the operator's keys (ENFORCER_API_KEY, GRAPH_API_KEY, cloud keys, gh tokens) never pass. */
@@ -127,44 +88,15 @@ export const WORKER_SCOPES = ['graph:read', 'graph:write'];
 
 const allowed = (k) => ENV_ALLOW.includes(k) || ENV_ALLOW_PREFIX.some((p) => k.startsWith(p));
 
-/** Operator credentials a Claude worker on an endpoint route must not inherit: each would win over ANTHROPIC_BASE_URL (or bill the operator). */
-export const ENDPOINT_DROP = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'ANTHROPIC_API_KEY'];
-/** Claude Code's model aliases: all point at the route's model, so no alias (agent file, subagent, fallback) lands on Anthropic. */
-export const ENDPOINT_MODEL_VARS = [
-  'ANTHROPIC_MODEL',
-  'ANTHROPIC_DEFAULT_OPUS_MODEL',
-  'ANTHROPIC_DEFAULT_SONNET_MODEL',
-  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-  'ANTHROPIC_SMALL_FAST_MODEL',
-  'CLAUDE_CODE_SUBAGENT_MODEL',
-];
-/** The route endpoint's token, read only from the variable its `token_env` names (never argv, never a file); null when it names none. */
-export const routeToken = (route, env = process.env) => {
-  const name = route?.endpoint?.token_env;
-  const v = name ? env[name] : null;
-  return typeof v === 'string' && v ? v : null;
-};
-
-/** ROUTES.md item 4: the endpoint variables for `route` set on `out` in place. A route with no endpoint changes nothing. */
+/** ROUTES.md item 4: the endpoint variables for `route` set on `out` in place, by the route harness's adapter. A route with no endpoint changes nothing. */
 export function endpointEnv(out, route, env = process.env) {
   const ep = route?.endpoint;
   if (!ep) return out;
   const harness = route.harness || 'claude';
-  // Only claude has an endpoint form today; validation (routes.mjs) refuses the others, so this is a second guard, not a path.
-  if (harness !== 'claude') throw new Error(`${harness} cannot use a custom endpoint`);
-  for (const k of ENDPOINT_DROP) delete out[k];
-  const token = routeToken(route, env);
-  if (token) addSecret(token);
-  out.ANTHROPIC_BASE_URL = ep.url;
-  // Sent as Authorization: Bearer. A fixed placeholder when the route names no token, so Claude Code never falls back to the operator's login.
-  out.ANTHROPIC_AUTH_TOKEN = token || 'none';
-  for (const k of ENDPOINT_MODEL_VARS) out[k] = String(route.model);
-  out.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
-  // Load the graph MCP tools up front instead of deferring them behind ToolSearch. On a vLLM endpoint the
-  // ToolSearch result (tool_reference blocks) is rejected by the model's chat template (400 "Unexpected item type
-  // in content", three times per worker), and the retry that follows reprocesses the whole prompt uncached.
-  out.ENABLE_TOOL_SEARCH = 'false';
-  return out;
+  const a = ADAPTERS[harness];
+  // Validation (routes.mjs) refuses an endpoint on a harness without one, so this is a second guard, not a path.
+  if (!a?.apis.length || !a.endpointEnv) throw new Error(`${harness} cannot use a custom endpoint`);
+  return a.endpointEnv(out, route, env);
 }
 
 /** The worker environment: the allowlist, the run's worker-scoped token (as GRAPH_API_KEY), if the operator
@@ -205,10 +137,8 @@ export function workerEnv(
     // --allowedTools kept them uncallable, but a worker should not hold the operator's mailbox at all.
     ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
   });
-  // Grok imports Claude Code's enabled plugins, and expands their hooks' ${CLAUDE_PLUGIN_ROOT} from the environment: with ours set, jev-hooks'
-  // UserPromptSubmit gate ran enforcer's path, failed, and blocked the first prompt (every grok worker ended `cancelled` at 0 turns).
-  // Grok's own enforcer plugin does not read it (ENFORCER_PLUGIN_ROOT stays), so a grok worker gets none.
-  if (harness === 'grok') delete out.CLAUDE_PLUGIN_ROOT;
+  // the harness's own tweaks (grok drops CLAUDE_PLUGIN_ROOT: see harness/grok.mjs)
+  ADAPTERS[harness || 'claude']?.env?.(out);
   // The host root the dispatcher itself talks to (the same resolver its API client uses): without it a worker holding only an API key has no base and its hooks go silent.
   try {
     out[BASE_URL_VAR] = baseUrl || resolveConfig({ env }).baseUrl;
@@ -384,99 +314,10 @@ export async function revokeWorkerCredential(api, cred) {
   }
 }
 
-/** The worker's own MCP connection when it runs as an agent: Claude Code prefers its stored `/mcp` OAuth sign-in for the plugin's
- *  server over the headersHelper, so the environment cannot make the plugin's server speak as the agent. A per-run config with the
- *  agent key as a header, launched with --strict-mcp-config, leaves the stored sign-in and every other MCP server out of the picture. */
-export const agentMcpConfig = (mcpUrl, agentKey) => ({ mcpServers: { enforcer: { type: 'http', url: mcpUrl, headers: { 'X-API-Key': agentKey } } } });
-export const mcpConfigPath = (stateDir, key) => join(stateDir, `mcp-${assertIdent(key, 'node key')}.json`);
-
-/** Write `<stateDir>/mcp-<key>.json` at 0600 (created with that mode, never world-readable for a moment); returns its path. */
-export function writeAgentMcpConfig(stateDir, key, mcpUrl, agentKey) {
-  const p = mcpConfigPath(stateDir, key);
-  rmSync(p, { force: true });
-  const fd = openSync(p, 'wx', 0o600);
-  try {
-    writeSync(fd, JSON.stringify(agentMcpConfig(mcpUrl, agentKey)));
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    chmodSync(p, 0o600);
-  } catch {
-    /* best effort on platforms without modes */
-  }
-  return p;
-}
-
-/** Remove one config file, or with no key every `mcp-*.json` left in the state dir (dispatcher shutdown). */
-export function removeAgentMcpConfigs(stateDir, key = null) {
-  if (key) {
-    rmSync(mcpConfigPath(stateDir, key), { force: true });
-    return;
-  }
-  let names = [];
-  try {
-    names = readdirSync(stateDir);
-  } catch {
-    return;
-  }
-  for (const n of names) if (/^mcp-.+\.json$/.test(n)) rmSync(join(stateDir, n), { force: true });
-}
-
-/** The argv of a worker launch. `session` names (or with `resume`, continues) a claude session. */
-export function launchCmd(
-  prompt,
-  model,
-  args,
-  key,
-  { session = null, resume = false, maxTurns = null, mcpConfig = null, harness = null, endpoint = false } = {},
-) {
-  harness = harness || args.harness || 'claude';
-  if (harness === 'grok') {
-    const cmd = [args.grok || process.env.GROK_BIN || 'grok', '-p', prompt, '--output-format', 'streaming-messages-json'];
-    if (harnessKnowsModel('grok', model)) cmd.push('--model', model);
-    return cmd;
-  }
-  if (harness === 'codex') {
-    // Headless exec cannot answer an MCP approval prompt ("approval policy is never"): approve only the enforcer server's tools, not shell or other servers.
-    const url = process.env.ENFORCER_MCP_URL || 'https://api.instruxi.dev/mcp';
-    const cmd = [
-      args.codex || process.env.CODEX_BIN || 'codex',
-      'exec',
-      '--json',
-      // default exec sandbox is read-only (a worker could not commit or land): write inside the cwd (the worktree) only,
-      // plus network for git push and gh. Narrower than danger-full-access; no approvals needed (exec never asks).
-      '--sandbox',
-      'workspace-write',
-      '-c',
-      'sandbox_workspace_write.network_access=true',
-    ];
-    // No `--add-dir <git common dir>`: workspace-write keeps a linked worktree's git metadata read-only by design even
-    // with it (codex 0.164, measured 2026-10-31). A codex worker edits and checks only; the dispatcher commits and lands.
-    cmd.push('-c', `mcp_servers.enforcer={url=${JSON.stringify(url)}, default_tools_approval_mode="approve"}`);
-    if (harnessKnowsModel('codex', model)) cmd.push('--model', model);
-    return [...cmd, prompt];
-  }
-  if (harness === 'gemini') {
-    // gemini 0.38 headless: -p prompt, -o stream-json (NDJSON, fixture test/fixtures/gemini-stream.jsonl), yolo approves tools.
-    const cmd = [args.gemini || process.env.GEMINI_BIN || 'gemini', '-p', prompt, '-o', 'stream-json', '--approval-mode', 'yolo'];
-    if (harnessKnowsModel('gemini', model)) cmd.push('-m', model);
-    return cmd;
-  }
-  const cmd = [args.agentBin || process.env.CLAUDE_BIN || 'claude', '-p', prompt, '--agent', AGENT, '--model', model];
-  for (const d of pluginDirs(args.pluginDir)) cmd.push('--plugin-dir', d);
-  cmd.push('--settings', workerSettings());
-  // Only an agent run gets its own connection: the path is in argv, the key is only inside the 0600 file.
-  if (args.agent && mcpConfig) cmd.push('--mcp-config', mcpConfig, '--strict-mcp-config');
-  if (session) cmd.push(resume ? '--resume' : '--session-id', session);
-  if (maxTurns) cmd.push('--max-turns', String(maxTurns));
-  cmd.push('--allowedTools', allowedTools().join(','), '--permission-prompts', 'none', '--output-format', 'stream-json', '--verbose', '--name', 'graph:' + key);
-  // No spend cap on a self-hosted endpoint: its tokens are not a provider bill (ROUTES.md section 2), and with a cap
-  // Claude Code adds a "USD budget: $x/$y" system message every turn whose numbers change, which defeats vLLM's prefix
-  // cache (measured on the DGX Spark: 0 hits over 435,883 prompt tokens with the cap, ~25k cached per turn without).
-  if (args.maxBudgetUsd && !endpoint) cmd.push('--max-budget-usd', String(args.maxBudgetUsd));
-  if (args.autocompact && args.autocompact !== 'auto') cmd.push('--autocompact', String(args.autocompact));
-  return cmd;
+/** The argv of a worker launch, from the harness's adapter. `session` names (or with `resume`, continues) a claude session. */
+export function launchCmd(prompt, model, args, key, opts = {}) {
+  const harness = opts.harness || args.harness || 'claude';
+  return adapterFor(harness).command(prompt, model, args, key, opts);
 }
 
 /** The variable carrying a worker's launch nonce: recorded in pids.json, checked before a reap, and swept for after a kill. */

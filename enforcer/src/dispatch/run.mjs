@@ -31,9 +31,8 @@ import {
   LAND_PR,
   DEFAULT_WORKER_RULES,
   WORKER_RULES_MODES,
-  writeAgentMcpConfig,
-  mcpConfigPath,
   removeAgentMcpConfigs,
+  adapterFor,
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
@@ -45,8 +44,8 @@ import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimit
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
-import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
-import { codexGitRules, landForCodex } from './codex-land.mjs';
+import { checkDestructiveMerge } from './git-guard.mjs';
+import { landForCodex } from './codex-land.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -557,17 +556,18 @@ export class Dispatcher {
     if (warmed) t2 += ` (warm: node ${warmed.nodes + 1} of session ${warmed.session}, after ${warmed.lastKey})`;
     const session = prior || warmed?.session || randomUUID();
     const mode = prior ? 'warm --resume' : warmed ? 'warm' : 'cold';
-    // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
-    const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
-    const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
-    if (harness === 'codex') prompt += '\n' + codexGitRules();
-    else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
+    // The harness's per-worker files (claude: an agent run's own MCP connection, see writeAgentMcpConfig), as paths only:
+    // they are written after the credential is minted, just before the spawn.
+    const adapter = adapterFor(harness);
+    const plan = adapter.plan({ state: this.state, key: n.key, args: a, route: r });
+    // non-claude harnesses get git rules (codex cannot write git metadata in its sandbox: the dispatcher lands, landCodex)
+    const rules = adapter.promptRules();
+    if (rules) prompt += '\n' + rules;
     const cmd = launchCmd(prompt, model, a, n.key, {
       session,
       resume: Boolean(prior || warmed),
       maxTurns: turnsCap,
-      mcpConfig,
+      ...plan,
       harness,
       endpoint: Boolean(r?.endpoint),
     });
@@ -616,11 +616,12 @@ export class Dispatcher {
         return;
       }
     }
-    if (mcpConfig) {
+    let prepared = { env: {}, cleanup: [] };
+    if (adapter.prepare) {
       try {
-        writeAgentMcpConfig(this.state, n.key, a.mcpUrl, token || a.agentKey);
+        prepared = await adapter.prepare(plan, { state: this.state, key: n.key, args: a, token, route: r, env: a.routesEnv || process.env });
       } catch (e) {
-        this.say(`refuse ${n.key}: could not write its MCP config: ${e.message}`);
+        this.say(`refuse ${n.key}: could not ${adapter.prepareWhat || 'prepare its harness files'}: ${e.message}`);
         return;
       }
     }
@@ -635,11 +636,12 @@ export class Dispatcher {
       routeEnv: a.routesEnv || process.env,
       harness,
     });
+    Object.assign(env, prepared.env);
     const proc = spawnWorker(cmd, {
       cwd: path,
       logPath,
       env,
-      cleanup: mcpConfig ? [mcpConfig] : [],
+      cleanup: prepared.cleanup,
       secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
     proc.done.then(() => this.wakeUp());
