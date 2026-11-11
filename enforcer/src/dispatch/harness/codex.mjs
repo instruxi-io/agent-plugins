@@ -175,6 +175,8 @@ export function* codexEvents(path) {
   let error = null;
   const usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
   let sawUsage = false;
+  // cache_write_input_tokens: some Codex builds send it (fixture codex-exec.jsonl), most do not; carried only when seen
+  let cacheWrite = null;
   for (const line of text.split('\n')) {
     let e;
     try {
@@ -213,6 +215,7 @@ export function* codexEvents(path) {
         usage[k] += u[k];
         sawUsage = true;
       }
+      if (typeof u.cache_write_input_tokens === 'number') cacheWrite = (cacheWrite || 0) + u.cache_write_input_tokens;
       const failed = e.type === 'turn.failed';
       if (failed) error = String((isObj(e.error) ? e.error.message : null) ?? error ?? 'turn failed');
       yield {
@@ -228,6 +231,7 @@ export function* codexEvents(path) {
               output_tokens: usage.output_tokens,
               cache_read_input_tokens: usage.cached_input_tokens,
               reasoning_output_tokens: usage.reasoning_output_tokens,
+              ...(cacheWrite !== null ? { cache_creation_input_tokens: cacheWrite } : {}),
             }
           : { input_tokens: u.input_tokens, output_tokens: u.output_tokens, cache_read_input_tokens: u.cached_input_tokens },
         message: {},
@@ -236,6 +240,42 @@ export function* codexEvents(path) {
       error = String(e.message ?? 'error');
     }
   }
+}
+
+// ---- usage after exit
+
+/**
+ * The run usage body (graph's runs.Usage) for a codex worker's summary, or null when its stream reported no usage
+ * (null means "not reported": never post zeros for it). Codex's counts are cumulative over the turns (codexEvents
+ * sums every turn.completed), and its input_tokens INCLUDES the cached prompt tokens. Graph's convention is Claude's:
+ * input_tokens EXCLUDES cache reads and cache writes. So (the same split as governance migration 040):
+ *   input_tokens                = input - cached_input - cache_write_input   (floor 0: a stream with cached > input)
+ *   cache_read_input_tokens     = cached_input
+ *   cache_creation_input_tokens = cache_write_input, else 0 (most Codex builds do not send it)
+ *   output_tokens               = output (Codex's reasoning tokens are already inside output; not added again)
+ *   turns                       = the run's turns as the done line counts them
+ *   model                       = the model the route launched it on
+ *   source                      = "reported" (the provider's own counters)
+ * cost_usd is never sent: an endpoint route is self-hosted (no price), and Codex's stream carries no cost.
+ */
+export function codexRunUsage(s, { model = null } = {}) {
+  const u = isObj(s?.usage) ? s.usage : {};
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+  const input = num(u.input_tokens);
+  const output = num(u.output_tokens);
+  if (input === null && output === null) return null;
+  const cached = num(u.cache_read_input_tokens) ?? 0;
+  const write = num(u.cache_creation_input_tokens) ?? 0;
+  const turns = num(s?.num_turns) ?? num(s?.turns);
+  return {
+    ...(model ? { model: String(model) } : {}),
+    input_tokens: Math.max(0, (input ?? 0) - cached - write),
+    output_tokens: output ?? 0,
+    cache_read_input_tokens: cached,
+    cache_creation_input_tokens: write,
+    ...(turns !== null ? { turns } : {}),
+    source: 'reported',
+  };
 }
 
 // ---- preflight
@@ -381,6 +421,8 @@ export default {
 
   promptRules: () => codexGitRules(),
   events: codexEvents,
+  // a codex worker completes its run through MCP before it exits, without usage: the dispatcher posts it afterwards
+  usageAfterExit: (s, { model }) => codexRunUsage(s, { model }),
   preflight: codexPreflight,
   sweep: (state) => removeCodexHomes(state),
 };

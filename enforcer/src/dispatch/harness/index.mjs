@@ -15,6 +15,11 @@
 //   events(path) -> Iterable                             the worker stream as Claude-shaped events (summarize reads them)
 //   sweep?(state)                                        remove every per-worker file it leaves in the state dir (start, shutdown)
 //   preflight?(args, sys) -> [{name, ok, line}]          host checks for a run that will launch it (codex: binary, sandbox)
+//   usageAfterExit?(summary, {model, endpoint}) -> body|null   the run's usage (graph runs.Usage) from the finished
+//                                                        stream, which the dispatcher posts on the run after the worker
+//                                                        exits (Dispatcher.recordUsage); null when the stream reported
+//                                                        none. Only for a harness that cannot report usage itself
+//                                                        (codex); claude reports through its hooks and has none.
 import claude from './claude.mjs';
 import codex from './codex.mjs';
 import grok from './grok.mjs';
@@ -22,7 +27,8 @@ import gemini from './gemini.mjs';
 
 /** @typedef {{ name: string, caps: {supported: boolean, experimental: boolean, models: string[]|null, resume: boolean, why?: string},
  *   apis: string[], command: Function, env?: Function, endpointEnv?: Function, plan: Function, prepare?: Function,
- *   prepareWhat?: string, promptRules: () => string, events: (path: string) => Iterable<any>, preflight?: Function, sweep?: Function }} HarnessAdapter */
+ *   prepareWhat?: string, promptRules: () => string, events: (path: string) => Iterable<any>, preflight?: Function, sweep?: Function,
+ *   usageAfterExit?: (summary: any, ctx: {model: string|null, endpoint: any}) => object|null }} HarnessAdapter */
 
 /** @type {Record<string, HarnessAdapter>} */
 export const ADAPTERS = { claude, codex, grok, gemini };
