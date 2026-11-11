@@ -170,7 +170,8 @@ function timeoutSeconds(t) {
 /** `bunx|npx vitest run [--reporter=<name>] [--config <path>] [paths]`, only when the checkout has its own vitest. */
 function vitestShape(a, root) {
   if ((a[0] !== 'bunx' && a[0] !== 'npx') || a[1] !== 'vitest' || a[2] !== 'run') return false;
-  if (!existsSync(join(root, 'node_modules', '.bin', 'vitest')) || !inRepo(join('node_modules', '.bin', 'vitest'), root)) return false;
+  // forward slashes: inRepo refuses a backslash, and resolve() takes `/` on Windows too
+  if (!existsSync(join(root, 'node_modules', '.bin', 'vitest')) || !inRepo('node_modules/.bin/vitest', root)) return false;
   for (let i = 3; i < a.length; i++) {
     const t = a[i];
     if (/^--reporter=[a-z][a-z-]*$/.test(t)) continue;
