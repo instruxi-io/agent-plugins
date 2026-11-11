@@ -188,6 +188,23 @@ export async function dispatchClients(env, headers) {
   return { api: new API(cfg.graphUrl, o), credApi: new API(cfg.enforcerUrl, o) };
 }
 
+/**
+ * The branch a codex worker's pull request targets: the node's data.base, else the repo's default branch as the
+ * worktree resolved it (origin/HEAD, gh, origin/main|master), else main. Before 1.11.0 this was data.base or a literal
+ * 'main', so a repo whose default branch is master got "Base ref must be a branch" and nothing landed.
+ */
+export function codexLandBase(node, repoRoot, repo, branchOf = defaultBranch) {
+  const own = String(node?.data?.base || '').trim();
+  if (own) return own.replace(/^origin\//, '');
+  let ref = null;
+  try {
+    ref = repoRoot && repo ? branchOf(join(repoRoot, repo)) : null;
+  } catch {
+    ref = null;
+  }
+  return ref ? String(ref).replace(/^origin\//, '') : 'main';
+}
+
 export class Dispatcher {
   // credApi is v3: worker credentials are minted and revoked there, the graph service has no /agents routes.
   constructor(api, args, out = (s) => process.stdout.write(s), credApi = api) {
@@ -854,7 +871,7 @@ export class Dispatcher {
         runId: run.runId,
         cwd: w.path,
         branch: w.branch,
-        base: w.node.data?.base || 'main',
+        base: codexLandBase(w.node, this.args.repoRoot, w.repo),
         landPr: LAND_PR,
         landTimeout: this.args.landTimeout,
         logDir: this.logs,

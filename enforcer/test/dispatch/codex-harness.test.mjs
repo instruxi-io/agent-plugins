@@ -449,3 +449,29 @@ test('enforcer dispatch: a codex route on a host whose sandbox cannot start fail
     assert.match(text, /fail {2}codex-sandbox: .*Failed RTM_NEWADDR/);
   }
 });
+
+test('codex landing targets the repo default branch, not a literal main (enforcer-smoke is master)', async () => {
+  const { codexLandBase } = await import('../../src/dispatch/run.mjs');
+  assert.equal(
+    codexLandBase({ data: {} }, '/r', 'enforcer-smoke', () => 'origin/master'),
+    'master',
+  );
+  assert.equal(
+    codexLandBase({ data: { base: 'origin/staging' } }, '/r', 'x', () => 'origin/master'),
+    'staging',
+  );
+  assert.equal(
+    codexLandBase({ data: { base: 'dev' } }, '/r', 'x', () => 'origin/master'),
+    'dev',
+  );
+  assert.equal(
+    codexLandBase({ data: {} }, '/r', 'x', () => null),
+    'main',
+  );
+  assert.equal(
+    codexLandBase({ data: {} }, '/r', 'x', () => {
+      throw new Error('no git');
+    }),
+    'main',
+  );
+});
