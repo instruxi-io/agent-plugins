@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { readCredentials, saveCredentials, enforcerKey, SHARED_FILE, authHeaders } from '../src/credentials.mjs';
+import { readCredentials, saveCredentials, enforcerKey, SHARED_FILE, authHeaders, withCredentialLock } from '../src/credentials.mjs';
 import { loadConfig } from '../src/store.mjs';
 import { resolveConfig, flagValue } from '../../../src/config.mjs';
 
@@ -244,7 +244,7 @@ async function main(argv) {
       return;
     }
     const { api_key, oauth, ...rest } = doc.enforcer; // eslint-disable-line no-unused-vars
-    saveCredentials({ ...doc, enforcer: rest });
+    await withCredentialLock(() => saveCredentials({ ...doc, enforcer: rest }));
     out('Signed out on this machine. The governor and the Enforcer MCP server no longer send a credential.');
     out('An API key still exists on the server until you revoke it there.');
     return;
@@ -260,7 +260,7 @@ async function main(argv) {
     // Likewise a key replaces a browser sign-in: one credential, one identity.
     const doc = readCredentials() || { enforcer: {} };
     const { oauth: _oauth, ...kept } = doc.enforcer;
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, api_key: key, saved_at: new Date().toISOString() } });
+    await withCredentialLock(() => saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, api_key: key, saved_at: new Date().toISOString() } }));
     const me = await whoAmI(base).catch(() => null);
     out(
       me && !me.error
@@ -293,7 +293,7 @@ async function main(argv) {
     // account while this command reported the person who just signed in.
     const doc = readCredentials() || { enforcer: {} };
     const { api_key: _key, saved_at: _at, ...kept } = doc.enforcer;
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth } });
+    await withCredentialLock(() => saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth } }));
     const me = await whoAmI(base).catch(() => null);
     out(me && !me.error ? `Signed in as ${who(me)}.` : 'Signed in.');
     out('The governor and the Enforcer MCP server share this sign-in.');
