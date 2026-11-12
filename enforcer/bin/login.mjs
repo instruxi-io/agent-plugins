@@ -23,7 +23,7 @@ import { createServer } from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { currentWorkspace, describe } from './enforcer-workspace.mjs';
-import { readCredentials, saveCredentials, legacyCredentialFile, enforcerKey, SHARED_FILE, authHeaders } from '../src/credentials.mjs';
+import { readCredentials, saveCredentials, legacyCredentialFile, enforcerKey, SHARED_FILE, authHeaders, withCredentialLock } from '../src/credentials.mjs';
 import { resolveConfig, flagValue } from '../src/config.mjs';
 import { onLogin as geminiOnLogin, statusLine as geminiStatusLine } from '../src/gemini-telemetry.mjs';
 
@@ -669,7 +669,7 @@ async function main(rawArgv) {
           out(`Could not revoke the refresh token (${e.message}); it stays valid on the server until it expires.`);
         }
       }
-      saveCredentials({ ...doc, enforcer: rest });
+      await withCredentialLock(() => saveCredentials({ ...doc, enforcer: rest }));
       if (api_key) out('The saved API key was removed here, but it still exists on the server until you revoke it there.');
       out('Signed out: the saved credential in ' + SHARED_FILE() + ' is gone.');
     } else out('No saved credential in ' + SHARED_FILE() + '.');
@@ -712,7 +712,7 @@ async function main(rawArgv) {
     // Likewise a key replaces a browser sign-in: one credential, one identity.
     const doc = readCredentials() || { enforcer: {} };
     const { oauth: _oauth, ...kept } = doc.enforcer;
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, api_key: key, saved_at: new Date().toISOString() } });
+    await withCredentialLock(() => saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, api_key: key, saved_at: new Date().toISOString() } }));
     const me = await whoAmI(base).catch(() => null);
     out(
       me && !me.error
@@ -776,7 +776,8 @@ async function main(rawArgv) {
             registered_at: new Date().toISOString(),
             ...(client_ceiling ? { ceiling: client_ceiling } : {}),
           };
-    saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth: signIn, oauth_client } });
+    // Under the refresh lock: a refresh in flight must not write the pair this sign-in replaces back over it.
+    await withCredentialLock(() => saveCredentials({ ...doc, enforcer: { ...kept, base_url: base, oauth: signIn, oauth_client } }));
     const notice = await replacementNotice(previous, oauth, base);
     out(me && !me.error ? `Signed in as ${who(me)}.` : 'Signed in.');
     for (const line of probe.lines) out(line);

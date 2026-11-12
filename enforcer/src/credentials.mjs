@@ -6,6 +6,8 @@
 import { readFileSync, mkdirSync, renameSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, rmdirSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { assertSchema, stamp } from './schema.mjs';
 import { envBaseUrl, DEFAULT_BASE_URL } from './config.mjs';
@@ -225,6 +227,39 @@ export function enforcerKey() {
 // Code caches the OTel helper's for its debounce window) passes a larger skewMs.
 export const REFRESH_SKEW_MS = 60_000;
 
+// Why the refresh runs in a detached process (2026-11-12, "signed out: HTTP 400 invalid_grant"
+// minutes after every sign-in on a machine running several Claude Code sessions):
+//
+// The refresh token is single-use, and the server (enforcer-v3 loadRefresh) forgives a
+// re-presented, already-rotated token exactly once and only for 30s (it mints a sibling); a
+// second re-presentation is refused, and one after 30s is treated as theft and REVOKES THE
+// FAMILY. So the rotated pair the server answers with is the only copy of the sign-in, and it
+// exists only in the memory of the process that asked for it until saveCredentials renames it
+// into place. Every caller here can die inside that window: a hook killed at its harness
+// timeout or on an interrupt, a hook process that exits once its own deadline race is lost
+// (bin/enforcer `event` ends with process.exit while the graph handler is still awaiting the
+// token endpoint), the headers helper killed by its host, or this module's own 1.8s abort on a
+// response that was already committed. The successor is then lost, the file keeps the rotated-
+// out token, the next caller presents it (the 30s fork is spent the same way), and the first
+// presentation after 30s revokes the family: invalid_grant until the next /enforcer:login.
+// Server logs for the incident show exactly this: "sibling successor minted", then "refresh
+// token reuse detected — revoking family" for the family whose token was still on disk.
+//
+// So the POST and the write-back run in a child that is detached from its caller (its own
+// process group, not waited on by the event loop): whatever happens to the caller, the
+// rotated pair reaches the file. The caller waits for the child for a bounded time and reads
+// the result from the file. ENFORCER_REFRESH_INPROCESS=1 (or { detach: false }) keeps the
+// refresh in the calling process, for tests that stub fetch and for the child itself.
+const REFRESH_CHILD = fileURLToPath(new URL('./refresh-child.mjs', import.meta.url));
+const IN_PROCESS_TIMEOUT_MS = 1800; // a hook has a few seconds in total
+export const CHILD_TIMEOUT_MS = 3500; // per request; three requests stay inside LOCK_STALE_MS
+export const CHILD_LOCK_WAIT_MS = 10_000;
+const DETACH_WAIT_MS = 5000;
+export const CHILD_SIGNED_OUT = 3; // refresh-child.mjs exit code: the server refused the refresh token
+const detachDefault = () => process.env.ENFORCER_REFRESH_INPROCESS !== '1';
+const fresh = (o, now, skewMs) => !!(o?.access_token && o.expires_at && Date.parse(o.expires_at) - now() > skewMs);
+const bearer = (o) => ({ Authorization: `Bearer ${o.access_token}` });
+
 /**
  * Headers that authenticate a request to Enforcer, or {} when signed out.
  *
@@ -240,57 +275,134 @@ export const REFRESH_SKEW_MS = 60_000;
  *
  * skewMs: refresh when the token expires within this long. 60s suits a header used at once; a
  * header that is cached must still be valid when the cache is last used (see bin/enforcer-headers.mjs).
+ *
+ * detach (default true unless ENFORCER_REFRESH_INPROCESS=1): run the refresh in a detached child,
+ * so a caller killed mid-refresh cannot lose the rotated pair (see above). waitMs bounds how long
+ * this call waits for it; the child finishes and saves regardless.
  */
-export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now, backoffMs = 250, skewMs = REFRESH_SKEW_MS } = {}) {
+export async function authHeaders({
+  fetchImpl = globalThis.fetch,
+  now = Date.now,
+  backoffMs = 250,
+  skewMs = REFRESH_SKEW_MS,
+  detach = detachDefault(),
+  waitMs = DETACH_WAIT_MS,
+} = {}) {
   const key = enforcerKey();
   if (key) return { 'X-API-Key': key };
   const doc = readCredentials();
   const o = doc?.enforcer?.oauth;
   if (!o?.access_token) return {};
-  if (!o.expires_at || Date.parse(o.expires_at) - now() > skewMs) {
-    return { Authorization: `Bearer ${o.access_token}` };
-  }
-  const stale = { Authorization: `Bearer ${o.access_token}` };
+  if (!o.expires_at || fresh(o, now, skewMs)) return bearer(o);
   if (!o.refresh_token || !o.token_endpoint || !o.client_id || typeof fetchImpl !== 'function') return {};
   if (!isAllowedUrl(o.token_endpoint)) return {};
-  const release = await acquireRefreshLock();
+  if (detach) {
+    const r = await refreshDetached({ now, skewMs, waitMs, o });
+    if (r) return r;
+    // the child could not be started: refresh here, as before
+  }
+  return (await refreshUnderLock({ fetchImpl, now, backoffMs, skewMs, doc, o })).headers;
+}
+
+/** Start the detached refresher and wait for it (bounded). Null when it cannot be spawned. */
+async function refreshDetached({ now, skewMs, waitMs, o }) {
+  const usable = () => {
+    const c = readCredentials()?.enforcer?.oauth || o;
+    return c.access_token && c.expires_at && Date.parse(c.expires_at) > now() ? bearer(c) : {};
+  };
+  let child;
+  try {
+    // execArgv carries the caller's --import preloads (a test's fetch stub) into the child.
+    child = spawn(process.execPath, [...process.execArgv, REFRESH_CHILD], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, ENFORCER_REFRESH_INPROCESS: '1', ENFORCER_REFRESH_SKEW_MS: String(skewMs) },
+    });
+  } catch {
+    return null;
+  }
+  const code = await new Promise((res) => {
+    const t = setTimeout(() => res('waiting'), waitMs); // ref'd: keeps this process alive while it waits
+    child.once('exit', (c) => {
+      clearTimeout(t);
+      res(c);
+    });
+    child.once('error', () => {
+      clearTimeout(t);
+      res('error');
+    });
+    child.unref(); // the child never holds its caller open, and outlives it
+  });
+  if (code === 'error') return null;
+  const c = readCredentials()?.enforcer?.oauth;
+  if (fresh(c, now, skewMs)) return bearer(c);
+  if (code === CHILD_SIGNED_OUT) return {};
+  return usable();
+}
+
+/**
+ * The refresh itself, under the shared lock, in this process. Returns { headers, outcome } with
+ * outcome one of fresh | refreshed | transient | signed_out | busy | invalid.
+ */
+export async function refreshUnderLock({
+  fetchImpl = globalThis.fetch,
+  now = Date.now,
+  backoffMs = 250,
+  skewMs = REFRESH_SKEW_MS,
+  timeoutMs = IN_PROCESS_TIMEOUT_MS,
+  lockWaitMs = LOCK_TIMEOUT_MS,
+  doc = readCredentials(),
+  o = doc?.enforcer?.oauth,
+} = {}) {
+  if (!o?.access_token) return { headers: {}, outcome: 'invalid' };
+  const stale = bearer(o);
+  const release = await acquireRefreshLock(lockWaitMs);
   // A hook has a few seconds in total; if another process holds the lock
   // that long, use the token we have rather than block or lose it.
-  if (!release) return stale;
+  if (!release) return { headers: stale, outcome: 'busy' };
   try {
     // Re-read under the lock: whoever held it before us may have rotated the pair.
     const cur = readCredentials();
     const c = cur?.enforcer?.oauth;
-    if (c?.access_token && c.expires_at && Date.parse(c.expires_at) - now() > skewMs) {
-      return { Authorization: `Bearer ${c.access_token}` };
-    }
-    const doc2 = cur || doc;
-    const o2 = c || o;
-    if (!o2.refresh_token || !isAllowedUrl(o2.token_endpoint)) return {};
-    const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: o2.refresh_token, client_id: o2.client_id || o.client_id });
+    if (fresh(c, now, skewMs)) return { headers: bearer(c), outcome: 'fresh' };
+    let o2 = c || o;
+    if (!o2.refresh_token || !isAllowedUrl(o2.token_endpoint)) return { headers: {}, outcome: 'invalid' };
+    const clientId = o2.client_id || o.client_id;
+    const post = (rt) =>
+      fetchImpl(o2.token_endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: clientId }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
     // A token the server has not yet expired is still good: reuse it on a transient failure.
-    const usable = o2.access_token && o2.expires_at && Date.parse(o2.expires_at) > now() ? { Authorization: `Bearer ${o2.access_token}` } : {};
+    const usable = o2.access_token && o2.expires_at && Date.parse(o2.expires_at) > now() ? bearer(o2) : {};
+    // Stamp the failure on the pair we tried, and only while that pair is still the one on disk:
+    // a sign-in or switch saved meanwhile must never be overwritten with the pair it replaced.
     const record = (reason) => {
       try {
-        saveCredentials({ ...doc2, enforcer: { ...doc2.enforcer, oauth: { ...o2, last_refresh_error: { at: new Date(now()).toISOString(), reason } } } });
+        const disk = readCredentials();
+        const d = disk?.enforcer?.oauth;
+        if (!d || d.refresh_token !== o2.refresh_token) return; // signed out or replaced meanwhile
+        const base = disk || cur || doc;
+        saveCredentials({
+          ...base,
+          enforcer: { ...base.enforcer, oauth: { ...(d || o2), last_refresh_error: { at: new Date(now()).toISOString(), reason } } },
+        });
       } catch {
         /* best effort */
       }
     };
-    // Transient (timeout, network, 5xx): retry once after a short backoff, then keep the old pair untouched.
-    // The refresh token is single-use, so after a lost response it may already be rotated server-side;
-    // keeping it unchanged lets the next call replay it (the server answers a replay of the last-used token).
+    // Transient (timeout, network, 5xx): retry once after a short backoff, then keep the old pair.
+    // After a lost response the token may already be rotated server-side; the server forgives ONE
+    // re-presentation within its 30s grace (it mints a sibling), which is what this retry spends.
     let res = null;
     let reason = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt) await sleep(backoffMs);
       try {
-        res = await fetchImpl(o2.token_endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body,
-          signal: AbortSignal.timeout(1800),
-        });
+        res = await post(o2.refresh_token);
       } catch (e) {
         res = null;
         reason = `transient: ${e?.name || 'error'}`;
@@ -305,33 +417,28 @@ export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now
     }
     if (!res) {
       record(reason);
-      return usable;
+      return { headers: usable, outcome: 'transient' };
     }
     if (!res.ok && res.status >= 400 && res.status < 500) {
-      // A refused refresh is retried once: another process may have rotated the pair, or the
-      // refusal may be momentary. Re-read the file, and replay with whatever pair is current.
+      // Refused. Retry only when the file now holds a DIFFERENT refresh token (a writer outside this
+      // lock saved one): replaying the refused token itself can only be refused again, and once the
+      // server's grace has passed every replay is read as theft.
       await sleep(backoffMs);
       const again = readCredentials()?.enforcer?.oauth;
-      if (again?.access_token && again.expires_at && Date.parse(again.expires_at) - now() > skewMs) {
-        return { Authorization: `Bearer ${again.access_token}` };
-      }
-      const rt = again?.refresh_token || o2.refresh_token;
-      try {
-        const r2 = await fetchImpl(o2.token_endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: o2.client_id || o.client_id }),
-          signal: AbortSignal.timeout(1800),
-        });
-        if (r2.ok || r2.status >= 500) res = r2.status >= 500 ? null : r2;
-        else res = r2;
-      } catch {
-        res = null;
-        reason = 'transient: retry failed';
-      }
-      if (!res) {
-        record(reason || 'transient: retry HTTP 5xx');
-        return usable;
+      if (fresh(again, now, skewMs)) return { headers: bearer(again), outcome: 'fresh' };
+      if (again?.refresh_token && again.refresh_token !== o2.refresh_token && isAllowedUrl(again.token_endpoint)) {
+        o2 = again; // from here on this is the pair being refreshed (and the one record() stamps)
+        let r2 = null;
+        try {
+          r2 = await post(o2.refresh_token);
+        } catch {
+          r2 = null;
+        }
+        if (!r2 || r2.status >= 500) {
+          record('transient: retry failed');
+          return { headers: usable, outcome: 'transient' };
+        }
+        res = r2;
       }
     }
     if (!res.ok) {
@@ -343,18 +450,18 @@ export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now
         /* no body */
       }
       record(`signed out: HTTP ${res.status}${code ? ` ${code}` : ''}`);
-      return {};
+      return { headers: {}, outcome: 'signed_out' };
     }
     let t;
     try {
       t = await res.json();
     } catch {
       record('transient: unreadable response');
-      return usable;
+      return { headers: usable, outcome: 'transient' };
     }
     if (!t?.access_token) {
       record('transient: no access_token in response');
-      return usable;
+      return { headers: usable, outcome: 'transient' };
     }
     const { last_refresh_error: _drop, ...clean } = o2;
     const next = {
@@ -367,12 +474,27 @@ export async function authHeaders({ fetchImpl = globalThis.fetch, now = Date.now
         ? { refresh_expires_at: new Date(now() + Number(t.refresh_token_expires_in || t.refresh_expires_in) * 1000).toISOString() }
         : {}),
     };
-    saveCredentials({ ...doc2, enforcer: { ...doc2.enforcer, oauth: next } });
-    return { Authorization: `Bearer ${next.access_token}` };
+    const base = cur || doc;
+    saveCredentials({ ...base, enforcer: { ...base.enforcer, oauth: next } });
+    return { headers: bearer(next), outcome: 'refreshed' };
   } catch {
-    return stale;
+    return { headers: stale, outcome: 'transient' };
   } finally {
     release();
+  }
+}
+
+/**
+ * Run fn (which saves a new sign-in: login, workspace switch) under the refresh lock, so a
+ * refresh in flight cannot write the pair fn replaced back over it. Waits past LOCK_STALE_MS,
+ * so a dead holder's lock is broken; if the lock still cannot be had, fn runs anyway.
+ */
+export async function withCredentialLock(fn, timeoutMs = LOCK_STALE_MS + 1000) {
+  const release = await acquireRefreshLock(timeoutMs);
+  try {
+    return await fn();
+  } finally {
+    release?.();
   }
 }
 
