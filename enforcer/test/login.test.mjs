@@ -430,7 +430,7 @@ await ok('ENFORCER_BASE_URL overrides saved base_url', async () => {
   assert.match(r.stdout, new RegExp(base.replace(/\./g, '\\.')));
 });
 
-await ok('a refused refresh is retried once', async () => {
+await ok('a refused refresh is retried once, with the token another writer saved meanwhile', async () => {
   const { saveCredentials, readCredentials, authHeaders } = await import('../src/credentials.mjs');
   saveCredentials({
     enforcer: {
@@ -447,17 +447,23 @@ await ok('a refused refresh is retried once', async () => {
   process.env.ENFORCER_BASE_URL = base;
   delete process.env.ENFORCER_API_KEY;
   let calls = 0;
-  const fake = async () => {
+  const fake = async (_u, { body }) => {
     calls++;
-    return calls === 1
-      ? new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
-      : new Response(JSON.stringify({ access_token: 'new', refresh_token: 'rt-new', expires_in: 3600 }), { status: 200 });
+    if (new URLSearchParams(body).get('refresh_token') === 'rt-old') {
+      // a sign-in elsewhere saved a newer pair while this refresh was in flight
+      const d = readCredentials();
+      d.enforcer.oauth = { ...d.enforcer.oauth, refresh_token: 'rt-login' };
+      saveCredentials(d);
+      return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 });
+    }
+    return new Response(JSON.stringify({ access_token: 'new', refresh_token: 'rt-new', expires_in: 3600 }), { status: 200 });
   };
   const h = await authHeaders({ fetchImpl: fake, backoffMs: 1 });
   assert.equal(calls, 2);
   assert.equal(h.Authorization, 'Bearer new');
   assert.equal(readCredentials().enforcer.oauth.refresh_token, 'rt-new');
-  // a refusal that persists signs out, after exactly one retry
+  // a refusal of the token on disk signs out without replaying it: enforcer-v3 refuses a replay again,
+  // and after its 30s grace reads it as theft and revokes the whole family
   saveCredentials({
     enforcer: {
       base_url: base,
@@ -478,7 +484,7 @@ await ok('a refused refresh is retried once', async () => {
     },
     backoffMs: 1,
   });
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
   assert.deepEqual(h2, {});
   const { signInProblem } = await import('../src/credentials.mjs');
   assert.match(signInProblem(), /run \/enforcer:login/);
