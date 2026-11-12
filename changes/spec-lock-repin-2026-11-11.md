@@ -1,0 +1,1 @@
+- The API spec lock is re-pinned to what is deployed on 2026-11-11 (graph 0f67e76, v3 9edf34c, governance 93c8b5e; files and the MCP manifest unchanged), the generated types are regenerated (graph folders, skill sources, run usage), and seven drift entries the new graph spec resolves (skill-source routes, run usage) are removed.
