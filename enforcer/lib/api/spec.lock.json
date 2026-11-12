@@ -5,19 +5,19 @@
       "repo": "enforcer-graph",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "c0b13c86bea341ca873dc0bdf4a3e39f2a9c039a",
+      "ref": "0f67e766d342cd435f9030c746d418d5c57acfbb",
       "file": "spec/graph.json",
-      "upstream_sha256": "143a453616a4fc01cedbd75cd8a86e4d359f42bf3cbc54b06f4eab7603d31186",
-      "sha256": "2a08f6a72c94de5d8ede9c668dd8d31bffb61f5675ea1ed51837016558e6873e"
+      "upstream_sha256": "1d08d615e3a5dfd76142f81def14a17d27498a56fa6b93fa06b4e1cd92c28850",
+      "sha256": "294af27dfa5c91e61ee0fcc743b34af849562c5c7da3a3ce548cd4f1d4a67334"
     },
     "v3": {
       "repo": "enforcer-v3",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "ed13ea6d29ae2bc6b22ad3a440dbd4392888e6f3",
+      "ref": "9edf34c8864f3003a31af626e4dbd6da1e005a11",
       "file": "spec/v3.json",
-      "upstream_sha256": "3ccb216e7fda68c78caa2acd359bce6a53a308b513525b37d8b7b192f1a55055",
-      "sha256": "cad9ad68803cf643d02e76e04e800168ddf241c3504e63c5a59b1abf966eb994"
+      "upstream_sha256": "8325c47845055d152f9a85e22f7bff1d49485d72b156b722f9335d340deefaf6",
+      "sha256": "9311f3ba05d08f393c2bace98e72e56cb0f306309bcf81b32651928b1a85e1e7"
     },
     "files": {
       "repo": "enforcer-files",
@@ -32,7 +32,7 @@
       "repo": "enforcer-governance",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "ba7871f146f176cbe8b3f6280920673281f21f88",
+      "ref": "93c8b5e5d02d95472022534f18ef2c7647eb263f",
       "file": "spec/governance.json",
       "upstream_sha256": "674d6155bc484fc984a6d6641af5d073a0de0d670888944b026b111282902643",
       "sha256": "f590aa074145277099667d7f53be8d8d56f14dcc8719695ffcab12ba340c4358"

@@ -1497,6 +1497,425 @@
         }
       }
     },
+    "/graph-folders": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The workspace's folders for organising graphs (unrelated to a graph's enforcer-files attachments folder, getGraphFolder), as a flat list in name order: build the tree from parent_id (null = top level). Folders are organisation only: they never change who can see or change a graph. A tenant-wide reader sees every folder; anyone else sees the folders they made, the folders holding a graph they can see, and every folder above one of those. graph_count is the visible graphs filed directly in the folder, total_graph_count adds every folder under it, can_edit says whether the caller may rename, move or delete it. Never paged (a workspace holds at most 2000 folders). Graphs in a folder are listed with listGraphs folder_id=. Read-only.",
+        "tags": [
+          "graphs"
+        ],
+        "summary": "List graph folders",
+        "operationId": "listGraphFolders",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_folders.FolderListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Makes a folder at the top level, or in parent_id. Anyone signed in to the workspace may make one (a portal link credential is 403 insufficient_scope). name is 1 to 120 characters with no \"/\" and no control characters, unique beside its siblings ignoring case (409 folder_name_taken). A parent the caller cannot see is 404 folder_not_found. Folders nest at most 8 deep (400 folder_depth_exceeded) and a workspace holds at most 2000 (409 folder_limit_reached).",
+        "tags": [
+          "graphs"
+        ],
+        "summary": "Create a graph folder",
+        "operationId": "createGraphFolder",
+        "requestBody": {
+          "required": true,
+          "description": "the folder",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_folders.CreateFolderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_folders.FolderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/graph-folders/{folderId}": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "One folder of the tree listGraphFolders returns (not getGraphFolder, which is the graph's enforcer-files attachments folder), with path: the folders above it, top level first. A folder the caller cannot see is 404 folder_not_found, the same answer as one that does not exist. Read-only.",
+        "tags": [
+          "graphs"
+        ],
+        "summary": "Get a graph folder",
+        "operationId": "getGraphFolderById",
+        "parameters": [
+          {
+            "name": "folderId",
+            "in": "path",
+            "description": "folder id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_folders.FolderResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Deletes the folder. Nothing in it is deleted or archived: its folders and its graphs (every one, whether or not the caller can see it) move up one level, into the folder it was in, or to the top level. Returns where they went and how many. Only whoever made the folder, or a tenant-wide writer, may (403 insufficient_scope otherwise; 404 folder_not_found for one the caller cannot see). 409 folder_name_taken when a folder moving up has the name of one already there: rename one of them first.",
+        "tags": [
+          "graphs"
+        ],
+        "summary": "Delete a graph folder",
+        "operationId": "deleteGraphFolder",
+        "parameters": [
+          {
+            "name": "folderId",
+            "in": "path",
+            "description": "folder id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_folders.DeletedFolderResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Renames the folder (name) and/or moves it (parent_id: a folder id, or an explicit null for the top level). Everything under it moves with it. Only whoever made the folder, or a tenant-wide writer, may: anyone else who can see it gets 403 insufficient_scope, and a folder the caller cannot see is 404 folder_not_found (so is a parent they cannot see). 409 folder_name_taken when a sibling there has the name; 409 folder_cycle when the move would put it inside itself; 400 folder_depth_exceeded past 8 deep; 400 invalid_body when neither field is given.",
+        "tags": [
+          "graphs"
+        ],
+        "summary": "Rename or move a graph folder",
+        "operationId": "updateGraphFolder",
+        "parameters": [
+          {
+            "name": "folderId",
+            "in": "path",
+            "description": "folder id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "what to change",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_folders.UpdateFolderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_folders.FolderResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/graph-invites/accept": {
       "post": {
         "security": [
@@ -1915,6 +2334,22 @@
             }
           },
           {
+            "name": "folder_id",
+            "in": "query",
+            "description": "a folder uuid (GET /graph-folders): only graphs filed directly in it; none: only graphs at the top level. Narrows visibility, never widens it: a folder the caller cannot see lists only what they could see anyway",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recursive",
+            "in": "query",
+            "description": "1 with a folder_id uuid: also graphs in every folder under it",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "query",
             "description": "csv of up to 50 graph uuids (the default page size, so one call returns them all; batch beyond that): only those graphs. Narrows visibility, never widens it: an id the caller cannot see (or that does not exist, or is archived) is simply absent, never an error. More than 50 is 400",
@@ -2155,7 +2590,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Groups the visible graphs by up to two keys and sums their node progress. Takes every filter of listGraphs. `group_by` is a csv of mode, lifecycle, role, complete, created_by, created:day|week|month, updated:day|week|month (`tz` is an IANA zone, default UTC). `sort` is count (default -count) or a group key, `-` for descending. limit/offset page over groups (default 50, max 200); `total` is the number of groups. Visibility is resolved first (more than 5,000 visible graphs is 422 query_too_broad); the counts read nodes by status only. Read-only.",
+        "description": "Groups the visible graphs by up to two keys and sums their node progress. Takes every filter of listGraphs. `group_by` is a csv of mode, lifecycle, role, complete, created_by, folder (the folder id a graph is filed under, \"\" at the top level), created:day|week|month, updated:day|week|month (`tz` is an IANA zone, default UTC). `sort` is count (default -count) or a group key, `-` for descending. limit/offset page over groups (default 50, max 200); `total` is the number of groups. Visibility is resolved first (more than 5,000 visible graphs is 422 query_too_broad); the counts read nodes by status only. Read-only.",
         "tags": [
           "graphs"
         ],
@@ -2165,7 +2600,7 @@
           {
             "name": "group_by",
             "in": "query",
-            "description": "csv of 1-2 keys: mode, lifecycle, role, complete, created_by, created:day|week|month, updated:day|week|month",
+            "description": "csv of 1-2 keys: mode, lifecycle, role, complete, created_by, folder, created:day|week|month, updated:day|week|month",
             "required": true,
             "schema": {
               "type": "string"
@@ -2271,6 +2706,22 @@
             "name": "group_id",
             "in": "query",
             "description": "a group uuid: only graphs with a live grant to that group",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "folder_id",
+            "in": "query",
+            "description": "a folder uuid, or none for the top level (see listGraphs)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recursive",
+            "in": "query",
+            "description": "1 with a folder_id uuid: also every folder under it",
             "schema": {
               "type": "string"
             }
@@ -7675,6 +8126,118 @@
         }
       }
     },
+    "/graphs/{graphId}/graph-folder": {
+      "put": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Puts the graph in folder_id, or at the top level with null (or no folder_id). A graph is in at most one folder, so this replaces where it was. Organisation only: nobody gains or loses access to the graph. Needs editor on the graph (a graph the caller cannot see is 404 graph_not_found; a viewer is 403); a folder the caller cannot see is 404 folder_not_found. Emits graph.updated with the folder id (or \"none\") in its metadata; the graph's updated_at does not move.",
+        "tags": [
+          "graphs"
+        ],
+        "summary": "File a graph under a folder",
+        "operationId": "moveGraphToFolder",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "where to file it",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_folders.MoveGraphRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_folders.GraphPlacementResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/graphs/{graphId}/group-stats": {
       "get": {
         "security": [
@@ -11489,7 +12052,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "The next person checks finished work (or a finding) on a task before building on it. verdict right (\"Looks right\") records a `checked` step on the task; verdict off (\"Something's off\") records a `flagged` step and, on a finished (done) task, sends it back: the task reopens as ready, is given back to whoever did it, keeps the note as data.gvnr_sent_back {by, note, at}, records node.status_changed (reason sent_back) and they get the sent-back email with the note; sent_back is true and no question is made. On a finding with no finished task, the note goes to its author as a question (they get the question email). The note is never in a step or the feed. Whose work it is: the person whose run finished the task, else the author of the task's newest finding. Records handoff.checked (metadata node_id, key, verdict; never the note). Editor on the plan. 400 invalid_body (verdict not right|off, off without a note, note over 1000 characters); 403 self_judgment_forbidden (it is the caller's own work), insufficient_scope (a portal link or not a person); 404 graph_not_found, node_not_found; 409 already_resolved (the caller already checked this task), invalid_action (nothing finished or found on it yet). Shares the questions' limit of 30 a minute per account (429 rate_limited). Tagged validation: checking work is the same consent as approving it, so a chat connector that may approve may check.",
+        "description": "The next person checks finished work (or a finding) on a task before building on it. verdict right (\"Looks right\") records a `checked` step on the task; verdict off (\"Something's off\") records a `flagged` step and, on a finished (done) task, sends it back: the task reopens as ready, is given back to whoever did it, keeps the note as data.gvnr_sent_back {by, note, at}, records node.status_changed (reason sent_back) and they get the sent-back email with the note; sent_back is true and no question is made. On a finding with no finished task, the note goes to its author as a question (they get the question email). The note is never in a step or the feed. Whose work it is: the person whose run finished the task, else the author of the task's newest finding. Records handoff.checked (metadata node_id, key, verdict; never the note). Editor on the plan. 400 invalid_body (verdict not right|off, off without a note, note over 1000 characters); 403 self_judgment_forbidden (it is the caller's own work), insufficient_scope (a portal link or not a person); 404 graph_not_found, node_not_found; 409 already_resolved (the caller already checked this task since it was last finished), invalid_action (nothing finished or found on it yet). Shares the questions' limit of 30 a minute per account (429 rate_limited). Tagged validation: checking work is the same consent as approving it, so a chat connector that may approve may check.",
         "tags": [
           "validation"
         ],
@@ -14805,6 +15368,126 @@
         }
       }
     },
+    "/graphs/{graphId}/nodes/{nodeId}/runs/{runId}/usage": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "For a harness that learns a run's token totals only after its worker completed the run (a Codex worker completes through MCP before the dispatcher reads the totals from its output). The body is the run's FINAL usage TOTAL: it OVERWRITES whatever the run carries (a heartbeat's running total, or the completion's), never adds, so sending the same body twice is harmless and the node's usage rollup never double counts. Only the run's own claimant (the account that claimed it) may record it; anyone else who can see the run gets 403. Accepted while the run is `running`, or within 30 minutes of its `ended_at` whatever it ended as (`succeeded`, `failed`, `cancelled` or `abandoned`: tokens spent are spent); after that it is a 409 `run_usage_window_closed` and nothing is written, unless the run already carries exactly this usage (an idempotent replay, 200). A usage past the graph's node_caps opens the node_over_cap review item, as on a completion. Requires graph editor.",
+        "tags": [
+          "runs"
+        ],
+        "summary": "Record a run's usage, also after it ended",
+        "operationId": "recordRunUsage",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "description": "node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "description": "run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "the run's final usage total",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_runs.Usage"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_runs.RunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body: the usage is malformed or out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope: the run was claimed by another account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "run_usage_window_closed: the run ended more than 30 minutes ago",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/graphs/{graphId}/nodes/{nodeId}/runs/{runId}/verdicts": {
       "get": {
         "security": [
@@ -15123,7 +15806,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Returns each attached skill resolved to a concrete version — pinned if pinned, latest otherwise — with its full body, in load order: graph-level skills whose node_types match the node's type first (by position), then the node's own (by position); a skill attached at both levels appears once, as the node-level attachment (`source` says which). This is the single call an agent makes to find out what instructions apply at a node.",
+        "description": "Returns each attached skill resolved to a concrete version — pinned if pinned, latest otherwise — with its full body, in load order: the graph's skill-source snapshot first (`source: repo`, docs/SKILL_SOURCE_CONTRACT.md §5: version 0, metadata.source names the repo and commit), then graph-level skills whose node_types match the node's type (by position), then the node's own (by position); a skill attached at both graph and node level appears once, as the node-level attachment, and a repo skill whose slug a graph- or node-level skill on the list carries is dropped (`source` says which tier each row came from). This is the single call an agent makes to find out what instructions apply at a node.",
         "tags": [
           "skills"
         ],
@@ -18565,6 +19248,337 @@
         }
       }
     },
+    "/graphs/{graphId}/skill-source": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Returns the graph's skill source (docs/SKILL_SOURCE_CONTRACT.md §5): the repo, ref, path and include it names, the commit its snapshot was read from, the last failed sync if any (`last_error`; the snapshot it failed to replace is still served), and a summary of the snapshot's skills in load order (slug, name, node_types, provides, requires; no bodies). `source: null` and `skills: []` when the graph has none. Viewer on the graph; an invisible graph is 404 graph_not_found. Makes no network call.",
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get a graph's skill source",
+        "operationId": "getGraphSkillSource",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_skillsource.GraphSkillSourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Names the public GitHub repo the graph loads its skills from (docs/SKILL_SOURCE_CONTRACT.md §2, §5) and reads it NOW: ref (default: the repo's default branch, resolved and stored) is resolved to a commit, every `<path>/<slug>/SKILL.md` at that commit is parsed (path default `skills`; include limits it to the slugs named), and the source and its snapshot are stored together, replacing any previous source. Fail closed: a bad field is 400 skill_source_invalid naming it (a ref under `graph/` included); GitHub unreachable, timed out or rate limited is 502 skill_source_unreachable; a missing (or private) repo 422 skill_source_repo_not_found; a missing ref 422 skill_source_ref_not_found; no SKILL.md, or an include slug that is not there, 422 skill_source_empty; a SKILL.md that breaks the layout 422 skill_source_parse_error (`<slug>: <reason>`, the first 5); more than 64 skills or an archive over 5 MiB / 2,000 entries 422 skill_source_too_large. Any of those stores nothing. The snapshot's skills load first on every claim card and node skill list (`source: \"repo\"`), and a graph- or node-level skill with the same slug replaces one. Graph admin (set_skill_source); an invisible graph is 404 graph_not_found. Records skill_source.set.",
+        "tags": [
+          "skills"
+        ],
+        "summary": "Set a graph's skill source",
+        "operationId": "putGraphSkillSource",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "the repo to load skills from",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_skillsource.PutSkillSourceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_skillsource.GraphSkillSourceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Removes the graph's skill source and its snapshot (docs/SKILL_SOURCE_CONTRACT.md §5): the next claim card carries the graph- and node-level skills only. Answers the source as it was. No source is 404 skill_source_not_found. Graph admin (set_skill_source); an invisible graph is 404 graph_not_found. Records skill_source.removed.",
+        "tags": [
+          "skills"
+        ],
+        "summary": "Remove a graph's skill source",
+        "operationId": "deleteGraphSkillSource",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_skillsource.GraphSkillSourceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/graphs/{graphId}/skill-source/sync": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Re-resolves the source's ref (docs/SKILL_SOURCE_CONTRACT.md §5, §6). The same commit is `changed: false` and writes nothing (S8: one request). A new commit reads the repo again and replaces the snapshot in one transaction: `changed: true` with `from` and `to`, recorded as skill_source.synced. Within 60 s of the last successful sync the answer is `changed: false, throttled: true` and GitHub is not asked. A failure keeps the last good snapshot (S4), records `last_error` and skill_source.sync_failed, and answers the failure's code: 502 skill_source_unreachable, or 422 skill_source_repo_not_found / skill_source_ref_not_found / skill_source_empty / skill_source_parse_error / skill_source_too_large. No source is 404 skill_source_not_found. Graph editor (sync_skill_source): an agent may re-read the repo it was told to trust, never name another; an invisible graph is 404 graph_not_found.",
+        "tags": [
+          "skills"
+        ],
+        "summary": "Sync a graph's skill source",
+        "operationId": "syncGraphSkillSource",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_skillsource.SkillSourceSyncResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Bad Gateway",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/graphs/{graphId}/skills": {
       "get": {
         "security": [
@@ -20915,6 +21929,28 @@
               "text/event-stream": {
                 "schema": {
                   "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gvnr/email/hat-band.png": {
+      "get": {
+        "description": "The hat on the round table without the word, 1200 x 300 PNG (shown at 600 x 150) behind the header's live \"GVNR\" text. With pictures off the header is the dark band and the word. No account needed. Cached for a day.",
+        "tags": [
+          "emails"
+        ],
+        "summary": "The GVNR email header background",
+        "operationId": "getEmailHeaderBand",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "file"
                 }
               }
             }
@@ -29405,6 +30441,18 @@
           "id": {
             "type": "string"
           },
+          "judge_verdict": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "rejected",
+              "unverified",
+              "unsupported",
+              "skipped",
+              "pending"
+            ],
+            "example": "rejected"
+          },
           "judgment_pending_since": {
             "description": "JudgmentPendingSince is set while the run waits for the worker's Jev\ncall (docs/JUDGMENT_CONTRACT.md §12, migration 067): its verdict (the\nplain path, where verification.state is `pending`), Jev's vote (a\nvalidated run) or its typed outputs (validation with no Jev seat).\nAbsent once the worker wrote it, and on every run that owed no call.",
             "type": "string"
@@ -29474,12 +30522,36 @@
               }
             ]
           },
+          "verdict": {
+            "description": "Verdict is the verdict this run shows, the same projection as the\nnode's (migration 164): verification.state, except `approved` when a\nperson approved a judge rejection. VerdictBy says whose it is (person\nwhen resolved by a person or an arbitrator, else judge) and\nJudgeVerdict what the judge itself said, so a client can render\n\"approved (person) · judge rejected 0.54\" with verification.confidence.\nAll three are absent on a run with no verdict.",
+            "type": "string",
+            "enum": [
+              "verified",
+              "rejected",
+              "unverified",
+              "unsupported",
+              "skipped",
+              "pending",
+              "approved"
+            ],
+            "example": "approved"
+          },
+          "verdict_by": {
+            "type": "string",
+            "enum": [
+              "person",
+              "judge"
+            ],
+            "example": "person"
+          },
           "verdict_resolution": {
             "description": "Verdict resolution by a curator (migration 020, contract §10): accept\nkeeps the verdict and stops the worker re-judging; rejudge asked for a\nfresh one. Cleared whenever a new verdict is written.",
             "type": "string",
             "enum": [
               "accept",
-              "rejudge"
+              "rejudge",
+              "approve",
+              "reject"
             ]
           },
           "verdict_resolved_at": {
@@ -29500,6 +30572,9 @@
       },
       "enforcer-graph_internal_runs.Usage": {
         "type": "object",
+        "required": [
+          "model"
+        ],
         "properties": {
           "cache_creation_input_tokens": {
             "type": "integer",
@@ -29593,9 +30668,10 @@
             "$ref": "#/components/schemas/enforcer-graph_internal_skills.Skill"
           },
           "source": {
-            "description": "Source says where the attachment came from on a node's resolved list:\n\"graph\" (a graph-level skill matching the node's type, migration 092)\nor \"node\" (attached to this node). Graph-level skills load first.",
+            "description": "Source says where the attachment came from on a node's resolved list:\n\"repo\" (the graph's skill source, migration 162; skill.version 0 and\nskill.metadata.source names the repo and commit), \"graph\" (a\ngraph-level skill matching the node's type, migration 092) or \"node\"\n(attached to this node). Repo skills load first, then graph, then node.",
             "type": "string",
             "enum": [
+              "repo",
               "graph",
               "node"
             ],
@@ -31560,6 +32636,215 @@
           }
         }
       },
+      "internal_folders.CreateFolderRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "description": "Name: 1 to 120 characters, no \"/\" and no control characters. Leading\nand trailing spaces are dropped. Unique beside its siblings, ignoring case.",
+            "type": "string",
+            "example": "Q4 launches"
+          },
+          "parent_id": {
+            "description": "ParentID is the folder to make it in; omitted or null = the top level.",
+            "type": "string",
+            "example": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+          }
+        }
+      },
+      "internal_folders.DeletedFolder": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          },
+          "moved_folders": {
+            "type": "integer",
+            "example": 2
+          },
+          "moved_graphs": {
+            "type": "integer",
+            "example": 5
+          },
+          "moved_to": {
+            "description": "MovedTo is where its contents went: its parent, or null for the top level.",
+            "type": "string",
+            "nullable": true,
+            "example": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+          }
+        }
+      },
+      "internal_folders.DeletedFolderResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_folders.DeletedFolder"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_folders.Folder": {
+        "type": "object",
+        "properties": {
+          "can_edit": {
+            "description": "CanEdit is true when the caller may rename, move or delete the folder:\nthey made it, or they write tenant-wide.",
+            "type": "boolean",
+            "example": true
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "graph_count": {
+            "description": "GraphCount is the graphs filed directly in this folder that the caller\ncan see (archived ones never count).",
+            "type": "integer",
+            "example": 4
+          },
+          "id": {
+            "type": "string",
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          },
+          "name": {
+            "type": "string",
+            "example": "Q4 launches"
+          },
+          "parent_id": {
+            "description": "ParentID is the folder this one is in; null at the top level.",
+            "type": "string",
+            "nullable": true,
+            "example": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+          },
+          "path": {
+            "description": "Path is the folders above this one, top level first. On getGraphFolder\nonly.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_folders.FolderRef"
+            }
+          },
+          "total_graph_count": {
+            "description": "TotalGraphCount is GraphCount plus the same count for every folder\nunder this one.",
+            "type": "integer",
+            "example": 11
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_folders.FolderListMeta": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "example": 12
+          }
+        }
+      },
+      "internal_folders.FolderListResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_folders.Folder"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/internal_folders.FolderListMeta"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_folders.FolderRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          },
+          "name": {
+            "type": "string",
+            "example": "Clients"
+          }
+        }
+      },
+      "internal_folders.FolderResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_folders.Folder"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_folders.GraphPlacement": {
+        "type": "object",
+        "properties": {
+          "folder_id": {
+            "description": "FolderID is null at the top level.",
+            "type": "string",
+            "nullable": true,
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          },
+          "graph_id": {
+            "type": "string",
+            "example": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+          }
+        }
+      },
+      "internal_folders.GraphPlacementResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_folders.GraphPlacement"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_folders.MoveGraphRequest": {
+        "type": "object",
+        "properties": {
+          "folder_id": {
+            "description": "FolderID is the folder to file the graph under; null (or omitted) =\nthe top level.",
+            "type": "string",
+            "nullable": true,
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+          }
+        }
+      },
+      "internal_folders.UpdateFolderRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "description": "Name renames the folder; omitted leaves it.",
+            "type": "string",
+            "example": "Q4 launches"
+          },
+          "parent_id": {
+            "description": "ParentID moves the folder: a folder id puts it in that folder, an\nexplicit JSON null puts it at the top level, omitted leaves it.",
+            "type": "string",
+            "nullable": true,
+            "example": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+          }
+        }
+      },
       "internal_gates_decide.DecideRequest": {
         "type": "object",
         "required": [
@@ -32864,6 +34149,12 @@
           },
           "epoch_started_at": {
             "type": "string"
+          },
+          "folder_id": {
+            "description": "FolderID is the folder the graph is filed under (migration 163,\nGET /graph-folders); null = the top level. Organisation only: it never\nchanges who can see or change the graph. Set through\nPUT /graphs/{graphId}/graph-folder.",
+            "type": "string",
+            "nullable": true,
+            "example": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
           },
           "id": {
             "type": "string",
@@ -42757,6 +44048,14 @@
           "id": {
             "type": "string"
           },
+          "judge_confidence": {
+            "type": "number",
+            "example": 0.91
+          },
+          "judge_verdict": {
+            "type": "string",
+            "example": "verified"
+          },
           "runner": {
             "type": "string",
             "example": "worker-1"
@@ -42773,6 +44072,7 @@
             "example": "succeeded"
           },
           "verdict": {
+            "description": "Verdict is the run's projected verdict (164): verification.state, or\n`approved` when a person approved a judge rejection.",
             "type": "string",
             "enum": [
               "verified",
@@ -42780,9 +44080,19 @@
               "unverified",
               "unsupported",
               "skipped",
-              "pending"
+              "pending",
+              "approved"
             ],
             "example": "verified"
+          },
+          "verdict_by": {
+            "description": "VerdictBy: person (resolved by a person or an arbitrator) or judge;\nJudgeVerdict and JudgeConfidence are what the judge itself said.",
+            "type": "string",
+            "enum": [
+              "person",
+              "judge"
+            ],
+            "example": "judge"
           }
         }
       },
@@ -43117,6 +44427,18 @@
           "id": {
             "type": "string"
           },
+          "judge_verdict": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "rejected",
+              "unverified",
+              "unsupported",
+              "skipped",
+              "pending"
+            ],
+            "example": "rejected"
+          },
           "judgment_pending_since": {
             "description": "JudgmentPendingSince is set while the run waits for the worker's Jev\ncall (docs/JUDGMENT_CONTRACT.md §12, migration 067): its verdict (the\nplain path, where verification.state is `pending`), Jev's vote (a\nvalidated run) or its typed outputs (validation with no Jev seat).\nAbsent once the worker wrote it, and on every run that owed no call.",
             "type": "string"
@@ -43189,12 +44511,36 @@
               }
             ]
           },
+          "verdict": {
+            "description": "Verdict is the verdict this run shows, the same projection as the\nnode's (migration 164): verification.state, except `approved` when a\nperson approved a judge rejection. VerdictBy says whose it is (person\nwhen resolved by a person or an arbitrator, else judge) and\nJudgeVerdict what the judge itself said, so a client can render\n\"approved (person) · judge rejected 0.54\" with verification.confidence.\nAll three are absent on a run with no verdict.",
+            "type": "string",
+            "enum": [
+              "verified",
+              "rejected",
+              "unverified",
+              "unsupported",
+              "skipped",
+              "pending",
+              "approved"
+            ],
+            "example": "approved"
+          },
+          "verdict_by": {
+            "type": "string",
+            "enum": [
+              "person",
+              "judge"
+            ],
+            "example": "person"
+          },
           "verdict_resolution": {
             "description": "Verdict resolution by a curator (migration 020, contract §10): accept\nkeeps the verdict and stops the worker re-judging; rejudge asked for a\nfresh one. Cleared whenever a new verdict is written.",
             "type": "string",
             "enum": [
               "accept",
-              "rejudge"
+              "rejudge",
+              "approve",
+              "reject"
             ]
           },
           "verdict_resolved_at": {
@@ -45252,6 +46598,18 @@
           "id": {
             "type": "string"
           },
+          "judge_verdict": {
+            "type": "string",
+            "enum": [
+              "verified",
+              "rejected",
+              "unverified",
+              "unsupported",
+              "skipped",
+              "pending"
+            ],
+            "example": "rejected"
+          },
           "judgment_pending_since": {
             "description": "JudgmentPendingSince is set while the run waits for the worker's Jev\ncall (docs/JUDGMENT_CONTRACT.md §12, migration 067): its verdict (the\nplain path, where verification.state is `pending`), Jev's vote (a\nvalidated run) or its typed outputs (validation with no Jev seat).\nAbsent once the worker wrote it, and on every run that owed no call.",
             "type": "string"
@@ -45321,12 +46679,36 @@
               }
             ]
           },
+          "verdict": {
+            "description": "Verdict is the verdict this run shows, the same projection as the\nnode's (migration 164): verification.state, except `approved` when a\nperson approved a judge rejection. VerdictBy says whose it is (person\nwhen resolved by a person or an arbitrator, else judge) and\nJudgeVerdict what the judge itself said, so a client can render\n\"approved (person) · judge rejected 0.54\" with verification.confidence.\nAll three are absent on a run with no verdict.",
+            "type": "string",
+            "enum": [
+              "verified",
+              "rejected",
+              "unverified",
+              "unsupported",
+              "skipped",
+              "pending",
+              "approved"
+            ],
+            "example": "approved"
+          },
+          "verdict_by": {
+            "type": "string",
+            "enum": [
+              "person",
+              "judge"
+            ],
+            "example": "person"
+          },
           "verdict_resolution": {
             "description": "Verdict resolution by a curator (migration 020, contract §10): accept\nkeeps the verdict and stops the worker re-judging; rejudge asked for a\nfresh one. Cleared whenever a new verdict is written.",
             "type": "string",
             "enum": [
               "accept",
-              "rejudge"
+              "rejudge",
+              "approve",
+              "reject"
             ]
           },
           "verdict_resolved_at": {
@@ -45471,6 +46853,9 @@
       },
       "internal_runs.Usage": {
         "type": "object",
+        "required": [
+          "model"
+        ],
         "properties": {
           "cache_creation_input_tokens": {
             "type": "integer",
@@ -45630,6 +47015,11 @@
             "description": "Evidenced records which question was asked. false means the verdict is\nabout the report's claims — the pre-022 behaviour, kept only for runs\nwhose harness attached nothing and which are judged anyway.",
             "type": "boolean",
             "example": true
+          },
+          "judge_state": {
+            "description": "JudgeState is the judge's state a person's approve overrode (164):\n`rejected` on a verdict_rejected / rejections_exhausted approve, whose\nstate is rewritten to verified. Absent on every other verdict.",
+            "type": "string",
+            "example": "rejected"
           },
           "judged_at": {
             "type": "string"
@@ -45818,9 +47208,10 @@
             "$ref": "#/components/schemas/internal_skills.Skill"
           },
           "source": {
-            "description": "Source says where the attachment came from on a node's resolved list:\n\"graph\" (a graph-level skill matching the node's type, migration 092)\nor \"node\" (attached to this node). Graph-level skills load first.",
+            "description": "Source says where the attachment came from on a node's resolved list:\n\"repo\" (the graph's skill source, migration 162; skill.version 0 and\nskill.metadata.source names the repo and commit), \"graph\" (a\ngraph-level skill matching the node's type, migration 092) or \"node\"\n(attached to this node). Repo skills load first, then graph, then node.",
             "type": "string",
             "enum": [
+              "repo",
               "graph",
               "node"
             ],
@@ -46047,6 +47438,219 @@
           "success": {
             "type": "boolean",
             "example": true
+          }
+        }
+      },
+      "internal_skillsource.GraphSkillSource": {
+        "type": "object",
+        "properties": {
+          "graph_id": {
+            "type": "string",
+            "example": "3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+          },
+          "skills": {
+            "description": "Skills is the snapshot in load order (slug); [] when source is null.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_skillsource.SourceSkillSummary"
+            }
+          },
+          "source": {
+            "$ref": "#/components/schemas/internal_skillsource.SkillSource"
+          }
+        }
+      },
+      "internal_skillsource.GraphSkillSourceResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_skillsource.GraphSkillSource"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_skillsource.PutSkillSourceRequest": {
+        "type": "object",
+        "required": [
+          "repo"
+        ],
+        "properties": {
+          "include": {
+            "description": "Include limits the snapshot to these slugs; omitted means every skill\nunder path. An empty list is 400; a slug that is not there is 422\nskill_source_empty.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "deliver-via-github-pr"
+            ]
+          },
+          "path": {
+            "description": "Path is the directory holding <slug>/SKILL.md; default \"skills\".",
+            "type": "string",
+            "example": "skills"
+          },
+          "ref": {
+            "description": "Ref is a branch, tag or commit sha; omitted means the repo's default\nbranch, resolved now and stored. A ref under graph/ is refused (§9).",
+            "type": "string",
+            "example": "main"
+          },
+          "repo": {
+            "description": "Repo is owner/name on github.com, never a URL (S9). Public repos only in v1.",
+            "type": "string",
+            "example": "instruxi-io/enforcer-graph-skills"
+          }
+        }
+      },
+      "internal_skillsource.SkillSource": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string",
+            "example": "github.com"
+          },
+          "include": {
+            "description": "Include null means every skill under path.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "example": [
+              "deliver-via-github-pr"
+            ]
+          },
+          "last_error": {
+            "description": "LastError is the last failed sync's code and detail; cleared by the next\nsuccessful one. The snapshot it failed to replace is still served (S4).",
+            "type": "string",
+            "example": "skill_source_unreachable: github: timeout"
+          },
+          "last_error_at": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "example": "skills"
+          },
+          "ref": {
+            "type": "string",
+            "example": "main"
+          },
+          "repo": {
+            "type": "string",
+            "example": "instruxi-io/enforcer-graph-skills"
+          },
+          "resolved_commit": {
+            "description": "ResolvedCommit is the commit the snapshot was read from (S3).",
+            "type": "string",
+            "example": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+          },
+          "synced_at": {
+            "description": "SyncedAt is when the snapshot was last written (set or changed).",
+            "type": "string"
+          },
+          "synced_by": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_skillsource.SkillSourceSync": {
+        "type": "object",
+        "properties": {
+          "changed": {
+            "description": "Changed is true when a new commit replaced the snapshot.",
+            "type": "boolean",
+            "example": false
+          },
+          "commit": {
+            "description": "Commit is the commit the snapshot is at after this sync.",
+            "type": "string",
+            "example": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+          },
+          "from": {
+            "description": "From and To are the old and new commits, on a change only.",
+            "type": "string",
+            "example": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+          },
+          "skills": {
+            "description": "Skills is how many skills the snapshot holds.",
+            "type": "integer",
+            "example": 3
+          },
+          "throttled": {
+            "description": "Throttled is true when the last successful sync was under 60 s ago and\nGitHub was not asked.",
+            "type": "boolean",
+            "example": false
+          },
+          "to": {
+            "type": "string",
+            "example": "2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e"
+          }
+        }
+      },
+      "internal_skillsource.SkillSourceSyncResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_skillsource.SkillSourceSync"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_skillsource.SourceSkillSummary": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Deliver via GitHub pull request"
+          },
+          "node_types": {
+            "description": "NodeTypes null means every node type.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "example": [
+              "task"
+            ]
+          },
+          "provides": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "delivery"
+            ]
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "gh"
+            ]
+          },
+          "slug": {
+            "type": "string",
+            "example": "deliver-via-github-pr"
           }
         }
       },
