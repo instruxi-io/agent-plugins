@@ -181,6 +181,19 @@ export class API {
   async observations(g, n) {
     return (await this.call('GET', `/graphs/${g}/nodes/${n}/observations`)).data || [];
   }
+  /**
+   * Append a fact. Idempotent on the body: an identical re-post returns the existing row.
+   * kind is finding | decision | summary | brief. A dispatcher note uses kind summary and source dispatcher_note.
+   */
+  // api-used: sends body,kind,source,data
+  addObservation(g, n, body) {
+    return this.call('POST', `/graphs/${g}/nodes/${n}/observations`, body);
+  }
+  /** Unanswered questions. The question email is the server's; this only reads. The query is stripped by the usage extractor. */
+  // api-used: reads data
+  async questions(g) {
+    return (await this.call('GET', `/graphs/${g}/questions?open=true`)).data || [];
+  }
 }
 
 export { ApiError };

@@ -235,6 +235,33 @@
       "headers": []
     },
     {
+      "id": "src/dispatch/api.mjs POST /graphs/{}/nodes/{}/observations",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "POST",
+      "path": "/graphs/{}/nodes/{}/observations",
+      "sends": [
+        "body",
+        "kind",
+        "source",
+        "data"
+      ],
+      "reads": [],
+      "headers": []
+    },
+    {
+      "id": "src/dispatch/api.mjs GET /graphs/{}/questions",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "GET",
+      "path": "/graphs/{}/questions",
+      "sends": [],
+      "reads": [
+        "data"
+      ],
+      "headers": []
+    },
+    {
       "id": "src/graph/hooks/session.mjs GET /graphs/{}/frontier",
       "file": "src/graph/hooks/session.mjs",
       "service": "graph",

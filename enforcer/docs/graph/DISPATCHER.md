@@ -17,9 +17,11 @@ and, for each ready node, up to `--workers` at once:
   node, renewed each pass. A second dispatcher on the same graph exits (3)
   with a message unless `--takeover`. Graph and GitHub calls retry transient
   network errors (DNS blips, resets, 429/502/503/504) with backoff, 4 tries, and
-  a pass that still fails is skipped, never fatal. A failed node is triaged only
-  once its last run ended `--triage-grace` minutes ago (default 10) and it is
-  still failed when the triage launches. Worker pids are recorded in
+  a pass that still fails is skipped, never fatal. When a run stops without
+  success the dispatcher classifies why from lines already on record (the error,
+  a gate's options, a report or an observation) and writes `data.stop` on the
+  run plus a `dispatcher_note` observation. It does not launch a triage model.
+  `--triage-model` and `--triage-grace` are accepted and unused. Worker pids are recorded in
   `<state-dir>/pids.json`.
 - **Agent nodes** (`--types`, default `task,bug,chore,merge,scout,milestone,ops`; `release`
   and `gate` stay with a person): a git worktree of `data.repo` at
@@ -161,7 +163,7 @@ The dispatcher reads the governor's decision records (from the governor log and 
 | code | dispatcher action |
 |---|---|
 | `push_needs_approval_surface` | salvage: push, open the PR and land it, as the worker could not |
-| `destructive_*` | never salvaged; the node goes to triage |
+| `destructive_*` | never salvaged; classified `policy_denied` and left for a person. No triage model is launched |
 | `graph_run_not_open` | remediation launch, with the code in the prompt |
 | any other deny/ask code | logged; neither salvaged nor relaunched |
 
@@ -193,7 +195,7 @@ The worktree, the commits-ahead count and the PR base all use the resolved base,
 
 ### Flags the server sets
 
-- **needs_person**: when a node's attempts are spent ("left for a person"), the dispatcher completes the run `failed` with `data.needs_person: true` and the reason in `data.reason` (best effort: a run the worker already closed may refuse it).
+- **needs_person**: when a node's attempts are spent ("left for a person"), the dispatcher completes the run `failed` with `data.needs_person: true` and the reason in `data.reason` (best effort: a run the worker already closed may refuse it). The same complete carries `data.stop` (`why`, `summary` of at most 300 characters, `tried`, `needs`, `options`, `suggested_who`). A `dispatcher_note` observation (`kind: summary`, `source: dispatcher_note`) carries the same record. The needs_person email is unchanged. A private node (`private` or `data.private`) still gets `data.stop` on that complete and does not get the observation, because posting one may send the body to the judgment model. An open question is copied the same way; the question email stays the server's.
 - **over_cap**: a heartbeat answer or claim card carrying `over_cap` stops that worker cleanly (logged `over cap: <key>`), spends no attempt, and the node is not relaunched this session.
 - **Rejudge**: a verdict that a server rejudge (`rejudged`) flipped to verified is accepted: no relaunch.
 - **Warm retry**: a remediation launch of a claude node whose previous session reported cleanly resumes it (`--resume <session>`, logged `mode=warm --resume`) instead of starting cold.
