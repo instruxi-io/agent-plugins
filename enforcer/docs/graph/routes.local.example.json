@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "routes": {
+    "local": {
+      "harness": "codex",
+      "model": "qwen3.8-flash-next",
+      "endpoint": {
+        "url": "http://spark-dd15:8000",
+        "api": "openai"
+      },
+      "fallback": "wait"
+    }
+  }
+}

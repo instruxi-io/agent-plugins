@@ -6,9 +6,13 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { HARNESSES, harnessRefusal, harnessKnowsModel } from './launch.mjs';
 import { ADAPTERS } from './harness/index.mjs';
-import { routeFor, rank, TIER_MODEL, ROUTE_TIERS } from './model.mjs';
+import { routeFor, rank, TIER_MODEL, ROUTE_TIERS, isPrivate } from './model.mjs';
 
-export { ROUTE_TIERS, rank };
+export { ROUTE_TIERS, rank, isPrivate };
+/** A route key other than a tier: lowercase, so `local` is a name and `Local` is the same route. */
+export const ROUTE_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
+/** A hosted Claude model id. A private node never launches one, with or without an endpoint. */
+const CLAUDE_MODEL = /^claude-/i;
 export const ROUTE_FIELDS = ['harness', 'model', 'endpoint', 'fallback'];
 export const ENDPOINT_FIELDS = ['url', 'api', 'token_env'];
 export const ROUTE_APIS = ['anthropic', 'openai'];
@@ -49,7 +53,9 @@ export function validateRoutes(raw, source, { env = process.env, experimental = 
   const out = {};
   for (const [tier, r] of Object.entries(routes)) {
     const at = `routes.${tier}`;
-    if (!ROUTE_TIERS.includes(tier)) throw new RouteError(`${at}: unknown tier (expected ${ROUTE_TIERS.join(', ')})`);
+    if (!ROUTE_TIERS.includes(tier) && !ROUTE_NAME.test(tier))
+      throw new RouteError(`${at}: unknown route name (a tier: ${ROUTE_TIERS.join(', ')}, or a lowercase name such as local)`);
+    if (HARNESSES.includes(tier)) throw new RouteError(`${at}: route name ${tier} is a harness; use it only as a route:${tier} fallback`);
     if (!isObj(r)) throw new RouteError(`${at}: must be an object`);
     for (const f of Object.keys(r)) if (!ROUTE_FIELDS.includes(f)) throw new RouteError(`${at}.${f}: unknown field`);
     if (r.harness !== undefined && !HARNESSES.includes(r.harness)) throw new RouteError(`${at}.harness: must be one of ${HARNESSES.join(', ')}`);
@@ -86,8 +92,9 @@ export function validateRoutes(raw, source, { env = process.env, experimental = 
     }
     const fallback = r.fallback ?? 'wait';
     const target = typeof fallback === 'string' && fallback.startsWith('route:') ? fallback.slice(6) : null;
-    if (fallback !== 'wait' && !(target && (ROUTE_TIERS.includes(target) || HARNESSES.includes(target))))
-      throw new RouteError(`${at}.fallback: must be wait or route:<tier|harness>`);
+    const knownRoute = Boolean(target) && (Object.hasOwn(routes, target) || ROUTE_TIERS.includes(target));
+    if (fallback !== 'wait' && !(knownRoute || (target && HARNESSES.includes(target))))
+      throw new RouteError(`${at}.fallback: must be wait or route:<route|harness>`);
     if (target && HARNESSES.includes(target)) {
       const why = harnessRefusal(target, experimental);
       if (why) throw new RouteError(`${at}.fallback: ${why}`);
@@ -100,7 +107,7 @@ export function validateRoutes(raw, source, { env = process.env, experimental = 
     let cur = out[start];
     while (cur?.fallback?.startsWith('route:')) {
       const next = cur.fallback.slice(6);
-      if (!ROUTE_TIERS.includes(next)) break;
+      if (!Object.hasOwn(out, next)) break;
       if (seen.includes(next)) throw new RouteError(`routes.${start}.fallback: ${cur.fallback} forms a cycle (${[...seen, next].join(' -> ')})`);
       seen.push(next);
       cur = out[next];
@@ -214,15 +221,35 @@ export class ProbeCache {
 
 // ---- choosing the route a node launches on, with the fallback
 
+const refuse = (route, reason) => ({ hold: false, refuse: true, route, reason, fallbackFrom: null });
+
 /**
- * The route a node launches on now: routeFor, then for a route with an endpoint the probe, and when it is down the
- * route's fallback. Returns {hold: true, route, reason} for `wait` (launch nothing, spend no attempt), else
- * {hold: false, route, fallbackFrom: {route, url, reason, target} | null}.
+ * A private node (`data.private: true`) runs only on an endpoint route. A down endpoint waits (the next pass probes
+ * again). There is no fallback to a hosted model: no `route:<harness>`, no tier route without an endpoint, no `claude-*`.
+ * No endpoint route at all is a refusal, not a hosted launch.
+ */
+async function resolvePrivate(r, probes) {
+  if (!r.endpoint) return refuse(r, r.asked ? `private node route ${r.asked} has no endpoint` : 'private node has no endpoint route');
+  if (CLAUDE_MODEL.test(String(r.model || ''))) return refuse(r, `private node will not run a hosted model (${r.model})`);
+  if (!probes) return { hold: true, refuse: false, route: r, reason: 'not probed', fallbackFrom: null };
+  const v = await probes.check(r.endpoint, r.model);
+  if (!v.up) return { hold: true, refuse: false, route: r, reason: v.reason, fallbackFrom: null };
+  return { hold: false, refuse: false, route: r, reason: null, fallbackFrom: null };
+}
+
+/**
+ * The route a node launches on now: routeFor (data.route, else the tier), then for a route with an endpoint the probe,
+ * and when it is down the route's fallback. A private node never takes a hosted fallback (resolvePrivate).
+ * Returns {hold: true, route, reason} for `wait` (launch nothing, spend no attempt), {refuse: true, reason} when the
+ * node must not launch, else {hold: false, route, fallbackFrom: {route, url, reason, target} | null}.
  */
 export async function resolveRoute(node, table, args, probes) {
   let r = routeFor(node, table, args);
+  if (r.unknown) return refuse(r, `unknown route ${r.asked}`);
+  if (isPrivate(node)) return resolvePrivate(r, probes);
   let from = null;
-  for (let hop = 0; r.endpoint && hop <= ROUTE_TIERS.length; hop++) {
+  const limit = Math.max(ROUTE_TIERS.length, Object.keys(table?.routes || {}).length);
+  for (let hop = 0; r.endpoint && hop <= limit; hop++) {
     const v = await probes.check(r.endpoint, r.model);
     if (v.up) break;
     const fb = r.fallback || 'wait';
@@ -230,10 +257,11 @@ export async function resolveRoute(node, table, args, probes) {
     const target = fb.slice(6);
     from ??= { route: r.route, url: r.endpoint.url, reason: v.reason, target };
     from.target = target;
-    if (ROUTE_TIERS.includes(target)) r = routeFor(node, table, args, { routeKey: target });
+    // a named route or a tier: that entry. anything else is a harness on its own provider
+    if (table?.routes?.[target] || ROUTE_TIERS.includes(target)) r = routeFor(node, table, args, { routeKey: target });
     else r = harnessOnly(node, target, args);
   }
-  return { hold: false, route: r, fallbackFrom: from };
+  return { hold: false, refuse: false, route: r, fallbackFrom: from };
 }
 
 /** route:<harness>: that harness, no endpoint, the model from precedence rules 3 and 4 (--model, else the tier's). */
@@ -249,6 +277,8 @@ function harnessOnly(node, harness, args) {
     endpoint: null,
     fallback: null,
     route: null,
+    asked: null,
+    unknown: false,
     source: { harness: `fallback:${harness}`, model: args.model && !user ? 'flag' : 'default', endpoint: null },
   };
 }
@@ -277,7 +307,8 @@ export async function routeLines(loaded, args, { probes = null, nodes = [] } = {
   }
   L.push(`routes      from ${source}`);
   const overridden = [];
-  for (const tier of ROUTE_TIERS) {
+  const routeKeys = [...ROUTE_TIERS, ...Object.keys(table.routes).filter((k) => !ROUTE_TIERS.includes(k))];
+  for (const tier of routeKeys) {
     const r = table.routes[tier];
     if (!r) {
       if (tier === 'untiered') L.push(`route       ${pad('untiered', 11)} ${pad(harness, 6)} ${pad(args.model || 'sonnet', 12)} provider (default)`);
@@ -304,10 +335,16 @@ export async function routeLines(loaded, args, { probes = null, nodes = [] } = {
   if (overridden.length) L.push(`route-note  --harness ${harness} is overridden by routes for ${overridden.join(', ')}`);
   if (nodes.length) {
     const open = nodes.filter((n) => !['done', 'cancelled'].includes(n.status) && !['gate', 'release'].includes(n.type) && !n.data?.dispatcher_lease);
-    const count = Object.fromEntries(ROUTE_TIERS.map((t) => [t, 0]));
-    for (const n of open) count[routeFor(n, table, args).tier]++;
+    const count = {};
+    for (const n of open) {
+      const sel = routeFor(n, table, args);
+      const bucket = sel.route || sel.tier;
+      count[bucket] = (count[bucket] || 0) + 1;
+    }
+    const order = [...ROUTE_TIERS, ...Object.keys(count).filter((k) => !ROUTE_TIERS.includes(k))];
     L.push(
-      `route-plan  ${open.length} nodes: ${ROUTE_TIERS.filter((t) => count[t])
+      `route-plan  ${open.length} nodes: ${order
+        .filter((t) => count[t])
         .map((t) => `${t} ${count[t]}`)
         .join(', ')}`,
     );
