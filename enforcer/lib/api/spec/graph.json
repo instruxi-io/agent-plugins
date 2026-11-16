@@ -42049,7 +42049,7 @@
               "advisory",
               "required"
             ],
-            "example": "required"
+            "example": "advisory"
           },
           "data": {
             "description": "Data is shallow-merged into what an existing key stores; omitting it\nkeeps the stored payload.",
@@ -42478,7 +42478,7 @@
               "advisory",
               "required"
             ],
-            "example": "required"
+            "example": "advisory"
           },
           "data": {
             "type": "object",

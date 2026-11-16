@@ -5,10 +5,10 @@
       "repo": "enforcer-graph",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "cabee17b9b601ed771b0dfeeb100661720b2bb18",
+      "ref": "43f32e7c2d0f60e977c4cc843ae02738e43035b1",
       "file": "spec/graph.json",
-      "upstream_sha256": "83734e11dcec2e1d3f7636055be9a40e24f1f4cc3f87a9712b23337277e76259",
-      "sha256": "d3e81b8f95f511e81037babaa4f46511474e1a504799a60a4803b8702c8953ff"
+      "upstream_sha256": "031d4a1e8b57bccedb3b1ceefc8bdbb11f8d26654792bbf56fd057c4d50d0b84",
+      "sha256": "7af63f2f03025e5b346b3aef1cc3ae853f33669d93e39e2d85f4cdbaff42231e"
     },
     "v3": {
       "repo": "enforcer-v3",

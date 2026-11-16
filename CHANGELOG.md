@@ -4,7 +4,7 @@
 
 ## 1.13.1
 
-- The graph spec is re-pinned to enforcer-graph cabee17b (enforceable node assignment): `assignment_mode` is `advisory` or `required`, and node reads carry `assignment_mode`, `private`, `viewer_can_claim` and `claim_block` (`null` or `node_reserved`). A required node the caller cannot claim answers 409 `node_reserved` on the named claim and on StartRun. The dispatcher treats that 409 as a skip: logged once, no attempt, not a claim error. A row that already says `claim_block: node_reserved` (or `required` with `viewer_can_claim: false`) is skipped the same way. A node is private when the server field `private` is true or `data.private` is true; either one fails closed.
+- The graph spec is re-pinned to enforcer-graph 43f32e7c (enforceable node assignment): `assignment_mode` is `advisory` or `required`, and node reads carry `assignment_mode`, `private`, `viewer_can_claim` and `claim_block` (`null` or `node_reserved`). A required node the caller cannot claim answers 409 `node_reserved` on the named claim and on StartRun. The dispatcher treats that 409 as a skip: logged once, no attempt, not a claim error. A row that already says `claim_block: node_reserved` (or `required` with `viewer_can_claim: false`) is skipped the same way. A node is private when the server field `private` is true or `data.private` is true; either one fails closed.
 
 ## 1.13.0
 
