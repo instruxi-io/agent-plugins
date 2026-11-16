@@ -34,7 +34,7 @@ export const GRAPH_DEPENDENCIES = Object.freeze([
   'POST /graphs/{graphId}/nodes/{nodeId}/observations accepts kind finding, decision, summary, or brief. A dispatcher_note kind is not in that enum. The note is kind "summary", source "dispatcher_note", and data.stop is the same record as the run. A first-class kind is a graph schema change.',
   'POST /graphs/{graphId}/nodes/{nodeId}/runs/{runId}/complete (and PATCH on the run) accept data as an open object, so data.stop rides on the complete this dispatcher already performs. A run that has already ended is 409 run_already_ended. No existing route sets data on a closed run, and none sets it without closing the run. A harness-limit hold leaves the run to lapse; the stop is on the observation only.',
   'Needs-you (internal_work.TimelineNode.needs_person, the graph list filter) is an open gate or finished work waiting on arbitration. It does not read run.data.stop or a dispatcher_note observation. Showing this context there is graph-side.',
-  'question.asked records node_id and key and never the question text. The text is read with the existing GET /graphs/{graphId}/questions?open=true. The question email stays the server\'s. Needs-you does not list open questions.',
+  "question.asked records node_id and key and never the question text. The text is read with the existing GET /graphs/{graphId}/questions?open=true. The question email stays the server's. Needs-you does not list open questions.",
   'POST observation may send a new body to the judgment model. A private node (server private or data.private) does not post that observation. The spec has no judgment-free observation write.',
 ]);
 
@@ -208,8 +208,9 @@ export function stopStep({ attempts, maxAttempts, noTriage = false, triaged = fa
  * A private node gets the run complete (the email path already posts the error there)
  * and no observation, because that route may judge the body.
  * `email` keeps data.needs_person and data.reason on the complete the give-up path already sends.
+ * @param {{ node?: object, stop?: { summary?: string }, runId?: string|null, reason?: string|null, email?: boolean }} [opts]
  */
-export function planStopWrites({ node, stop, runId = null, reason = null, email = false } = {}) {
+export function planStopWrites({ node, stop, runId = null, reason = null, email = false } = /** @type {any} */ ({})) {
   const complete = runId
     ? {
         status: 'failed',

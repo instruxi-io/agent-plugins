@@ -1177,7 +1177,13 @@ export class Dispatcher {
       mcp: s.mcp || null,
       attempts: this.attempts.get(w.key) || 0,
       maxAttempts: this.args.maxAttempts,
-      tried: this.triedRows(w.key, { run: s.run_id, harness: w.harness || null, model: w.model || null, route: w.route || null, error: s.report_error || s.error_text || error }),
+      tried: this.triedRows(w.key, {
+        run: s.run_id,
+        harness: w.harness || null,
+        model: w.model || null,
+        route: w.route || null,
+        error: s.report_error || s.error_text || error,
+      }),
     });
     const body = { status: 'failed', data: { runner: 'graph-dispatch', stop }, error };
     try {
@@ -1241,11 +1247,22 @@ export class Dispatcher {
         this.attempts.set(key, Math.max(0, (this.attempts.get(key) || 0) - 1));
         this.say(`over cap: ${key} stopped; not relaunched this session`);
         this.denied.set(key, w.path || '-');
-        await this.recordStop(w, s, { error: s.error_text || s.result_text || null, overCap: true }, {
-          email: false,
-          complete: false,
-          tried: this.triedRows(key, { run: s.run_id || null, harness, model: w.model || null, route: w.route || null, error: s.error_text || s.result_text || null }),
-        });
+        await this.recordStop(
+          w,
+          s,
+          { error: s.error_text || s.result_text || null, overCap: true },
+          {
+            email: false,
+            complete: false,
+            tried: this.triedRows(key, {
+              run: s.run_id || null,
+              harness,
+              model: w.model || null,
+              route: w.route || null,
+              error: s.error_text || s.result_text || null,
+            }),
+          },
+        );
         continue;
       }
       // a worker that lost its endpoint: probe it again before the next launch instead of trusting the cached answer
@@ -1272,11 +1289,16 @@ export class Dispatcher {
           `HARNESS-LIMITED ${key}: ${clip(limitText, 160)}; no attempt spent; ${this.args.onLimit === 'wait' ? 'waiting' : 'exiting'} until ${stamp(until)}`,
         );
         // the run is left to lapse (not the node's fault). The stop is the observation; there is no write that sets data without closing the run.
-        await this.recordStop(w, s, { error: limitText, harnessLimit: true }, {
-          email: false,
-          complete: false,
-          tried: this.triedRows(key, { run: s.run_id || null, harness, model: w.model || null, route: w.route || null, error: limitText }),
-        });
+        await this.recordStop(
+          w,
+          s,
+          { error: limitText, harnessLimit: true },
+          {
+            email: false,
+            complete: false,
+            tried: this.triedRows(key, { run: s.run_id || null, harness, model: w.model || null, route: w.route || null, error: limitText }),
+          },
+        );
         continue;
       }
       const u = s.usage || {};
@@ -1337,7 +1359,14 @@ export class Dispatcher {
         this.say(`BLOCKED: ${graphDenied.join(', ')} denied in a headless worker; launching no more workers (drain).`);
       }
       const [kind, rec] = denialClass(s);
-      const row = { run: s.run_id || null, harness, model: w.model || null, route: w.route || null, error: outcome?.error || null, rejection: outcome?.rejection || null };
+      const row = {
+        run: s.run_id || null,
+        harness,
+        model: w.model || null,
+        route: w.route || null,
+        error: outcome?.error || null,
+        rejection: outcome?.rejection || null,
+      };
       const terminal =
         outcome &&
         !graphDenied.length &&
@@ -1387,9 +1416,7 @@ export class Dispatcher {
         list.push(row);
         this.failures.set(key, list);
         if (s.reported && w.session && harnessCanResume(harness)) this.sessions.set(key, w.session);
-        this.say(
-          `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: remediation launch`,
-        );
+        this.say(`FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: remediation launch`);
       }
       this.workers.delete(key);
     }
