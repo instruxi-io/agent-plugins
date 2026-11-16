@@ -36,7 +36,7 @@ import {
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { routeFor, nodeMaxTurns, escalate } from './model.mjs';
+import { routeFor, nodeMaxTurns, escalate, isPrivate } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
@@ -224,6 +224,7 @@ export class Dispatcher {
     this.usageRouteSaid = false; // a graph server without the run usage route (404/405) is said once per dispatcher
     this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
     this.holdNoted = new Map();
+    this.refused = new Set(); // keys refused this pass (unknown route, or a private node with no endpoint route)
     this.attempts = new Map();
     this.epoch = null; // the graph's epoch, read at each launch; it names the worker logs
     this.failures = new Map();
@@ -361,10 +362,12 @@ export class Dispatcher {
     }
     const launched = [];
     this.holds = new Map();
+    this.refused = new Set();
     for (const n of chosen) {
       try {
-        // a node held by a down endpoint is not launched and spends no attempt
-        if ((await this.launch(n)) !== 'held') launched.push(n);
+        // held (endpoint down) and refused (private, or an unknown route) launch nothing and spend no attempt
+        const outcome = await this.launch(n);
+        if (outcome !== 'held' && outcome !== 'refused') launched.push(n);
       } catch (e) {
         if (e instanceof APIError) throw e;
         this.say(`launch ${n.key} failed (${e.name}: ${e.message}); continuing`);
@@ -401,10 +404,9 @@ export class Dispatcher {
     return 0;
   }
 
-  /** The route a node launches on this pass (probe and fallback included); see resolveRoute. */
+  /** The route a node launches on this pass (probe and fallback included); see resolveRoute. A private node with no table is a refusal. */
   async pickRoute(n) {
-    if (!this.routes) return { hold: false, route: routeFor(n, null, this.args), fallbackFrom: null };
-    return resolveRoute(n, this.routes, this.args, this.probes);
+    return resolveRoute(n, this.routes, this.args, this.routes ? this.probes : null);
   }
 
   noteHold(n, pick) {
@@ -496,11 +498,26 @@ export class Dispatcher {
     if (mt) return this.launchMerge(n, mt, tag);
     // chosen once, here, and carried on the worker (and in pids.json): reap, shutdown and resume read it, never this.args
     const pick = await this.pickRoute(n);
+    if (pick.refuse) {
+      const why = `refused: ${pick.reason}`;
+      if (this.lastSkip.get(n.key) !== why) this.say(`REFUSE ${n.key}: ${pick.reason}`);
+      this.lastSkip.set(n.key, why);
+      this.refused.add(n.key);
+      return 'refused';
+    }
     if (pick.hold) {
       this.noteHold(n, pick);
       return 'held';
     }
     const r = pick.route;
+    // a private node that reached here without an endpoint, or on a claude-* model, must not launch
+    if (isPrivate(n) && (pick.fallbackFrom || !r.endpoint || /^claude-/i.test(String(r.model || '')))) {
+      const why = `refused: ${pick.reason || 'private node has no endpoint route'}`;
+      if (this.lastSkip.get(n.key) !== why) this.say(`REFUSE ${n.key}: ${pick.reason || 'private node has no endpoint route'}`);
+      this.lastSkip.set(n.key, why);
+      this.refused.add(n.key);
+      return 'refused';
+    }
     const { harness } = r;
     // a retry after a failure moves up a rung (escalate): unless a person pinned data.model, or the route has an endpoint
     const priorFails = (this.failures.get(n.key) || []).length;
@@ -1517,8 +1534,8 @@ export class Dispatcher {
         }
         await this.sleep(a.attendPoll * 1000);
         continue;
-      } else if (!a.exitWhenIdle && this.holds.size && !this.workers.size && !launched.length && !busy) {
-        idle = 0; // nodes held by a down endpoint are waiting, not done; noteHolds says so every 10 minutes
+      } else if (!a.exitWhenIdle && (this.holds.size || this.refused.size) && !this.workers.size && !launched.length && !busy) {
+        idle = 0; // a down endpoint, or a refused private/unknown route, is waiting, not done
       } else if (!this.workers.size && !launched.length && !busy) {
         if (++idle >= 2) {
           const left = nodes

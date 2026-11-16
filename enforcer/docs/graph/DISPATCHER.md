@@ -36,13 +36,23 @@ and, for each ready node, up to `--workers` at once:
   itself, so its own hooks capture its evidence.
 - **Model**: `data.model` (or the claim card's `model`) wins; a tier set by a
   person (`tier_source: user`) beats `--model`; otherwise `--model` caps it;
-  otherwise `mechanical`/`standard` -> sonnet, `deep` -> opus, default sonnet.
-  `enforcer dispatch` passes `--model` only when you give it.
+  otherwise `mechanical` -> `script-or-haiku`, `standard` -> sonnet, `deep` ->
+  opus, default sonnet. That is enforcer-graph `tiers.Model` (`mechanical` is
+  `script-or-haiku`, the same label the claim card carries). `enforcer dispatch`
+  passes `--model` only when you give it.
 - **Routes**: a route table (`--routes FILE`, `ENFORCER_ROUTES`, the graph's
   `node_defaults.routes`, `<config home>/dispatch/routes.json`; `--no-routes`
-  ignores them) gives each tier a harness, model and optional endpoint, probed
-  at `/v1/models` (cached `--route-probe-ttl` seconds, default 60) with a
-  per-route fallback. A bad table exits 5 at startup. See ROUTES.md.
+  ignores them) gives each tier, and any other named route, a harness, model and
+  optional endpoint. A node selects a named route with `data.route` (for example
+  `local`); otherwise the route is its tier. An endpoint is probed at
+  `/v1/models` (cached `--route-probe-ttl` seconds, default 60) with a per-route
+  fallback. `data.private: true` fails closed: only an endpoint route may run
+  it; a down endpoint waits and is retried, and the node never falls back to a
+  hosted model (no `claude-*`, no harness provider). A private node with no
+  endpoint route is refused, and so is a `data.route` the table does not have.
+  A bad table exits 5 at startup. See ROUTES.md. `routes.local.example.json` is
+  a local Qwen (`qwen3.8-flash-next`) route for the DGX host `spark-dd15`
+  (OpenAI-compatible base `http://spark-dd15:8000/v1`; the table stores the root).
 - **Turn cap**: `data.max_turns`, when set, is passed as `claude --max-turns`
   (accepted and enforced by Claude Code 2.1.288 though not in `--help`; the run
   ends `error_max_turns`). The dispatcher also counts assistant turns in the
