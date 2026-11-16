@@ -7863,7 +7863,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Returns the unfinished nodes with no unfinished prerequisite — what an agent can pick up right now. A node with no dependency edges is always in the frontier, which is what makes a fresh task graph start. Only defined on a dag-mode graph. A node whose `not_before` is still in the future is left out of `data` and listed in `waiting` ({node_id, key, not_before}, earliest first) when it would otherwise be runnable, so a harness can tell \"not yet\" from \"blocked by a prerequisite\". With rank=1 the same list comes back sorted by priority (blast radius from the graph, risk and effort from the judgment service when the tenant has opted in) with a `rank` object on every node; this GET MAY WRITE A CACHE (nodes.rank) for nodes it judged, and it never fails because the judge did — unavailable or disabled judgment answers 200 with blast-radius ordering and an X-Graph-Rank header (unavailable, token_cap, graph_budget, disabled). Without rank the response is unchanged. `for=me|mine` narrows `data` and `waiting` by assignment (contract §10); absent, every node is listed as before.",
+        "description": "Returns the unfinished nodes with no unfinished prerequisite — what an agent can pick up right now. A node with no dependency edges is always in the frontier, which is what makes a fresh task graph start. Only defined on a dag-mode graph. A node whose `not_before` is still in the future is left out of `data` and listed in `waiting` ({node_id, key, not_before}, earliest first) when it would otherwise be runnable, so a harness can tell \"not yet\" from \"blocked by a prerequisite\". With rank=1 the same list comes back sorted by priority (blast radius from the graph, risk and effort from the judgment service when the tenant has opted in) with a `rank` object on every node; this GET MAY WRITE A CACHE (nodes.rank) for nodes it judged, and it never fails because the judge did — unavailable or disabled judgment answers 200 with blast-radius ordering and an X-Graph-Rank header (unavailable, token_cap, graph_budget, disabled). Without rank the response is unchanged. `for=me|mine` narrows advisory nodes in `data` and `waiting` by assignment (contract §10); absent, every advisory node is listed. A node with assignment_mode required is listed only for its assignee account or a member of its assignee group, whatever `for` is. Each node carries assignment_mode, private (data.private; not enforced), viewer_can_claim and claim_block for this caller.",
         "tags": [
           "traverse"
         ],
@@ -8015,7 +8015,7 @@
           {
             "name": "for",
             "in": "query",
-            "description": "me: claim only nodes assigned to my account, to one of my groups, or to nobody; mine: only nodes explicitly assigned to me or my groups. Absent: any node, assigned or not (assignment is advisory). Anything else is 400 invalid_query before anything is claimed",
+            "description": "me: claim only advisory nodes assigned to my account, to one of my groups, or to nobody; mine: only nodes explicitly assigned to me or my groups. Absent: any advisory node. A node with assignment_mode required is claimable only by its assignee account or a member of its assignee group, whatever for is; when the claim would take nothing because every runnable node is reserved for someone else, the response is 409 node_reserved. Anything else is 400 invalid_query before anything is claimed",
             "schema": {
               "type": "string",
               "enum": [
@@ -11861,7 +11861,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Edits type, title, description, data, lease_seconds, not_before or the assignee. `data` is MERGED into the stored object one level deep (a top-level key sent as null is removed; nested objects are replaced whole); send merge_data=false to replace the whole object instead. `not_before` (RFC 3339) keeps the node off the frontier and unclaimable until that instant; an explicit JSON null clears it, and a past value is accepted and gates nothing. Changing not_before does not clear the node's rank. `assignee_account_id` (a uuid) and `assignee_group_slug` (a group slug) assign the node, advisorily: `for=me|mine` on the frontier and the claim narrow by it, and nothing refuses a claim over it. Each is tri-state — a value sets it, an explicit null clears it, omitting it leaves it — and a real change emits node.assigned; it never clears the rank.",
+        "description": "Edits type, title, description, data, lease_seconds, not_before, the assignee or assignment_mode. `data` is MERGED into the stored object one level deep (a top-level key sent as null is removed; nested objects are replaced whole); send merge_data=false to replace the whole object instead. `not_before` (RFC 3339) keeps the node off the frontier and unclaimable until that instant; an explicit JSON null clears it, and a past value is accepted and gates nothing. Changing not_before does not clear the node's rank. `assignee_account_id` (a uuid) and `assignee_group_slug` (a group slug) assign the node. Each is tri-state — a value sets it, an explicit null clears it, omitting it leaves it — and a real change emits node.assigned; it never clears the rank. `assignment_mode` is advisory (the default: `for=me|mine` narrows, nothing refuses a claim) or required (only the assignee account, or a member of the assignee group, can claim; anyone else gets 409 node_reserved, and the node is omitted from their frontier, waiting list and lobby seats). required needs an assignee on the resulting row, else 400. Changing assignment_mode, or the assignee of a node that is or becomes required, needs graph admin (a human or an agent holding admin), else 403 insufficient_scope. `data.private` is a separate flag, stored as sent and returned as `private`; required does not imply it, and the server does not enforce it (judgment still runs). The response carries `viewer_can_claim` and `claim_block` for THIS caller (`claim_block` is `node_reserved` or null).",
         "tags": [
           "nodes"
         ],
@@ -12183,7 +12183,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Claims the named node when its prerequisites are all satisfied, opening a run against it exactly as /frontier/claim does. For an executor that already knows which node it is — a workflow bound to one step — rather than one asking the graph what to do next. Refuses with 409 when the node is not runnable, saying which reason. Takes the same `include` as /frontier/claim, and returns the same card: `epoch`, `epoch_attempt`, and `failed_attempts` counted in the current epoch. Each claimed node carries its work_state (docs/WORK_LOBBY_CONTRACT.md §17), read through graph_node_work after the claim: `claimed`. LAST_REJECTION (migration 090, no include needed): a card whose node has an earlier attempt this epoch judged `rejected` carries `last_rejection` — that run's id, attempt and stored verdict (state, reason, per-criterion results, checks) plus `rejections` / `max_rejections`, the gate rejections counted this epoch against approval.max_rejections (default 3). A node that reaches the cap is `needs_review`: no claim takes it until a person resolves its rejections_exhausted review item. IDEMPOTENCY-KEY (optional header; printable ASCII, 1–255 characters): a retry with the same key from the same account within 24 hours of the original claim returns the runs that claim opened — the same run ids and nodes — instead of claiming more, with `replayed: true`, header Idempotent-Replayed: true, and each card in its CURRENT state: `run_status` (present only on a replay) says whether the run is still running, or has since succeeded, failed, been abandoned (reclaimed) or cancelled; `lease_expires_at` is the live lease while it runs and its ended_at once it ended. Gate 3 runs first, so a caller who lost the graph gets 404. The same key with a different request (graph, route, node, limit, for, include, upstream_depth or runner) is 422 idempotency_key_reused; a malformed key is 400 invalid_idempotency_key; neither claims anything. A claim that opened nothing (an empty frontier, a refused claim) records nothing, so its retry claims again. Concurrent claims with one key are serialised: one opens runs, the rest replay them. Keys are scoped to (tenant, account); after 24 hours a key claims afresh.",
+        "description": "Claims the named node when its prerequisites are all satisfied, opening a run against it exactly as /frontier/claim does. For an executor that already knows which node it is — a workflow bound to one step — rather than one asking the graph what to do next. Refuses with 409 node_not_runnable when the node is not runnable, saying which reason. A node with assignment_mode required is refused with 409 node_reserved unless the caller is the assignee account or a member of the assignee group, before any run is opened or reclaimed. Changing that mode or assignee needs graph admin. The card carries assignment_mode, private (data.private; not implied by required, not enforced), viewer_can_claim and claim_block for this caller. Takes the same `include` as /frontier/claim, and returns the same card: `epoch`, `epoch_attempt`, and `failed_attempts` counted in the current epoch. Each claimed node carries its work_state (docs/WORK_LOBBY_CONTRACT.md §17), read through graph_node_work after the claim: `claimed`. LAST_REJECTION (migration 090, no include needed): a card whose node has an earlier attempt this epoch judged `rejected` carries `last_rejection` — that run's id, attempt and stored verdict (state, reason, per-criterion results, checks) plus `rejections` / `max_rejections`, the gate rejections counted this epoch against approval.max_rejections (default 3). A node that reaches the cap is `needs_review`: no claim takes it until a person resolves its rejections_exhausted review item. IDEMPOTENCY-KEY (optional header; printable ASCII, 1–255 characters): a retry with the same key from the same account within 24 hours of the original claim returns the runs that claim opened — the same run ids and nodes — instead of claiming more, with `replayed: true`, header Idempotent-Replayed: true, and each card in its CURRENT state: `run_status` (present only on a replay) says whether the run is still running, or has since succeeded, failed, been abandoned (reclaimed) or cancelled; `lease_expires_at` is the live lease while it runs and its ended_at once it ended. Gate 3 runs first, so a caller who lost the graph gets 404. The same key with a different request (graph, route, node, limit, for, include, upstream_depth or runner) is 422 idempotency_key_reused; a malformed key is 400 invalid_idempotency_key; neither claims anything. A claim that opened nothing (an empty frontier, a refused claim) records nothing, so its retry claims again. Concurrent claims with one key are serialised: one opens runs, the rest replay them. Keys are scoped to (tenant, account); after 24 hours a key claims afresh.",
         "tags": [
           "runs"
         ],
@@ -14073,7 +14073,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Opens attempt N+1 against the node and moves the node to \"running\", exactly as POST /nodes/{nodeId}/claim does: the node must be runnable (every prerequisite done, not already running under a live lease, not done or cancelled), a run whose lease lapsed is closed as abandoned, and the new attempt holds a lease the harness must heartbeat. Refuses with 409 node_not_runnable, saying why. `data` is recorded on the run. The run carries its `epoch`, and this response alone also carries the claim card's `epoch_attempt` and per-epoch `failed_attempts`.",
+        "description": "Opens attempt N+1 against the node and moves the node to \"running\", exactly as POST /nodes/{nodeId}/claim does: the node must be runnable (every prerequisite done, not already running under a live lease, not done or cancelled), a run whose lease lapsed is closed as abandoned, and the new attempt holds a lease the harness must heartbeat. Refuses with 409 node_not_runnable, saying why. A node with assignment_mode required is refused with 409 node_reserved unless the caller is the assignee account or a member of the assignee group (the same rule as the named claim; a lapsed lease is not reclaimed by anyone else). `data` is recorded on the run. The run carries its `epoch`, and this response alone also carries the claim card's `epoch_attempt` and per-epoch `failed_attempts`.",
         "tags": [
           "runs"
         ],
@@ -15357,6 +15357,117 @@
           },
           "409": {
             "description": "invalid_transition: the run is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/graphs/{graphId}/nodes/{nodeId}/runs/{runId}/redact": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Rewrites a run's free text in one transaction, replacing each match with `[REDACTED <kind> <date>]`: node_runs error, landing_reason, over_cap_reason, data (the report), evidence, outputs, verification, check_results and validation; every run_verdicts row of the run (verification, answers); and the metadata of activity events about the run (a run.needs_person reason is a prefix of the error). node_output_values follows outputs by trigger. Presets are shapes (docs/REDACTION.md §2); 64-hex is replaced only in key-ish context so transaction hashes survive. To remove a known secret without sending it, pass its sha256 in literals_sha256. Records `run.redacted` (who, reason, counts; never the text). dry_run counts and writes nothing. Not undoable. Graph admin (or a tenant admin), and a credential carrying enforcer:graph-runs.destructive or enforcer:admin: a graph-runs.write credential is 403 insufficient_scope. Copies outside this database (judge calls already made, emails sent, A2A pushes delivered, exports) are not reached.",
+        "tags": [
+          "runs"
+        ],
+        "summary": "Redact secrets from a run, its verdicts and its events",
+        "operationId": "redactRun",
+        "x-effect": "destructive",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "description": "node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "runId",
+            "in": "path",
+            "description": "run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "what to remove",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_runs.RedactRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_runs.RedactRunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body: unknown pattern, a literal that is not a sha256 digest, no pattern or literal, reason missing or too long",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope: not a graph admin, or the credential lacks graph-runs.destructive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
@@ -28670,7 +28781,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "The work lobby (docs/WORK_LOBBY_CONTRACT.md §8): every graph the caller can see that advertises open seats to it — a live dag graph with `recruiting.open`, whose audience includes the caller — and has demand. A graph the caller cannot see, or whose audience excludes it, is simply absent (never a 403); so is one with no open seat for this `kind`. Each row carries the roll-up state, the caller's role and `my_can`, `workers_wanted` (open work seats capped by the graph's ADVISORY `max_parallel` less its live leases) and `judges_wanted` (open validation seats, Jev's excluded), the seats broken down by node type, skill and assignee group, and where to act. The audience ADVERTISES ONLY: a row may list work the caller cannot claim — check `my_can` for `claim` (editor). PULL, not dispatch: nothing is reserved, and two workers reading one row race the atomic claim as today. `kind`: any (default: work or validation seats), work, validation. `for`: me (seats assigned to my account, one of my groups, or nobody; for validation, my own or my groups' seats) or mine (explicitly mine only). `type`, `skill`, `group` (comma-separated, exact) narrow the counted work seats. Ordered by demand, then priority, unless `sort` names updated_at, created_at or name. Poll at 10 s or slower: each row is one frontier evaluation. A statement past the query timeout is 503 query_timeout. Anything else malformed is 400 invalid_query.",
+        "description": "The work lobby (docs/WORK_LOBBY_CONTRACT.md §8): every graph the caller can see that advertises open seats to it — a live dag graph with `recruiting.open`, whose audience includes the caller — and has demand. A graph the caller cannot see, or whose audience excludes it, is simply absent (never a 403); so is one with no open seat for this `kind`. Each row carries the roll-up state, the caller's role and `my_can`, `workers_wanted` (open work seats capped by the graph's ADVISORY `max_parallel` less its live leases) and `judges_wanted` (open validation seats, Jev's excluded), the seats broken down by node type, skill and assignee group, and where to act. The audience ADVERTISES ONLY: a row may list work the caller cannot claim — check `my_can` for `claim` (editor). A node with assignment_mode required is a work seat only for its assignee account or a member of its assignee group, whatever `for` is (the claim's predicate); other actors do not see it in workers_wanted. Per-node viewer_can_claim and claim_block are on the node reads, not on this graph row. PULL, not dispatch: the lobby does not hold a lease, and two workers reading one row race the atomic claim as today. `kind`: any (default: work or validation seats), work, validation. `for`: me (seats assigned to my account, one of my groups, or nobody; for validation, my own or my groups' seats) or mine (explicitly mine only). `type`, `skill`, `group` (comma-separated, exact) narrow the counted work seats. Ordered by demand, then priority, unless `sort` names updated_at, created_at or name. Poll at 10 s or slower: each row is one frontier evaluation. A statement past the query timeout is 503 query_timeout. Anything else malformed is 400 invalid_query.",
         "tags": [
           "work"
         ],
@@ -33126,6 +33237,15 @@
             "description": "AssigneeGroupSlug assigns the node to a group (contract §10); a slug,\nnever an account id.",
             "type": "string",
             "example": "release-team"
+          },
+          "assignment_mode": {
+            "description": "AssignmentMode is advisory (omit or advisory) or required. required\nneeds assignee_group_slug. A document has no account id.",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "required"
           },
           "data": {
             "type": "object",
@@ -41689,12 +41809,21 @@
         "type": "object",
         "properties": {
           "assignee": {
-            "description": "Assignee is whose work the node is (migration 043, contract §10):\npresent when either half is set. ADVISORY: `for=me|mine` on the\nfrontier and the claim narrow by it; nothing refuses a claim over it.",
+            "description": "Assignee is whose work the node is (migration 043, contract §10):\npresent when either half is set. assignment_mode advisory narrows\n`for=me|mine` and refuses nothing. required (migration 169) is\nclaimable only by the account or a member of the group.",
             "allOf": [
               {
                 "$ref": "#/components/schemas/internal_nodes.Assignee"
               }
             ]
+          },
+          "assignment_mode": {
+            "description": "AssignmentMode is advisory (the default) or required (migration 169).",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "advisory"
           },
           "attention": {
             "description": "Attention rides only with include=attention on listNodes: why this\nnode waits on the caller (NodeAttention). Absent when nothing does.",
@@ -41703,6 +41832,14 @@
                 "$ref": "#/components/schemas/internal_nodes.NodeAttention"
               }
             ]
+          },
+          "claim_block": {
+            "description": "ClaimBlock is why that rule refuses this caller, or null when it does\nnot. node_reserved: assignment_mode is required and the caller is\nneither the assignee account nor a member of the assignee group.",
+            "type": "string",
+            "enum": [
+              "node_reserved"
+            ],
+            "nullable": true
           },
           "claimed_by": {
             "description": "ClaimedBy is the running run's created_by: the account that claimed it.",
@@ -41759,6 +41896,11 @@
             "description": "OpensAt is when a time-gated node whose prerequisites are met becomes\nclaimable (its not_before). Set only beside not_yet_available.",
             "type": "string",
             "example": "2026-10-07T00:00:00Z"
+          },
+          "private": {
+            "description": "Private is data.private, copied out so a client does not re-read the\npayload. It is not implied by required, and the server does not enforce\nit: judgment still runs. Missing or non-boolean data.private is false.",
+            "type": "boolean",
+            "example": false
           },
           "rank": {
             "description": "Rank is the judged risk/effort the ranked frontier stored\n(docs/JUDGMENT_CONTRACT.md §9), exactly as the judge answered. It is raw\nhere because nodes does not compute priority — traverse does, per read —\nand because migration 017's trigger clears it whenever title,\ndescription or data change, so a value present is always about THIS\nversion of the node.",
@@ -41831,6 +41973,11 @@
           "usage": {
             "$ref": "#/components/schemas/internal_nodes.NodeUsage"
           },
+          "viewer_can_claim": {
+            "description": "ViewerCanClaim is whether THIS caller may claim the node under the\nassignment rule (ClaimAllowedSQL, the same predicate as the claim).\nIt does not say the node is on the frontier. Clients must not recompute\ngroup membership.",
+            "type": "boolean",
+            "example": true
+          },
           "work_state": {
             "description": "WorkState: looking_for_work (a seat is open: on the frontier, a lapsed\nlease included), claimed (running under a live lease — or no lease at\nall, which the nodes_running_no_lease gauge counts), looking_for_validation\n(verifying: a verdict or votes pending), looking_for_arbitration\n(verifying, and the latest attempt is waiting on a person),\nnot_yet_available (blocked on a prerequisite, or time-gated: see\nopens_at), finished (done or cancelled).",
             "type": "string",
@@ -41894,6 +42041,15 @@
             "type": "string",
             "nullable": true,
             "example": "release-team"
+          },
+          "assignment_mode": {
+            "description": "AssignmentMode is advisory (default, including when omitted) or required.\nrequired needs assignee_account_id or assignee_group_slug on the\nresulting row, else 400. Setting required, or changing the mode or\nassignee of a node that is or becomes required, needs graph admin\n(403 insufficient_scope otherwise). data.private is unrelated and is\nstored as sent; the server does not enforce it.",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "required"
           },
           "data": {
             "description": "Data is shallow-merged into what an existing key stores; omitting it\nkeeps the stored payload.",
@@ -42314,6 +42470,15 @@
             "type": "string",
             "nullable": true,
             "example": "release-team"
+          },
+          "assignment_mode": {
+            "description": "AssignmentMode is advisory or required. Omit it to leave the stored\nmode. required needs an assignee on the resulting row (400 otherwise).\nChanging the mode, or the assignee of a required node, needs graph\nadmin — a human or an agent holding admin — else 403 insufficient_scope.\ndata.private is a separate flag, stored as sent, not enforced.",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "required"
           },
           "data": {
             "type": "object",
@@ -44135,6 +44300,15 @@
           "assignee": {
             "$ref": "#/components/schemas/internal_query.Assignee"
           },
+          "assignment_mode": {
+            "description": "AssignmentMode is advisory (the default) or required (migration 169).",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "advisory"
+          },
           "attention": {
             "description": "Attention rides only with include=attention on listNodes: why this\nnode waits on the caller (NodeAttention). Absent when nothing does.",
             "allOf": [
@@ -44142,6 +44316,14 @@
                 "$ref": "#/components/schemas/enforcer-graph_internal_nodes.NodeAttention"
               }
             ]
+          },
+          "claim_block": {
+            "description": "ClaimBlock is why that rule refuses this caller, or null when it does\nnot. node_reserved: assignment_mode is required and the caller is\nneither the assignee account nor a member of the assignee group.",
+            "type": "string",
+            "enum": [
+              "node_reserved"
+            ],
+            "nullable": true
           },
           "claimed_by": {
             "description": "ClaimedBy is the running run's created_by: the account that claimed it.",
@@ -44205,6 +44387,11 @@
             "description": "OpensAt is when a time-gated node whose prerequisites are met becomes\nclaimable (its not_before). Set only beside not_yet_available.",
             "type": "string",
             "example": "2026-10-07T00:00:00Z"
+          },
+          "private": {
+            "description": "Private is data.private, copied out so a client does not re-read the\npayload. It is not implied by required, and the server does not enforce\nit: judgment still runs. Missing or non-boolean data.private is false.",
+            "type": "boolean",
+            "example": false
           },
           "rank": {
             "description": "Rank is the judged risk/effort the ranked frontier stored\n(docs/JUDGMENT_CONTRACT.md §9), exactly as the judge answered. It is raw\nhere because nodes does not compute priority — traverse does, per read —\nand because migration 017's trigger clears it whenever title,\ndescription or data change, so a value present is always about THIS\nversion of the node.",
@@ -44276,6 +44463,11 @@
           },
           "usage": {
             "$ref": "#/components/schemas/enforcer-graph_internal_nodes.NodeUsage"
+          },
+          "viewer_can_claim": {
+            "description": "ViewerCanClaim is whether THIS caller may claim the node under the\nassignment rule (ClaimAllowedSQL, the same predicate as the claim).\nIt does not say the node is on the frontier. Clients must not recompute\ngroup membership.",
+            "type": "boolean",
+            "example": true
           },
           "work_state": {
             "description": "WorkState: looking_for_work (a seat is open: on the frontier, a lapsed\nlease included), claimed (running under a live lease — or no lease at\nall, which the nodes_running_no_lease gauge counts), looking_for_validation\n(verifying: a verdict or votes pending), looking_for_arbitration\n(verifying, and the latest attempt is waiting on a person),\nnot_yet_available (blocked on a prerequisite, or time-gated: see\nopens_at), finished (done or cancelled).",
@@ -45889,6 +46081,15 @@
               }
             ]
           },
+          "assignment_mode": {
+            "description": "AssignmentMode, Private, ViewerCanClaim and ClaimBlock are the node's\nread fields (migration 169). On a card just claimed, viewer_can_claim\nis true and claim_block is null: the claim already applied the rule.\nprivate is data.private, not implied by required.",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "advisory"
+          },
           "attempt": {
             "type": "integer",
             "example": 1
@@ -45897,6 +46098,13 @@
             "description": "Branch is the git branch this run's work belongs on:\ngraph/<plan code>/<node key>/e<epoch>, plus -a<attempt> when attempt > 1.\nAlso stored on the run row's data.branch.",
             "type": "string",
             "example": "graph/K7M2QX/pass-1-read/e1"
+          },
+          "claim_block": {
+            "type": "string",
+            "enum": [
+              "node_reserved"
+            ],
+            "nullable": true
           },
           "data": {
             "description": "Data is the node's own payload, and it is returned here because it is\nwhere the binding between a node and the thing that runs it lives — the\nservice-bootstrap template writes {\"runner\":\"archon\",\"workflow\":\"svc-schema\"}.\n\nWithout it every claim needs a follow-up GET on the node just to learn what\nto execute, which defeats the point of a claim returning enough to act on\nand puts a second round trip in the hot loop of every harness.",
@@ -45978,6 +46186,10 @@
             "description": "OpensAt is when a time-gated node whose prerequisites are met becomes\nclaimable (its not_before). Set only beside not_yet_available.",
             "type": "string",
             "example": "2026-10-07T00:00:00Z"
+          },
+          "private": {
+            "type": "boolean",
+            "example": false
           },
           "recall": {
             "description": "Recall is include=recall: the top findings from the DAG's memory for\nthis node (its prerequisites and the graph scope), present only when\nthe graph enabled context.recall; omitted with a `recall_timeout`\nwarning when the 200 ms budget ran out.",
@@ -46066,6 +46278,10 @@
           },
           "verification_policy": {
             "type": "string"
+          },
+          "viewer_can_claim": {
+            "type": "boolean",
+            "example": true
           },
           "warnings": {
             "description": "Warnings name what was wrong with the node's declarations — a malformed\ndata.inputs today — without failing the claim: a planner's typo must not\nstall the plan. Absent when there is nothing to say.",
@@ -46468,6 +46684,96 @@
             "description": "Reason says why it is blocked (up to 2000 characters).",
             "type": "string",
             "example": "CI failed: TestFoo"
+          }
+        }
+      },
+      "internal_runs.RedactRunRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "dry_run": {
+            "description": "DryRun counts what would be replaced and writes nothing, not even the\naudit event.",
+            "type": "boolean"
+          },
+          "literals_sha256": {
+            "description": "LiteralsSHA256 are lowercase hex sha256 digests of exact secrets, at most\n50. A token in the run (any preset shape, or any run of 16+ token\ncharacters) is removed when its sha256 is one of them, whatever its\ncontext; a hex token is also tried lowercased with and without 0x. The\nsecret itself is never sent.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "3f0c9a1e5b7d2c4f6a8e0b1d3c5f7a9e2b4d6f8a0c1e3b5d7f9a2c4e6b8d0f1a"
+            ]
+          },
+          "patterns": {
+            "description": "Patterns are preset names: private_key_hex (64 hex, only in key-ish\ncontext), pem_private_key, jwt, api_key (sk-, ghp_, github_pat_, xox*,\nAKIA, msk_, whsec_ ...), secret_field (the value of a field named\nprivate_key, mnemonic, seed_phrase ...). Omitted means every preset; an\nempty list means none, so only literals_sha256 are removed.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "private_key_hex",
+              "pem_private_key"
+            ]
+          },
+          "reason": {
+            "description": "Reason is recorded in the audit event (at most 500 characters, itself\nscrubbed). Required.",
+            "type": "string",
+            "example": "wallet key captured in command output"
+          }
+        }
+      },
+      "internal_runs.RedactRunResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_runs.RedactRunResult"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_runs.RedactRunResult": {
+        "type": "object",
+        "properties": {
+          "counts": {
+            "description": "Counts is replacements per kind (a preset name, or literal).",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "integer"
+          },
+          "fields": {
+            "description": "Fields is replacements per stored location, e.g. node_runs.evidence,\nrun_verdicts.verification, activity_events.metadata.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "redacted_at": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "total": {
+            "description": "Total is every replacement across every row.",
+            "type": "integer",
+            "example": 2
+          },
+          "verdicts": {
+            "description": "Verdicts and Events are how many run_verdicts rows and activity events\nabout the run were rewritten.",
+            "type": "integer"
           }
         }
       },
@@ -47981,6 +48287,23 @@
               }
             ]
           },
+          "assignment_mode": {
+            "description": "AssignmentMode is advisory or required (migration 169).",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "advisory"
+          },
+          "claim_block": {
+            "description": "ClaimBlock is node_reserved or null. Null when the assignment rule\nallows this caller.",
+            "type": "string",
+            "enum": [
+              "node_reserved"
+            ],
+            "nullable": true
+          },
           "data": {
             "type": "object",
             "additionalProperties": {}
@@ -48009,6 +48332,11 @@
             "type": "string",
             "example": "2026-10-07T00:00:00Z"
           },
+          "private": {
+            "description": "Private is data.private. Not implied by required, and not enforced.",
+            "type": "boolean",
+            "example": false
+          },
           "rank": {
             "description": "Rank is set only by the frontier endpoint with rank=1 (contract §9).",
             "allOf": [
@@ -48032,6 +48360,11 @@
           "type": {
             "type": "string",
             "example": "task"
+          },
+          "viewer_can_claim": {
+            "description": "ViewerCanClaim is whether THIS caller may claim the node under the\nassignment rule. Required nodes this caller cannot claim are omitted\nfrom the frontier; the field is still on every node that is listed.",
+            "type": "boolean",
+            "example": true
           },
           "work_state": {
             "description": "WorkState: looking_for_work (a seat is open: on the frontier, a lapsed\nlease included), claimed (running under a live lease — or no lease at\nall, which the nodes_running_no_lease gauge counts), looking_for_validation\n(verifying: a verdict or votes pending), looking_for_arbitration\n(verifying, and the latest attempt is waiting on a person),\nnot_yet_available (blocked on a prerequisite, or time-gated: see\nopens_at), finished (done or cancelled).",
@@ -48190,6 +48523,25 @@
       "internal_traverse.WaitingNode": {
         "type": "object",
         "properties": {
+          "assignee": {
+            "$ref": "#/components/schemas/enforcer-graph_internal_nodes.Assignee"
+          },
+          "assignment_mode": {
+            "description": "The same read fields as a frontier node (migration 169). A required\nnode this caller cannot claim is omitted, so viewer_can_claim is true\non a row that is listed.",
+            "type": "string",
+            "enum": [
+              "advisory",
+              "required"
+            ],
+            "example": "advisory"
+          },
+          "claim_block": {
+            "type": "string",
+            "enum": [
+              "node_reserved"
+            ],
+            "nullable": true
+          },
           "key": {
             "type": "string",
             "example": "close-books"
@@ -48200,6 +48552,14 @@
           "not_before": {
             "type": "string",
             "example": "2026-10-07T00:00:00Z"
+          },
+          "private": {
+            "type": "boolean",
+            "example": false
+          },
+          "viewer_can_claim": {
+            "type": "boolean",
+            "example": true
           }
         }
       },

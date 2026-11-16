@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.13.1
+
+- The graph spec is re-pinned to enforcer-graph cabee17b (enforceable node assignment): `assignment_mode` is `advisory` or `required`, and node reads carry `assignment_mode`, `private`, `viewer_can_claim` and `claim_block` (`null` or `node_reserved`). A required node the caller cannot claim answers 409 `node_reserved` on the named claim and on StartRun. The dispatcher treats that 409 as a skip: logged once, no attempt, not a claim error. A row that already says `claim_block: node_reserved` (or `required` with `viewer_can_claim: false`) is skipped the same way. A node is private when the server field `private` is true or `data.private` is true; either one fails closed.
+
 ## 1.13.0
 
 - The dispatcher selects a named route from the node's `data.route` (for example `local`) and fails closed on `data.private: true`: only a route with an endpoint may run it, a down endpoint waits and is retried, and it never falls back to a hosted model (`claude-*` or the harness provider). A private node with no endpoint route is refused, and so is a `data.route` the table does not have. The tier map matches enforcer-graph `tiers.Model`: mechanical is `script-or-haiku`, standard sonnet, deep opus. `docs/graph/routes.local.example.json` is a local Qwen (`qwen3.8-flash-next`) route for the DGX host spark-dd15 (OpenAI-compatible base `http://spark-dd15:8000/v1`; the table stores the root, no token).

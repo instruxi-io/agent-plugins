@@ -24,20 +24,33 @@ export class APIError extends Error {
   }
 }
 
+/** The machine code of an error body: error.code, a string `error`, or `code`. Null when the body is not that shape. */
+export function errorCode(body) {
+  let j = body;
+  if (typeof body === 'string') {
+    try {
+      j = JSON.parse(body);
+    } catch {
+      return null;
+    }
+  }
+  if (!j || typeof j !== 'object') return null;
+  const err = j.error;
+  const code = (err && typeof err === 'object' ? err.code : err) || j.code || null;
+  return typeof code === 'string' && code ? code : null;
+}
+
 /** A 405, or a 404 that is not the graph's own graph/node/run_not_found: the server has no such route (an older build). */
 export function usageRouteMissing(e) {
   if (!(e instanceof APIError)) return false;
   if (e.status === 405) return true;
   if (e.status !== 404) return false;
-  let code = null;
-  try {
-    const j = JSON.parse(e.body);
-    const err = j?.error;
-    code = (err && typeof err === 'object' ? err.code : err) || j?.code || null;
-  } catch {
-    /* not json: a router's plain 404 */
-  }
-  return !/^(graph|node|run)_not_found$/.test(String(code || ''));
+  return !/^(graph|node|run)_not_found$/.test(String(errorCode(e.body) || ''));
+}
+
+/** 409 node_reserved: assignment_mode is required and this caller is not the assignee. Not a failed attempt. */
+export function nodeReserved(e) {
+  return e instanceof APIError && e.status === 409 && errorCode(e.body) === 'node_reserved';
 }
 
 const one = (d) => (Array.isArray(d) ? d[0] : d);
@@ -87,8 +100,9 @@ export class API {
   async graph(g) {
     return (await this.call('GET', `/graphs/${g}`)).data || {};
   }
-  // `forWho` ('me' or 'mine') narrows the frontier to nodes assigned to the caller (and, for 'me', unassigned ones);
-  // assignment is advisory on the server, so this is the dispatcher choosing what to take. The path stays a literal
+  // `forWho` ('me' or 'mine') narrows the frontier to nodes assigned to the caller (and, for 'me', unassigned ones).
+  // Advisory assignment only narrows that filter. Required assignment is enforced by the server: a claim this caller
+  // may not take is 409 node_reserved (nodeReserved), which the dispatcher skips. The path stays a literal
   // (query after `?`) so scripts/extract-api-usage.mjs sees one route.
   async frontier(g, forWho = null) {
     // api-used: reads data

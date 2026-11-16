@@ -46,8 +46,10 @@ and, for each ready node, up to `--workers` at once:
   optional endpoint. A node selects a named route with `data.route` (for example
   `local`); otherwise the route is its tier. An endpoint is probed at
   `/v1/models` (cached `--route-probe-ttl` seconds, default 60) with a per-route
-  fallback. `data.private: true` fails closed: only an endpoint route may run
-  it; a down endpoint waits and is retried, and the node never falls back to a
+  fallback. A node is private when the server field `private` is true or
+  `data.private` is true (either one fails closed; the server field is
+  `data.private` copied out as a boolean). Only an endpoint route may run it;
+  a down endpoint waits and is retried, and the node never falls back to a
   hosted model (no `claude-*`, no harness provider). A private node with no
   endpoint route is refused, and so is a `data.route` the table does not have.
   A bad table exits 5 at startup. See ROUTES.md. `routes.local.example.json` is
@@ -285,7 +287,7 @@ profile bwrap /usr/bin/bwrap flags=(unconfined) {
 
 ## Only the nodes assigned to you (`--for me|mine`)
 
-`enforcer dispatch <graph> --for mine` asks the frontier for `?for=mine`, so the dispatcher launches only nodes assigned to its caller's account or one of its groups (`--for me` also takes unassigned nodes). It is the server's own predicate (WORK_LOBBY_CONTRACT §8, the same one `graph_next_work`'s `for` uses), and it is advisory: the server would still let the caller claim anything it can edit, so `--for` is the dispatcher choosing what to take. With `--for`, a lapsed node is re-claimed only when the frontier lists it (the frontier lists reclaimable nodes itself), never from the full node list, so a lapsed node assigned to someone else is left alone. Assign a node with `PATCH /graphs/{g}/nodes/{n}` `assignee_account_id` or `assignee_group_slug`. With `--agent`, "you" is the agent's service account.
+`enforcer dispatch <graph> --for mine` asks the frontier for `?for=mine`, so the dispatcher launches only nodes assigned to its caller's account or one of its groups (`--for me` also takes unassigned nodes). Advisory assignment (`assignment_mode` `advisory`, the default) only narrows that filter: the server still lets the caller claim any node it can edit, so `--for` is the dispatcher choosing what to take. `assignment_mode` `required` is enforced. Only the assignee account, or a member of the assignee group, can claim; anyone else gets 409 `node_reserved` on the named claim and on StartRun. The dispatcher treats that 409 as a skip: logged once, no attempt, not a claim error. A node read that already says `claim_block: node_reserved`, or `required` with `viewer_can_claim: false`, is skipped the same way before a worker is launched. With `--for`, a lapsed node is re-claimed only when the frontier lists it (the frontier lists reclaimable nodes itself), never from the full node list, so a lapsed node assigned to someone else is left alone. Assign a node with `PATCH /graphs/{g}/nodes/{n}` `assignee_account_id`, `assignee_group_slug` and `assignment_mode`. With `--agent`, "you" is the agent's service account.
 
 ## A dispatcher on every graph that wants you (`enforcer dispatch watch`)
 

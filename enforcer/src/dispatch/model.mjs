@@ -13,9 +13,24 @@ export function askedRoute(node) {
   return raw.trim().toLowerCase();
 }
 
-/** `data.private: true` fails closed: only an endpoint route may run the node. */
+/**
+ * A node is private when the server field `private` is true or `data.private` is true.
+ * The server copies `data.private` out as a boolean (missing or non-boolean is false) so a client
+ * need not re-read the payload. Either true fails closed: only an endpoint route may run the node.
+ */
 export function isPrivate(node) {
-  return node?.data?.private === true;
+  return node?.private === true || node?.data?.private === true;
+}
+
+/**
+ * The server says this caller must not claim the node (assignment_mode required, migration 169).
+ * `claim_block` is null or `node_reserved`. A required node with `viewer_can_claim: false` is the
+ * same refusal when the block was not copied onto the row. Advisory nodes are not reserved.
+ */
+export function reservedForAssignee(node) {
+  if (!node || typeof node !== 'object') return false;
+  if (node.claim_block === 'node_reserved') return true;
+  return node.assignment_mode === 'required' && node.viewer_can_claim === false;
 }
 
 const LADDER = ['haiku', 'sonnet', 'opus'];
