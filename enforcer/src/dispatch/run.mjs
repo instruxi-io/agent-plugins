@@ -8,7 +8,7 @@ import { hostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { API, APIError, usageRouteMissing } from './api.mjs';
+import { API, APIError, nodeReserved, usageRouteMissing } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
 import { worktreeFor, worktreeSetup, BaseMissing, StaleWorktree, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
@@ -36,7 +36,7 @@ import {
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { routeFor, nodeMaxTurns, escalate, isPrivate } from './model.mjs';
+import { routeFor, nodeMaxTurns, escalate, isPrivate, reservedForAssignee } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
@@ -365,9 +365,11 @@ export class Dispatcher {
     this.refused = new Set();
     for (const n of chosen) {
       try {
-        // held (endpoint down) and refused (private, or an unknown route) launch nothing and spend no attempt
+        // held (endpoint down), refused (private, or an unknown route) and skipped (node_reserved) launch nothing
+        // and spend no attempt. A skip is not kept in `refused`: that set holds the dispatcher up, and a node
+        // reserved for someone else is not this dispatcher's work.
         const outcome = await this.launch(n);
-        if (outcome !== 'held' && outcome !== 'refused') launched.push(n);
+        if (outcome !== 'held' && outcome !== 'refused' && outcome !== 'skipped') launched.push(n);
       } catch (e) {
         if (e instanceof APIError) throw e;
         this.say(`launch ${n.key} failed (${e.name}: ${e.message}); continuing`);
@@ -407,6 +409,14 @@ export class Dispatcher {
   /** The route a node launches on this pass (probe and fallback included); see resolveRoute. A private node with no table is a refusal. */
   async pickRoute(n) {
     return resolveRoute(n, this.routes, this.args, this.routes ? this.probes : null);
+  }
+
+  /** 409 node_reserved, or a read that already says so: skip once, spend no attempt, do not treat it as a claim error. */
+  noteReserved(n) {
+    const why = 'skip: node reserved for its assignee';
+    if (this.lastSkip.get(n.key) !== why) this.say(`skip ${n.key}: node reserved for its assignee`);
+    this.lastSkip.set(n.key, why);
+    return 'skipped';
   }
 
   noteHold(n, pick) {
@@ -494,6 +504,7 @@ export class Dispatcher {
       return;
     }
     const tag = n._lapsed ? ' (lease lapsed; re-claim)' : '';
+    if (reservedForAssignee(n)) return this.noteReserved(n);
     const mt = mergeTarget(n);
     if (mt) return this.launchMerge(n, mt, tag);
     // chosen once, here, and carried on the worker (and in pids.json): reap, shutdown and resume read it, never this.args
@@ -760,6 +771,11 @@ export class Dispatcher {
     try {
       card = await this.api.claim(this.g, n.id, 'graph-dispatch');
     } catch (e) {
+      // required assignment: this caller is not the assignee. Not an error and not an attempt.
+      if (nodeReserved(e)) {
+        this.attempts.set(n.key, Math.max(0, (this.attempts.get(n.key) || 0) - 1));
+        return this.noteReserved(n);
+      }
       this.say(`claim ${n.key} refused: ${e.message}`);
       return;
     }

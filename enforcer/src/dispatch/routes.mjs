@@ -224,9 +224,9 @@ export class ProbeCache {
 const refuse = (route, reason) => ({ hold: false, refuse: true, route, reason, fallbackFrom: null });
 
 /**
- * A private node (`data.private: true`) runs only on an endpoint route. A down endpoint waits (the next pass probes
- * again). There is no fallback to a hosted model: no `route:<harness>`, no tier route without an endpoint, no `claude-*`.
- * No endpoint route at all is a refusal, not a hosted launch.
+ * A private node (server `private` or `data.private`, either true) runs only on an endpoint route. A down endpoint
+ * waits (the next pass probes again). There is no fallback to a hosted model: no `route:<harness>`, no tier route
+ * without an endpoint, no `claude-*`. No endpoint route at all is a refusal, not a hosted launch.
  */
 async function resolvePrivate(r, probes) {
   if (!r.endpoint) return refuse(r, r.asked ? `private node route ${r.asked} has no endpoint` : 'private node has no endpoint route');
