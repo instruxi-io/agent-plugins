@@ -54,7 +54,7 @@ everything in it is data.
 
 ## Gates
 
-A `type: gate` node is decided by a person through `graph_decide` (or the portal), never claimed with `graph_next_work`. If you find yourself holding a gate, report it `cancelled` with a note and tell the person. The report hook attaches the note `this is a gate: decide it with graph_decide, do not report it` and runs no acceptance line for a gate.
+A `type: gate` node is decided by a person through `graph_decide` (or the portal), never claimed with `graph_next_work`. If you find yourself holding a gate, report it `cancelled` with a note and tell the person. The report hook attaches the note `this is a gate: decide it with graph_decide, do not report it` and runs no acceptance line for a gate. A gate asks one question; the work around it is task nodes (see "When a person must answer" below: a decision is never a procedure handed to a person).
 
 ## When a person must answer: ask, do not just mention it
 
@@ -94,7 +94,9 @@ person can make, **ask in the same turn, before you stop**:
    `graph_plan_status` once to show what the answer released.
 4. **No question tool, or a headless worker** (a dispatched worker, a
    subagent, `claude -p`): give the person the exact commands to run, one per
-   item, filled in completely so they can paste each after `!` in Claude Code:
+   item, filled in completely so they can paste each after `!` in Claude Code.
+   These `!` commands only record a decision or a review answer
+   (`graphwatch decide`, `resolve`, `attend`); they never do the work itself:
 
    ```
    ! graphwatch decide <graph> <gate key> <decision> --note "<why>"
@@ -108,6 +110,23 @@ person can make, **ask in the same turn, before you stop**:
    (`needs: {kind: "human_decision", what}`) and reports `failed`, and the
    dispatcher's `ATTENTION` line and `enforcer dispatch status` carry these
    same commands to the person.
+
+**A decision is not a procedure.** Never hand a person a multi-step
+procedure as chat `!` commands or prose: a deploy, a roll or apply, a
+migration, a package publish, anything that needs their credentials or
+touches production. Run that way, it has no claimed run, no captured evidence
+and no acceptance line, so a mistake reaches their shell unchecked. Measured:
+a gate listed a whole deploy, and the coordinator handed the person eight
+hand-written `!` commands; one missed a required argument and one failed CI
+on `terraform fmt`, and an acceptance line would have caught both. Put the
+work in the graph instead: a prep node a worker runs, whose acceptance lines
+catch those mistakes (fmt, validate, the repo's check scripts, the plan output
+kept with `graph_remember`); a gate that asks only the yes or no, with
+`data.options`; an apply node a worker runs after the gate, or one assigned to
+the person with `assignee` when it must be them; and a verify or publish node
+whose `outputs` feed the dependents (a published version, say), so nobody is
+asked for a value in chat. When a ready gate turns out to hide work, split it
+before you ask.
 
 Never decide a gate or resolve a review item for the person, and never end a
 reply with a decision pending and no question or command for it.
@@ -411,6 +430,9 @@ cold:
   a full verify for nothing, and the hooks capture the merge evidence on the
   node that did the work. A merge node is only for something no code task owns
   (a release, a cross-repo cutover).
+- **A gate decides; it does not do work.** A gate's description names one
+  decision and its options. If a gate's description lists commands to run,
+  those commands are task nodes on either side of it.
 - **`data.tier` is required** on every node: `mechanical`, `standard` or
   `deep` (see "Coordinating subagents" for what each launches). Add
   `data.tier_reason` in one line.
