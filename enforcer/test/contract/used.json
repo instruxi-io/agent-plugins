@@ -169,6 +169,24 @@
       "headers": []
     },
     {
+      "id": "src/dispatch/api.mjs POST /graphs/{}/nodes/{}/runs/{}/usage",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "POST",
+      "path": "/graphs/{}/nodes/{}/runs/{}/usage",
+      "sends": [
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "turns",
+        "source"
+      ],
+      "reads": [],
+      "headers": []
+    },
+    {
       "id": "src/dispatch/api.mjs GET /graphs/{}/nodes/{}/runs",
       "file": "src/dispatch/api.mjs",
       "service": "graph",
@@ -210,6 +228,33 @@
       "service": "graph",
       "method": "GET",
       "path": "/graphs/{}/nodes/{}/observations",
+      "sends": [],
+      "reads": [
+        "data"
+      ],
+      "headers": []
+    },
+    {
+      "id": "src/dispatch/api.mjs POST /graphs/{}/nodes/{}/observations",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "POST",
+      "path": "/graphs/{}/nodes/{}/observations",
+      "sends": [
+        "body",
+        "kind",
+        "source",
+        "data"
+      ],
+      "reads": [],
+      "headers": []
+    },
+    {
+      "id": "src/dispatch/api.mjs GET /graphs/{}/questions",
+      "file": "src/dispatch/api.mjs",
+      "service": "graph",
+      "method": "GET",
+      "path": "/graphs/{}/questions",
       "sends": [],
       "reads": [
         "data"

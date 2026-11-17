@@ -207,7 +207,7 @@ export async function start(argv, env = process.env) {
 }
 
 /** The route table the runner will use, printed after preflight: a table that cannot be used stops here (exit 5). */
-export async function routesPreflight(argv, graph, env = process.env, { api = null, out = (s) => process.stdout.write(s) } = {}) {
+export async function routesPreflight(argv, graph, env = process.env, { api = null, out = (s) => process.stdout.write(s), harnessSys = null } = {}) {
   const { loadRoutes, routeLines, ProbeCache, RouteError } = await import('./dispatch/routes.mjs');
   const file = flagValue(argv, '--routes') || null;
   const noRoutes = argv.includes('--no-routes');
@@ -231,6 +231,14 @@ export async function routesPreflight(argv, graph, env = process.env, { api = nu
     if (loaded.table && api?.nodes) nodes = await api.nodes(graph).catch(() => []);
     const probes = loaded.table ? new ProbeCache({ ttl: Number.isFinite(ttl) ? ttl : 60, env }) : null;
     for (const l of await routeLines(loaded, args, { probes, nodes })) out(`${l}\n`);
+    // host checks for the harnesses this run can launch (codex: the binary, and whether its sandbox can start here)
+    const { runHarnesses, harnessPreflight } = await import('./dispatch/harness/index.mjs');
+    const checks = harnessPreflight(runHarnesses(loaded.table, args.harness), { codex: flagValue(argv, '--codex') || null }, harnessSys || { env });
+    for (const r of checks) out(`${r.ok ? 'ok  ' : 'fail'}  ${r.name}: ${r.line}\n`);
+    if (checks.some((r) => !r.ok)) {
+      process.stderr.write('enforcer dispatch: preflight failed, nothing started\n');
+      return 2;
+    }
     return 0;
   } catch (e) {
     if (!(e instanceof RouteError)) throw e;

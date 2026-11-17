@@ -14,6 +14,9 @@ process.env.npm_config_cache = path.join(dir, 'npm-cache');
 for (const k of Object.keys(process.env)) {
   if (/^(ENFORCER_|JEV_HOOKS_|GRAPH_|CLAUDE_PLUGIN_|TYPESAFE_|CODEX_HOME$)/.test(k)) delete process.env[k];
 }
+// Suites stub fetch in-process; the detached OAuth refresher (src/refresh-child.mjs) would not see the stub.
+// test/refresh-killed-caller.test.mjs turns it back on for its own children.
+process.env.ENFORCER_REFRESH_INPROCESS = '1';
 // ...nor the developer's desktop: the dispatcher's notify-send is real, and --attend suites ring it.
 process.env.ENFORCER_DISPATCH_NOTIFY = '0';
 const rm = () => {

@@ -299,7 +299,7 @@ export function remediationPrompt(graph, node, path, branch, failures, extra = {
     'Fix the cause, not the symptom: find WHY it failed (missing context, a wrong assumption, a ' +
       'prerequisite) before you change anything, and say in your report what the cause was. If the cause ' +
       'is outside this node (a missing prerequisite, a human decision), graph_remember it structured and ' +
-      'report failed: the dispatcher triages the node next, it does not relaunch it a third time.',
+      'report failed: the dispatcher records why it stopped and leaves the node for a person, it does not relaunch it a third time.',
   ];
   return [...lines, workerPrompt(graph, node, path, branch, null, extra)].join('\n');
 }

@@ -5,10 +5,10 @@ Status: implemented for claude. Items 1-3 and 6 are in `src/dispatch/routes.mjs`
 Today one dispatcher run has one harness and each node has one model:
 
 - the harness is fixed per run by `--harness` (`src/dispatch/run.mjs` reads `this.args.harness || 'claude'` when it builds the agent MCP config (~340), when it reaps a worker (~568) and when it shuts down (~706); `src/dispatch/launch.mjs` `HARNESS_CAPS` says what each harness can do and `launchCmd` builds its command line);
-- the model is chosen per node by `modelFor` in `src/dispatch/model.mjs` (`data.model`, then a user tier through `TIER_MODEL`, then `--model`, then the tier, then sonnet);
+- the model is chosen per node by `modelFor` in `src/dispatch/model.mjs` (`data.model`, then a user tier through `TIER_MODEL`, then `--model`, then the tier, then sonnet). `TIER_MODEL` matches enforcer-graph `tiers.Model`: `mechanical` is `script-or-haiku`, `standard` is `sonnet`, `deep` is `opus`;
 - every worker talks to its harness's default provider; there is no way to point a tier at a self-hosted endpoint.
 
-A **route** binds a tier to a harness, a model and optionally an endpoint, so one dispatcher run can send mechanical nodes to a local model under one harness and deep nodes to Opus under Claude Code. The sections below are numbered as the node that asked for this design numbers them.
+A **route** binds a name to a harness, a model and optionally an endpoint. The name is a tier (`mechanical`, `standard`, `deep`, `untiered`) or any other lowercase name (`local`). A node selects a named route with `data.route`; with no `data.route` the route is its tier. One dispatcher run can send `data.route: local` nodes to a model on the DGX and deep nodes to Opus under Claude Code. The sections below are numbered as the node that asked for this design numbers them.
 
 ## 1. The route table
 
@@ -21,12 +21,13 @@ A **route** binds a tier to a harness, a model and optionally an endpoint, so on
     "mechanical": { "harness": "codex",  "model": "Qwen3.8-27B", "endpoint": { "url": "http://gpu1:8000", "api": "openai", "token_env": "VLLM_TOKEN" }, "fallback": "route:standard" },
     "standard":   { "harness": "claude", "model": "Qwen3.8-27B", "endpoint": { "url": "http://gpu1:8001", "api": "anthropic", "token_env": "VLLM_TOKEN" }, "fallback": "wait" },
     "deep":       { "harness": "claude", "model": "opus" },
-    "untiered":   { "harness": "claude", "model": "sonnet" }
+    "untiered":   { "harness": "claude", "model": "sonnet" },
+    "local":      { "harness": "codex", "model": "qwen3.8-flash-next", "endpoint": { "url": "http://spark-dd15:8000", "api": "openai" }, "fallback": "wait" }
   }
 }
 ```
 
-One entry per tier key: `mechanical`, `standard`, `deep`, and `untiered` (a node with no `data.tier`, or a tier that is not one of the three). Every entry is optional; a tier with no entry has no route and falls through the precedence in section 2.
+One entry per key. The tier keys are `mechanical`, `standard`, `deep`, and `untiered` (a node with no `data.tier`, or a tier that is not one of the three). Any other key matching `[a-z][a-z0-9_-]{0,63}` is a named route, selected only by `data.route` (for example `local`). A key that is a harness name (`claude`, `codex`, `grok`, `gemini`) is refused: `route:<harness>` is the fallback that means that harness's own provider. Every entry is optional; a tier with no entry has no route and falls through the precedence in section 2. A copy of the `local` entry is [routes.local.example.json](routes.local.example.json): Qwen `qwen3.8-flash-next` on the DGX host `spark-dd15`. The box serves an OpenAI-compatible vLLM at `http://spark-dd15:8000/v1`; the route's `url` is the root `http://spark-dd15:8000` (no path past the root, no token). The probe reads `<url>/v1/models` and Codex sets `base_url` to `<url>/v1`. A codex route needs `--experimental`.
 
 | field | required | meaning |
 |---|---|---|
@@ -54,7 +55,8 @@ The table is validated once at startup, before the lease is taken; any error is 
 
 - `routes: <source>: not valid JSON: <parser message>`
 - `routes: <source>: version must be 1`
-- `routes.<tier>: unknown tier (expected mechanical, standard, deep, untiered)`
+- `routes.<name>: unknown route name (a tier: mechanical, standard, deep, untiered, or a lowercase name such as local)`
+- `routes.<name>: route name <harness> is a harness; use it only as a route:<harness> fallback`
 - `routes.<tier>.<field>: unknown field` (typos such as `modle` are caught, not ignored)
 - `routes.<tier>.harness: must be one of claude, codex, grok`
 - `routes.<tier>.harness: <harnessRefusal message>` (an unsupported harness, or an experimental one without `--experimental`)
@@ -64,7 +66,7 @@ The table is validated once at startup, before the lease is taken; any error is 
 - `routes.<tier>.endpoint.api: <harness> cannot speak <api>` (see the matrix in section 4: e.g. codex with `anthropic`)
 - `routes.<tier>.endpoint.token_env: <NAME> is not set` (set but empty also counts as not set)
 - `routes.<tier>.endpoint.token_env: must be a variable name, not a token` (a value that matches the redactor's token shapes, or contains characters other than `[A-Z0-9_]`)
-- `routes.<tier>.fallback: must be wait or route:<tier|harness>`
+- `routes.<tier>.fallback: must be wait or route:<route|harness>` (`<route>` is a tier or another key in the same table)
 - `routes.<tier>.fallback: route:<x> forms a cycle (<a> -> <b> -> <a>)` or `points at a route that itself has a down endpoint and no fallback`
 
 ## 2. Precedence
@@ -74,13 +76,13 @@ For each node the dispatcher resolves harness, model and endpoint separately, ea
 | | harness | model | endpoint |
 |---|---|---|---|
 | 1 | node `data.harness` | node `data.model` (or the claim card's `model`) | the route's, only when the route also gave the harness |
-| 2 | the route for the node's tier | the route for the node's tier | none |
+| 2 | `data.route` when that key is in the table, else the route for the node's tier | the same route | none |
 | 3 | `--harness` | `--model` | |
 | 4 | `claude` | `TIER_MODEL[tier]`, else `sonnet` | |
 
 Rules that keep this predictable:
 
-- **A route is chosen by tier**, with `untiered` for no tier. The tier is the node's `data.tier` whatever its `tier_source`.
+- **A route is chosen by name, then by tier.** `data.route` (`local`, or a tier name) selects that entry when the table has it. A name the table does not have is refused (`unknown route <name>`): it is not silently the tier's route, for a private node or any other. With no `data.route`, the route is the node's tier, and `untiered` when the tier is missing or not one of the three. The tier is the node's `data.tier` whatever its `tier_source`, and it still picks the model when no route applies: `mechanical` is `script-or-haiku`, `standard` is `sonnet`, `deep` is `opus` (enforcer-graph `internal/tiers.Model`).
 - **An endpoint never outlives its harness.** If `data.harness` names a harness other than the route's, the route's endpoint and model are dropped (a Qwen-on-vLLM model name means nothing to the provider of another harness); the node runs on that harness with `data.model`, else `--model`, else the default.
 - **`--model` still caps.** Today `--model` caps a node's model unless the tier was set by a person (`tier_source: user`). With routes: `--model` caps every route model that does NOT carry an endpoint and is ranked above the cap (`opus` > `sonnet` > `haiku`; names outside that ladder are not ranked and are not capped). A route model behind an endpoint is never capped: it is not a hosted-provider spend. A `tier_source: user` tier is still exempt from the cap, so a person's `deep` stays on the deep route's model. `data.model` is never capped (as today).
 - **`--harness` is now a default, not a law**: it applies to tiers with no route and no `data.harness`. Preflight prints when a route overrides it (section 6).
@@ -99,10 +101,22 @@ A probe result is cached per endpoint URL for `--route-probe-ttl` seconds (defau
 Per route, `fallback` says what a down endpoint does to a node that wants it:
 
 - `wait` (default): the node is not launched this pass and spends no attempt. The dispatcher logs `route <tier>: endpoint <url> down (<reason>); holding <keys>` once per 10 minutes and keeps polling at `--interval`. A run whose only remaining work is held on a down endpoint does not exit as "nothing runnable"; it waits, as it waits on verdicts (`--exit-when-idle` restores the exit).
-- `route:<tier>`: launch the node on that tier's route instead (`route:deep`, `route:standard`, `route:untiered`), probing it in turn if it has an endpoint. Chains are followed, cycles are refused at validation.
-- `route:<harness>`: launch on that harness with no endpoint and the model from precedence rules 3 and 4 (`route:claude` = "use Claude's own provider, `--model` or the tier default").
+- `route:<route>`: launch the node on that route instead (`route:deep`, `route:standard`, `route:local`), probing it in turn if it has an endpoint. The target is a tier or another key in the table. Chains are followed, cycles are refused at validation. A tier name with no entry falls through the precedence in section 2.
+- `route:<harness>`: launch on that harness with no endpoint and the model from precedence rules 3 and 4 (`route:claude` = "use Claude's own provider, `--model` or the tier default"). This is a hosted provider. A node with `data.private: true` never takes it.
 
 A fallback launch is logged `launch <key> ... route=<tier>->fallback:<target> (endpoint down: <reason>)` and recorded in pids.json (section 5), so the summary and the report show the node did not run where its route said. `--model` caps a fallback model by the same rule as section 2 (a fallback to the hosted provider is capped; to another endpoint, not).
+
+### Private nodes fail closed
+
+`data.private: true` means only an endpoint route may run the node. The dispatcher does not follow a fallback that would leave the endpoint:
+
+- **Endpoint up.** The node runs on that route, even when the route's `fallback` is `route:claude` or another hosted provider.
+- **Endpoint down** (unreachable, HTTP error, not JSON, or the route's model is not in `data[].id`). The node **waits**: it is not launched, it spends no attempt, and the next pass probes again. The fallback is wait, whatever the table says. It is not sent to `route:<harness>`, to a tier route with no endpoint, or to a model whose name starts with `claude-`.
+- **No endpoint route.** No table, a tier route with no endpoint, `data.route` naming a route that has no endpoint (or whose endpoint was dropped because `data.harness` names another harness), or a model id matching `claude-*`: the dispatcher **refuses** the node (`REFUSE <key>: private node has no endpoint route`, or `private node route <name> has no endpoint`, or `private node will not run a hosted model (<model>)`). Nothing is launched and no attempt is spent. The run does not exit as if the graph were finished (`--exit-when-idle` still exits).
+
+A node that is not private is unchanged: no `data.route` uses the tier, and a down endpoint follows the route's fallback, including a hosted provider.
+
+The dispatcher reads `data.route` and `data.private` off the node the frontier returns. enforcer-graph does not yet return an `assignment_mode` or a reserved-route field (nothing in the graph service is named that). Until it does, those two `data` keys are the whole contract, and an editor who can patch `data` can clear `private`. A hard reservation has to be enforced on the server and returned on the frontier.
 
 ## 4. Worker environment per harness
 
@@ -130,20 +144,43 @@ Drop, even though `ENV_ALLOW` passes them today: `CLAUDE_CODE_OAUTH_TOKEN` (it w
 
 ### Codex (`api: openai`)
 
-Codex reads providers from its config, not from flags alone. The dispatcher writes `<state>/codex-<key>/config.toml` (mode 0600, removed when the worker exits, like `mcp-<key>.json`) and launches with `CODEX_HOME=<state>/codex-<key>`:
+**Built** in 1.11.0 (`src/dispatch/harness/codex.mjs`; behaviour in DISPATCHER.md "Codex workers"). The dispatcher writes `<state>/codex-<key>/config.toml` (directory 0700, file 0600, removed when the worker exits, on shutdown and at start, like `mcp-<key>.json`) and launches with `CODEX_HOME=<state>/codex-<key>`:
 
 ```toml
-model = "Qwen3.8-27B"
+model = "qwen3.8-flash-next"
 model_provider = "route"
+model_reasoning_effort = "medium"
+check_for_update_on_startup = false
+cli_auth_credentials_store = "file"
+mcp_oauth_credentials_store = "file"
 
 [model_providers.route]
 name = "route mechanical"
-base_url = "http://gpu1:8000/v1"
+base_url = "http://127.0.0.1:11434/v1"
 env_key = "ENFORCER_ROUTE_TOKEN"
-wire_api = "chat"
+wire_api = "responses"
+
+[mcp_servers.enforcer]
+url = "https://api.instruxi.dev/mcp"
+env_http_headers = { "X-API-Key" = "ENFORCER_API_KEY" }
+default_tools_approval_mode = "approve"
+
+[analytics]
+enabled = false
+
+[otel]
+# the managed block from lib/governor/adapters/codex/telemetry.mjs, with the codex ingest key
 ```
 
-The token goes in the environment as `ENFORCER_ROUTE_TOKEN` (the file names the variable, never the value). `OPENAI_API_KEY` and `OPENAI_BASE_URL` are not passed. `HARNESS_CAPS.codex` must first become `supported: true` (the stream parser it lacks today); until then a route naming codex is refused at validation with the existing `harnessRefusal` message.
+What differs from the design it replaced:
+
+- `wire_api = "responses"`, not `"chat"`: Codex 0.164 supports only the Responses API, which vLLM serves.
+- `base_url` is the route's `url` plus `/v1` (validation keeps `url` at the root, and the probe reads `<url>/v1/models`).
+- The token goes in the environment as `ENFORCER_ROUTE_TOKEN`, or `none` when the route names no `token_env`; `OPENAI_API_KEY` is set to `none` (as measured on the Spark) and the operator's `OPENAI_BASE_URL`, `CODEX_HOME` and `CODEX_API_KEY` are not passed.
+- The same file carries the enforcer MCP server (its header read from `ENFORCER_API_KEY`, the worker's credential, by name) and the governance `[otel]` export, and an `AGENTS.md` with the graph-worker instructions sits next to it.
+- A codex route WITHOUT an endpoint gets no CODEX_HOME of its own: it keeps the operator's (its login, plugin and hooks).
+- `HARNESS_CAPS.codex` stays `experimental: true` until a codex route is proven end to end; a route naming codex needs `--experimental`.
+- A codex route with `api: anthropic` is refused at validation: `routes.<tier>.endpoint.api: codex cannot speak anthropic`.
 
 ### Grok
 
@@ -232,5 +269,6 @@ Run: `VLLM_TOKEN=… enforcer dispatch run <graph> --workers 4 --model sonnet`.
 - A `standard` node: `claude -p … --model Qwen3.8-27B` with `ANTHROPIC_BASE_URL=http://gpu1:8001`, `ANTHROPIC_AUTH_TOKEN=<VLLM_TOKEN>`, every `ANTHROPIC_DEFAULT_*_MODEL` set to `Qwen3.8-27B`, and no `CLAUDE_CODE_OAUTH_TOKEN`, Bedrock or Vertex variable.
 - A `deep` node: `claude -p … --model sonnet` — `--model sonnet` caps the route's `opus` because it has no endpoint — unless the node's tier is `tier_source: user`, in which case `--model opus`, exactly as today. Environment unchanged from today.
 - An untiered node: no `untiered` route, so `--harness` (claude) and `--model sonnet`.
-- If port 8000 goes down: mechanical nodes fall to `route:standard` (Claude against port 8001, probed in turn); if 8001 is also down, `route:claude` sends them to Anthropic with `--model sonnet`. Each such launch is logged with `fallback_from` and shown in `dispatch status`.
+- If port 8000 goes down: mechanical nodes fall to `route:standard` (Claude against port 8001, probed in turn); if 8001 is also down, `route:claude` sends them to Anthropic with `--model sonnet`. Each such launch is logged with `fallback_from` and shown in `dispatch status`. A node with `data.private: true` does not take either hop: it waits on the endpoint it was routed to (section 3).
+- A node with `data.route: local` uses [routes.local.example.json](routes.local.example.json) instead of its tier: Codex against `http://spark-dd15:8000` (the OpenAI-compatible base is `http://spark-dd15:8000/v1`), model `qwen3.8-flash-next`, `fallback: wait`.
 - `pids.json` records `harness: codex` for the mechanical workers and `claude` for the rest; a reap reads each worker's stream with its own parser.

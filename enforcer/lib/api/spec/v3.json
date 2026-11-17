@@ -3053,7 +3053,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "p2p (no machine tag — a real person-to-person transfer) | deposit (DEPOSIT:) | billpay (BP:) | direct (DIRECT:) | reward (RWD:) | terminal (TERMINAL: — a POS sale)",
+            "description": "p2p (no machine tag — a real person-to-person transfer) | deposit (DEPOSIT:) | billpay (BP:) | direct (DIRECT:) | reward (RWD:) | terminal (TERMINAL: — a POS sale) | sale (STORE: — a merchant sale, e.g. a travel booking; never in p2p)",
             "schema": {
               "type": "string",
               "enum": [
@@ -3062,7 +3062,10 @@
                 "billpay",
                 "direct",
                 "reward",
-                "terminal"
+                "terminal",
+                "withdraw",
+                "refund",
+                "sale"
               ]
             }
           },
@@ -3132,6 +3135,18 @@
             }
           },
           {
+            "name": "category",
+            "in": "query",
+            "description": "narrow to one sale classification (merchant | travel). Unknown values are 400 invalid_category.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merchant",
+                "travel"
+              ]
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "page size",
@@ -3181,6 +3196,87 @@
           },
           "403": {
             "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/fulfillments/category-backfill": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "History for MegPrime/megprime-v2#146. Sales created now carry their merchant's category from enforcer-mp-merchant; this covers the ones before, and follows a merchant that was re-categorised.\n\n**scope `store` (default)** — sets `category` (the store's MERCHANT category, stated by the operator) on the store's existing sales. **Matching is exact, never name-based**: a fulfillment matches when its reference is `STORE:<store_id>` or starts with `STORE:<store_id>:`, in the tenant, optionally within `created_after` (inclusive) / `created_before` (exclusive). An uncategorised sale is `set`, one with a different category is `changed`, one already carrying it is `already_set`; a matching row that is not a sale is `skipped`. **Only sales a trusted service raised are classified**: a sale whose reference matches but which was created on the account path (`POST /fulfillments`, where anyone can type `STORE:`) or by a service that may not state categories is counted in `skipped_untrusted`, listed in `skipped_untrusted_ids`, and neither changed nor re-emitted. Every confirmed classified match re-emits `fulfillment.settled` (plus `fulfillment.refunded` for its confirmed refunds).\n\n**scope `p2p`** — changes nothing; re-emits `fulfillment.settled` (plus `fulfillment.refunded`) for every confirmed p2p payment with `created_after` <= created_at < `created_before` (both required).\n\n**scope `sale_reemit`** — changes nothing (no `category`; writes no fulfillment); re-emits `fulfillment.settled` (plus `fulfillment.refunded` for confirmed refunds) for every CONFIRMED sale of `store_id`, matched exactly as scope `store`, with `created_after` <= created_at < `created_before` (both required). Its purpose is to carry `input_token`/`input_spent` to a consumer that recorded the settlement before the event had them. A sale raised by a service allowed to state categories is emitted exactly as its live confirm would (`emitted_trusted`); any other sale is emitted with `category` and `merchant_reward_percentage` set to `\"\"` and every other field unchanged (`emitted_untrusted_stripped`). A matching row that is not a confirmed sale is `skipped`. `set`/`changed`/`already_set` are always 0 and `fulfillment_ids` empty; `emitted_ids` lists the emitted sales (first 500; `emitted_ids_truncated` when capped).\n\nThe body is strict JSON: an unknown key is a 400 `invalid_body` (a misspelled window or store would otherwise silently widen the run).\n\n**dry_run defaults to true** and writes and emits nothing. A real run (`dry_run: false`) writes and emits through the outbox in one transaction; consumers are idempotent, so a repeat run is safe. `reason` (10+ characters) is required and audited with the counts. Refuses (422 `backfill_too_many`) a run matching more than 2000 rows: narrow the window.",
+        "tags": [
+          "fulfillment"
+        ],
+        "summary": "Backfill sale categories / re-emit settlement events (system admin, dry_run by default)",
+        "operationId": "adminBackfillFulfillmentCategory",
+        "requestBody": {
+          "required": true,
+          "description": "scope, store, category, window, reason",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.CategoryBackfillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.CategoryBackfillResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body (not JSON, unknown key) / invalid_backfill (scope, category, store_id, reason, window)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "backfill_too_many",
             "content": {
               "application/json": {
                 "schema": {
@@ -3412,7 +3508,7 @@
             "BearerAuth": []
           }
         ],
-        "description": "System admin, or a role carrying the `mpp_ops` grant. Oldest first. `forwarder` finds the intent behind a deposit address (an exact match; a malformed address is 400 invalid_filter). Each row is the intent, its fulfillment's status and every transfer seen at its forwarder. `state=received,overpaid` is what an operator settles; `underpaid,parked` (and expired) is what an operator refunds. Read-only.",
+        "description": "System admin, or a role carrying the `mpp_ops` grant. Oldest first. `forwarder` finds the intent behind a deposit address (an exact match; a malformed address is 400 invalid_filter). Each row is the intent (with `dust_wei`, the balance recorded when it closed as `closed_dust`), its fulfillment's status and every transfer seen at its forwarder. `expired` and `closed_dust` are terminal: the settle worker closed them and moves no money for them. `state=received,overpaid` is what an operator settles; `underpaid,parked` (and awaiting past expiry with a balance) is what an operator refunds. Read-only.",
         "tags": [
           "fulfillments"
         ],
@@ -3422,7 +3518,7 @@
           {
             "name": "state",
             "in": "query",
-            "description": "comma list: awaiting,received,underpaid,overpaid,settling,settled,refunded,parked",
+            "description": "comma list: awaiting,received,underpaid,overpaid,settling,settled,refunded,parked,expired,closed_dust",
             "schema": {
               "type": "string"
             }
@@ -17111,6 +17207,16 @@
               }
             }
           },
+          "403": {
+            "description": "refund_wallet_service_only / category_service_only / merchant_reward_percentage_service_only / store_display_service_only / classification_service_only — fields only a trusted service may set (POST /service/fulfillments)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "memo_taken — the supplied memo is already in use by a live (pending/claimed/submitted) fulfillment in this tenant. memo is the join key to on-chain settlement; omit it and the server mints one.",
             "content": {
@@ -17625,7 +17731,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Every group in the caller's tenant (the policy's baseline group-read rule — any authenticated member of a tenant may list its groups), except groups of a MEMBERS-ONLY type (e.g. graph_team): those are listed only to their creator, their members and tenant-wide readers (admins). q searches name/description, type_id (or type, by slug) filters to one group_type, sort is name (A-Z, default) | name_desc | recent | oldest | graph (one graph's groups together, groups of no graph last). include=stats adds graph_count and membership_count, totalled over the whole selection (every page): the distinct graphs its groups belong to and their human memberships summed. They are omitted without include=stats, and also when that aggregate fails (the page itself still returns). Groups of a RESERVED type (a service's, e.g. enforcer-graph's per-DAG sharing groups) are omitted unless include_reserved=true or type_id names that type. Archived groups are omitted unless archived=true|all.",
+        "description": "Every group in the caller's tenant (the policy's baseline group-read rule — any authenticated member of a tenant may list its groups), except groups of a MEMBERS-ONLY type (e.g. graph_team): those are listed only to their creator, their members and tenant-wide readers (admins). q searches name/description, type_id (or type, by slug) filters to one group_type, sort is name (A-Z, default) | name_desc | recent | oldest | graph (one graph's groups together, groups of no graph last). include=stats adds graph_count and membership_count, totalled over the whole selection (every page): the distinct graphs its groups belong to and their human memberships summed. They are omitted without include=stats, and also when that aggregate fails (the page itself still returns). Groups of a RESERVED type (a service's, e.g. enforcer-graph's per-DAG sharing groups) are omitted unless include_reserved=true or type_id names that type. Archived groups are omitted unless archived=true|all. member=me|mine counts only ACTIVE memberships (an expired or not-yet-started time-bounded membership is not membership), and each group the caller is an active member of carries `membership` {role, joined_at, starts_at, expires_at, status}; member_count / agent_count / membership_count count active memberships only.",
         "tags": [
           "groups"
         ],
@@ -18581,7 +18687,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Members of a group, each as its account view plus the MEMBERSHIP: `membership.role` (member | manager), `membership.joined_at` and `membership.added_by` (null for system grants and memberships older than the field). role filters by membership role (400 invalid_role on any other value); joined_from/joined_to bound joined_at (YYYY-MM-DD = whole UTC day, or RFC3339; 400 on malformed); sort is name (default) | name_desc | joined | joined_desc, ties broken by account id. Peer contact fields are redacted unless the caller holds an admin-read grant.",
+        "description": "Members of a group, each as its account view plus the MEMBERSHIP: `membership.role` (member | manager), `membership.joined_at` and `membership.added_by` (null for system grants and memberships older than the field). role filters by membership role (400 invalid_role on any other value); joined_from/joined_to bound joined_at (YYYY-MM-DD = whole UTC day, or RFC3339; 400 on malformed); sort is name (default) | name_desc | joined | joined_desc, ties broken by account id. Each membership also carries its validity window — `membership.starts_at` / `membership.expires_at` (null = open on that side) — and a computed `membership.status`: active | scheduled (starts_at in the future) | expired (expires_at passed). Expired memberships are KEPT, not deleted, and grant nothing. status filters on it and DEFAULTS TO active — who is in the group now, which is what this list answered before memberships could expire (400 invalid_status on any other value). active_at (RFC3339) keeps only memberships active at that instant — \"was X a member on D\" (400 invalid_active_at on malformed); it combines with status by AND. status=expired|scheduled|all and active_at reveal lapsed and future memberships, so they require the caller to hold a tenant admin-read grant OR write permission on this group (the permission the membership routes require); anyone else gets 403 membership_history_forbidden. Peer contact fields are redacted unless the caller holds an admin-read grant.",
         "tags": [
           "groups"
         ],
@@ -18645,6 +18751,28 @@
                 "joined",
                 "joined_desc"
               ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "membership status filter (default active; other values need admin read or group write)",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "scheduled",
+                "expired",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "active_at",
+            "in": "query",
+            "description": "only memberships active at this instant (RFC3339; needs admin read or group write)",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -18716,7 +18844,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Adds one account to a group by account_id (ResourceAuth write on the group), optionally in a role (member, the default, or manager); an existing member keeps their role and joined_at — PATCH the membership to change the role. 400 invalid_role on any other role. 403 cross_tenant_member if the target account is not in the group's tenant — group membership never spans tenants. 403 group_type_reserved on a group of a RESERVED type unless the caller holds the tenant_manage grant. 409 group_archived on an archived group.",
+        "description": "Adds one account to a group by account_id (ResourceAuth write on the group), optionally in a role (member, the default, or manager); an existing member keeps their role and joined_at — PATCH the membership to change the role. 400 invalid_role on any other role. Optional starts_at / expires_at (RFC3339) make the membership time-bounded: it grants only inside [starts_at, expires_at), and is kept (not deleted) once it expires. 400 invalid_starts_at / invalid_expires_at on a malformed value, invalid_window when expires_at is not after starts_at, expires_at_in_past when expires_at has already passed. Adding an EXISTING member (active, scheduled or expired) WITH a window renews that membership's window in place — role and joined_at kept — and writes a group.member_window_changed audit record (via=renew, from/to) instead of group.member_added; the response is then 200 rather than 201. A renewal MERGES like PATCH: a bound you omit keeps the membership's current value (send starts_at alone and its expires_at stays), and the MERGED window is validated under the row lock — 400 invalid_window / expires_at_in_past, nothing written. Without a window an existing ACTIVE member is left exactly as it was (201, nothing announced), and an existing INACTIVE one (expired or scheduled) is 409 membership_inactive — renew it with a window (POST starts_at / expires_at) or PATCH it. group.member_added, the membership event and the welcome email are written only when a membership was actually created. 403 cross_tenant_member if the target account is not in the group's tenant — group membership never spans tenants. 403 group_type_reserved on a group of a RESERVED type unless the caller holds the tenant_manage grant. 409 group_archived on an archived group.",
         "tags": [
           "groups"
         ],
@@ -18745,6 +18873,16 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "an existing member's window was renewed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.OKResponse"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Created",
             "content": {
@@ -18808,7 +18946,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Adds many accounts to one group in a single call, reporting EVERY id's outcome rather than aborting on the first problem: `added`, `already_member` (membership is a set, so re-running an import is a no-op, not an error), `not_found`, or `cross_tenant`. Authorization is the same ResourceAuth write on the GROUP that the single-member POST runs — there is no per-account permission to add somebody to a group you may already write — so the ids in the body are data, not resources. A cross-tenant account is a row outcome here rather than the whole-request 403 the single-member path answers, because one bad line must not discard a correct import; the invariant is unchanged and such an account is never added. Duplicate ids within one call collapse, and the second mention reports already_member. One membership event and one audit record are written per member actually added, exactly as the single-member path writes them. role (member | manager, default member) applies to every ADDED member; existing members keep theirs; any other role is 400 invalid_role. 409 group_archived on an archived group. At most 1000 ids per call.",
+        "description": "Adds many accounts to one group in a single call, reporting EVERY id's outcome rather than aborting on the first problem: `added`, `already_member` (membership is a set, so re-running an import is a no-op, not an error), `not_found`, or `cross_tenant`. Authorization is the same ResourceAuth write on the GROUP that the single-member POST runs — there is no per-account permission to add somebody to a group you may already write — so the ids in the body are data, not resources. A cross-tenant account is a row outcome here rather than the whole-request 403 the single-member path answers, because one bad line must not discard a correct import; the invariant is unchanged and such an account is never added. Duplicate ids within one call collapse, and the second mention reports already_member. One membership event and one audit record are written per member actually added, exactly as the single-member path writes them. role (member | manager, default member) applies to every ADDED member; existing members keep theirs; any other role is 400 invalid_role. Optional starts_at / expires_at (RFC3339) bound every added membership, and an EXISTING member (even an expired one) is then reported `renewed` instead of `already_member`: the window is MERGED into theirs in place (a bound you omit keeps the member's current value; role and joined_at kept) with one group.member_window_changed audit record each. Each row's MERGED window is validated on its own: a row whose merged window would end before it starts reports `invalid_window`, one that has already ended `expires_at_in_past`, and that row is left unchanged while the rest proceed. WITHOUT a window, an existing member whose membership is EXPIRED or SCHEDULED reports `inactive` (left unchanged, nothing announced — renew it with a window or PATCH it) rather than `already_member`. Identity is checked first for every row, a renewal included: a deleted account is `not_found` and another tenant's is `cross_tenant` even when an old membership row exists. Events, audit rows and emails are written only for memberships actually created. 400 invalid_starts_at / invalid_expires_at / invalid_window / expires_at_in_past on a malformed or self-contradictory request window, as on the single-member add. 409 group_archived on an archived group. At most 1000 ids per call.",
         "tags": [
           "groups"
         ],
@@ -19142,11 +19280,11 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Changes one membership's role in place (member | manager). joined_at and added_by are kept, and ONE group.member_role_changed audit record (metadata: account_id, from, to) is written — where remove + re-add reset joined_at and wrote two. Setting the role a member already has is a no-op success with no audit row. The role is descriptive today: no authorization rule reads it. Same ResourceAuth write on the group as every membership change. 400 invalid_role, 404 membership_not_found, 403 group_type_reserved, 409 group_archived.",
+        "description": "Changes one membership in place: its role (member | manager) and/or its validity window. joined_at and added_by are kept. A role change writes ONE group.member_role_changed audit record (metadata: account_id, from, to) — where remove + re-add reset joined_at and wrote two; setting the role a member already has is a no-op with no audit row. The role is descriptive today: no authorization rule reads it. starts_at / expires_at (RFC3339) set a bound, JSON null clears it (open-ended on that side), omitted leaves it; a window change writes a group.member_window_changed audit record (via=patch, from/to) and a group.membership window_changed event. The window is validated as a whole after the change: 400 invalid_window if expires_at is not after starts_at, expires_at_in_past if a NEWLY given expires_at has passed, invalid_starts_at / invalid_expires_at on a malformed value. At least one of role, starts_at, expires_at must be sent (400 invalid_role otherwise, as before). A PATCH carrying both a role and a window applies them in ONE transaction: either both change or neither does. Same ResourceAuth write on the group as every membership change. 404 membership_not_found, 403 group_type_reserved, 409 group_archived.",
         "tags": [
           "groups"
         ],
-        "summary": "Change a member's role",
+        "summary": "Change a member's role or window",
         "operationId": "updateGroupMember",
         "parameters": [
           {
@@ -19170,7 +19308,7 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "new role",
+          "description": "new role and/or window",
           "content": {
             "application/json": {
               "schema": {
@@ -19381,6 +19519,371 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/internal_delivery_http_handler.HealthStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kiosk/enrollments": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "A kiosk operator enrolls a person who has no account in this workspace yet: `first_name`, `last_name` and EXACTLY ONE of `email` | `phone`. The contact is validated like sign-in (bare email address, disposable-domain policy → 403 `email_domain_blocked`; phone normalized to E.164, blocked calling codes → 403 `phone_country_blocked`). A live account in this workspace that already holds the contact is 409 `already_enrolled` — the person checks in with their PIN instead; a switched-off one is 409 `account_inactive`. Otherwise a one-time code is sent to the contact the way sign-in codes are (the sign-in email, at the workspace's code length; or an SMS via Twilio Verify, 6 digits) and the response says where (masked) and until when (10 minutes). Operator: developer role or higher, or an active member of the workspace's `kiosk` group (enforcer_apis) — anyone else is 403 `kiosk_operator_required`; the person's own sign-in only (403 `person_credential_required` for API keys, portal links, agent and OAuth/delegated tokens). 429 `rate_limited` (Retry-After header and `data.retry_after`) past 30 starts per operator / 60 per IP / 5 sends per contact per 15 minutes, or past the sign-in send budget for the address. 503 `sms_not_configured` when the workspace has no SMS provider.",
+        "tags": [
+          "kiosk"
+        ],
+        "summary": "Start kiosk enrollment",
+        "operationId": "startKioskEnrollment",
+        "requestBody": {
+          "required": true,
+          "description": "the person being enrolled",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentSentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.PinRateLimitedResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kiosk/enrollments/{id}/complete": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Proves the code sent by the start and creates the person's account in the operator's workspace: role `user`, the contact verified, the names set, and the `pin` (exactly 4 or 6 digits, the POST /auth/me/pin rule) as its check-in PIN — all in one transaction. A verified email joins the person it already anchors in other workspaces; a phone always gets a new person. The workspace's default groups are then applied. Returns the new account. A wrong code is 422 `invalid_code` with `data.attempts_remaining`; the 5th wrong code locks the enrollment (423 `enrollment_locked`, start again). 410 `enrollment_expired` after 10 minutes (resend to renew). 409 `enrollment_completed` when it already completed, 409 `already_enrolled` when the contact became a member meanwhile. 400 `invalid_pin` before any code is checked. 404 `enrollment_not_found` (including another workspace's enrollment). The account has no sign-in credential yet: the person's first email or SMS sign-in claims it. Same operator rule as the start; 429 `rate_limited` past 60 completions per operator / 120 per IP per 15 minutes. No code or PIN is logged or returned.",
+        "tags": [
+          "kiosk"
+        ],
+        "summary": "Complete kiosk enrollment",
+        "operationId": "completeKioskEnrollment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "enrollment id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "the code that was sent and the new PIN",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentCompleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentCompletedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Gone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.KioskCodeInvalidResponse"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Locked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.PinRateLimitedResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/kiosk/enrollments/{id}/resend": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Sends a NEW code for a pending enrollment (the previous code stops working) and restarts its 10-minute window — also how an expired enrollment is renewed. Wrong-code attempts carry over. At most 5 sends per enrollment (429 `resend_limit`), at least 30 seconds apart (429 `resend_cooldown` with Retry-After and `data.retry_after`). 404 `enrollment_not_found` (including another workspace's enrollment), 409 `enrollment_completed`, 423 `enrollment_locked`. Same operator rule and limits as the start.",
+        "tags": [
+          "kiosk"
+        ],
+        "summary": "Resend kiosk enrollment code",
+        "operationId": "resendKioskEnrollment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "enrollment id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentSentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Locked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.PinRateLimitedResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
                 }
               }
             }
@@ -19716,7 +20219,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "narrow to one product line: p2p (no machine tag — a real person-to-person transfer) | deposit | billpay | direct | reward | terminal (a POS sale)",
+            "description": "narrow to one product line: p2p (no machine tag — a real person-to-person transfer) | deposit | billpay | direct | reward | terminal (a POS sale) | sale (a merchant sale — STORE:, e.g. a travel booking; p2p no longer includes these)",
             "schema": {
               "type": "string",
               "enum": [
@@ -19725,7 +20228,10 @@
                 "billpay",
                 "direct",
                 "reward",
-                "terminal"
+                "terminal",
+                "withdraw",
+                "refund",
+                "sale"
               ]
             }
           },
@@ -19747,6 +20253,18 @@
                 "include",
                 "exclude",
                 "only"
+              ]
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "narrow to one classification, filtered server-side before pagination (total is the filtered total). travel = sales by a travel merchant (MegPrime/megprime-v2#146), merchant = every other merchant sale. Only sales carry a category. Still scoped to the caller's own fulfillments. Unknown values are 400 invalid_category. A trusted store sale may also carry associated_store (the snapshotted store display name); sender and receiver stay the settlement accounts.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "merchant",
+                "travel"
               ]
             }
           }
@@ -20361,6 +20879,95 @@
           },
           "503": {
             "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/fulfillments/{id}/pay-lock": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Call this immediately before broadcasting the on-chain payment for a pending request, and do not broadcast unless it returns 200. v3 only learns of a payment at submit — after the money moved — so without this a second device, or the same one after a reload, could pay the same request again while the first payment was still pending. The lock lasts 3 minutes (refresh by sending your lock_token again); status stays `pending` while locked. Same payer rule as submit.",
+        "tags": [
+          "fulfillments"
+        ],
+        "summary": "Take the pay lock (payer, right before broadcasting)",
+        "operationId": "payLockFulfillment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "fulfillment id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "description": "lock_token from a previous 200, to refresh",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.PayLockFulfillmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.PayLockResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "forbidden — the caller may not pay this request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "pay_locked — being paid right now by another client (do not broadcast; retry after expires_at); not_pending — already submitted/confirmed or terminal",
             "content": {
               "application/json": {
                 "schema": {
@@ -24251,7 +24858,7 @@
     },
     "/service/fulfillments": {
       "post": {
-        "description": "Service-key only (X-API-Key must be a service key this route trusts; today enforcer-mp-merchant and enforcer-airdrop). Creates an OPEN payment request that pays `payee_account_id`: the payee is creator, sender and receiver, and the use case opens it to any same-tenant payer. The body cannot name a different payer or creator. Tenant is `X-Tenant-ID`; the payee must belong to it.",
+        "description": "Service-key only (X-API-Key must be a service key this route trusts; today enforcer-mp-merchant and enforcer-airdrop). Creates an OPEN payment request that pays `payee_account_id`: the payee is creator, sender and receiver, and the use case opens it to any same-tenant payer. The body cannot name a different payer or creator. Tenant is `X-Tenant-ID`; the payee must belong to it.\n\n**category (optional, closed vocabulary: `merchant`, `travel`) and merchant_reward_percentage (optional, 0..100, ≤ 2 decimals).** Describe a SALE (reference `STORE:…`, kind `sale`) from the selling merchant, for the payer's activity, statement and rewards. enforcer-mp-merchant only (403 `category_forbidden` for any other service); an unknown category is 400 `invalid_category`, a malformed percentage 400 `invalid_merchant_reward_percentage`; either on anything but a sale reference is 400 `category_not_allowed`. Set at create and never changed after.\n\n**store_display_name (optional, 1..120 characters).** The selling store's display name, snapshotted onto the sale and returned to the payer as `associated_store` on their own fulfillment. enforcer-mp-merchant only (403 `store_display_forbidden`); a name with control characters or over 120 characters is 400 `invalid_store_display_name`; a name on anything but a sale is 400 `store_display_not_allowed`; a STORE: reference that is not `STORE:<uuid>` or `STORE:<uuid>:<client_ref>` is 400 `store_reference_invalid`. v3 does not call the store service. Omit it and the snapshot stays empty — the customer response then omits `associated_store` rather than inventing a name. Sender and receiver are unchanged.\n\n**classification_slug (optional, lower-case kebab, ≤ 64 characters).** The booking type enforcer-mp-merchant already resolved (`hotel`, `airline`, …). Returned to the payer as `classification_slug` on their own fulfillment. Not `category` and not `kind`. enforcer-mp-merchant only (403 `classification_forbidden`); a bad slug is 400 `invalid_classification_slug`; a slug on anything but an exact `STORE:<uuid>[:<client_ref>]` sale is 400 `classification_not_allowed`. Omit it and the field stays absent. v3 does not guess a type from the memo, the store, or the party.",
         "tags": [
           "fulfillments"
         ],
@@ -24310,6 +24917,16 @@
               }
             }
           },
+          "403": {
+            "description": "refund_wallet_forbidden / category_forbidden / store_display_forbidden / classification_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Conflict",
             "content": {
@@ -24322,6 +24939,164 @@
           },
           "422": {
             "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/service/fulfillments/classifications": {
+      "post": {
+        "description": "Service-key only (enforcer-mp-merchant). Sets `classification_slug` on each named fulfillment in `X-Tenant-ID` where the snapshot is still empty, the row is a trusted exact `STORE:<uuid>[:<client_ref>]` sale, and the slug is the one in that item. A different item may carry a different slug. A store id is not accepted. A recorded slug is left as it is. Rows in another tenant, deleted rows, and unknown ids are `not_found`. Account-path sales and non-sales are counted and not updated. No settlement event. Dry run unless `dry_run` is false. At most 100 items.",
+        "tags": [
+          "fulfillments"
+        ],
+        "summary": "Stamp booking types onto named sales",
+        "operationId": "stampFulfillmentClassifications",
+        "parameters": [
+          {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "description": "tenant id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "named fulfillments",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.ServiceStampClassificationsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ServiceStampClassificationsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body / invalid_classification_stamp / invalid_classification_slug",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_service_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "classification_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/service/fulfillments/store-display": {
+      "post": {
+        "description": "Service-key only (enforcer-mp-merchant). Fills `store_display_name` on that tenant's trusted sales whose reference is exactly `STORE:<store_id>` or `STORE:<store_id>:<client_ref>`, where the snapshot is still empty. A name already recorded is left as it is (a receipt does not follow a later rename, deletion or archive). Account-path STORE: rows and non-sales are counted and not updated. No settlement event is emitted. v3 does not read the store. Dry run unless `dry_run` is false. Tenant is `X-Tenant-ID`. Another tenant's sales are not visible to this call.",
+        "tags": [
+          "fulfillments"
+        ],
+        "summary": "Stamp a store display name onto existing sales",
+        "operationId": "stampStoreDisplay",
+        "parameters": [
+          {
+            "name": "X-Tenant-ID",
+            "in": "header",
+            "description": "tenant id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "store and name",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.ServiceStampStoreDisplayRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ServiceStampStoreDisplayResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body / invalid_store_display",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_service_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "store_display_forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "store_display_too_many",
             "content": {
               "application/json": {
                 "schema": {
@@ -24912,7 +25687,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Service-key only (enforcer-mpp-settler). The same queue and filters as GET /admin/mpp-deposit-intents: oldest first, `state=received,overpaid` to settle, `underpaid,parked` (and expired) to refund. Read-only.",
+        "description": "Service-key only (enforcer-mpp-settler). The same queue and filters as GET /admin/mpp-deposit-intents: oldest first, `state=received,overpaid` to settle, `underpaid,parked` (and awaiting past expiry with a balance) to refund. Read-only.",
         "tags": [
           "fulfillments"
         ],
@@ -24922,7 +25697,7 @@
           {
             "name": "state",
             "in": "query",
-            "description": "comma list: awaiting,received,underpaid,overpaid,settling,settled,refunded,parked",
+            "description": "comma list: awaiting,received,underpaid,overpaid,settling,settled,refunded,parked,expired,closed_dust",
             "schema": {
               "type": "string"
             }
@@ -25016,6 +25791,182 @@
           },
           "401": {
             "description": "invalid_service_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/service/mpp-settler/mpp-deposit-intents/state-counts": {
+      "get": {
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Service-key only (enforcer-mpp-settler). Read-only. Every state appears in counts (0 when none), for the settler's chain only; closed_dust_wei is the sum of dust_wei over closed_dust intents. Feeds the settler's mpp_intents{state} and mpp_settler_dust_wei gauges.",
+        "tags": [
+          "fulfillments"
+        ],
+        "summary": "Count MPP deposit intents per state (settle worker, service key)",
+        "operationId": "countSettlerMppDepositIntentStates",
+        "parameters": [
+          {
+            "name": "chain_id",
+            "in": "query",
+            "description": "the settler's chain (8453 or 84532)",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.MPPStateCountsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "chain_id_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_service_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/service/mpp-settler/mpp-deposit-intents/{id}/close": {
+      "post": {
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Service-key only (enforcer-mpp-settler). A state-only write: nothing is reserved, signed or sent, and no action row is written. state=expired: the intent is awaiting, past expires_at, with no receipt and no settle/refund action, and the forwarder balance is 0. state=closed_dust: the intent is received/underpaid/overpaid/parked (or awaiting past expiry) with no settle/refund action, its fulfillment is terminal (confirmed/failed/expired/cancelled/declined), and dust_wei (> 0, at most 1 MPP) is recorded on the row. When v3 has an RPC for the intent's chain it reads the forwarder itself and answers 409 close_balance_mismatch unless the balance is exactly 0 (expired) or dust_wei (closed_dust). Idempotent: an intent already in that state answers 200 replayed=true with the recorded close. A later deposit to the forwarder reopens the intent.",
+        "tags": [
+          "fulfillments"
+        ],
+        "summary": "Close an MPP deposit intent that moves no money (settle worker, service key)",
+        "operationId": "closeSettlerMppDepositIntent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "intent id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chain_id",
+            "in": "query",
+            "description": "the settler's chain; 409 wrong_chain for another chain's intent",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "target state and recorded dust",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.MPPSettlerCloseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.MPPCloseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body / invalid_dust_wei / invalid_lever_params / chain_id_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "invalid_service_key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "close_refused_state / close_refused_fulfillment_open / close_balance_mismatch / wrong_chain",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -26752,7 +27703,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Partial update of tenant configuration (branding, URLs, join policy, status, etc.) — only fields present in the body change. Behind a manage-level resource check (tenant admins may update their own tenant; platform admins any tenant). status, web3_enabled, metered_sends_enabled, require_verified_phone, auth_provider and privy_app_id are platform-only: a tenant admin who CHANGES one gets 403 forbidden (sending the current value back is allowed). metadata writes the `ui` section only (portal presentation such as theme and navigation bars): `ui` replaces the stored `ui`, null removes it, other stored keys are untouched, and any other key is 400 invalid_value unless it echoes the stored value. The stored `ui` is capped at 32768 bytes of JSON: over it is 413 metadata_too_large and nothing is written. To change some `ui` keys without resending (and possibly wiping) the others, use PATCH /tenants/{id}/metadata. A metadata change is audited as tenant.metadata_updated (key names only), not tenant.updated. A caller outside the tenant gets 404, as for an id that does not exist.",
+        "description": "Partial update of tenant configuration (branding, URLs, join policy, status, etc.) — only fields present in the body change. Behind a manage-level resource check (tenant admins may update their own tenant; platform admins any tenant). status, web3_enabled, metered_sends_enabled, require_verified_phone, auth_provider and privy_app_id are platform-only: a tenant admin who CHANGES one gets 403 forbidden (sending the current value back is allowed). metadata writes the `ui` section (portal presentation such as theme and navigation bars) and `default_group_ids`: `ui` replaces the stored `ui`, null removes it, other stored keys are untouched, and any other key is 400 invalid_value unless it echoes the stored value. `default_group_ids` (an array of at most 10 group ids; null removes it) names the groups every newly provisioned account in the workspace joins; a changed list naming anything but a live, unarchived group of this workspace is 400 invalid_default_group and nothing is written. The stored `ui` is capped at 32768 bytes of JSON: over it is 413 metadata_too_large and nothing is written. To change some `ui` keys without resending (and possibly wiping) the others, use PATCH /tenants/{id}/metadata. A metadata change is audited as tenant.metadata_updated (key names only), not tenant.updated. A caller outside the tenant gets 404, as for an id that does not exist.",
         "tags": [
           "tenants"
         ],
@@ -28179,7 +29130,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Merges into the workspace's `metadata.ui` (portal presentation: theme, palette, navigation bars) as an RFC 7396 JSON merge patch: an object value merges into the stored object, null removes that key, any other value replaces it, and keys not sent are left alone, so one settings surface cannot wipe another's. Only `ui` is accepted (any other top-level key is 400 invalid_value); the rest of the metadata bag is never touched. The merged `ui` is capped at 32768 bytes of JSON: over it is 413 metadata_too_large and nothing is written. Tenant admins on their own workspace and platform admins; any other member is 403, and a caller outside the workspace gets 404 as for an id that does not exist. Audited as tenant.metadata_updated with the changed key names (never values). Returns the whole tenant, metadata included.",
+        "description": "Merges into the workspace's `metadata.ui` (portal presentation: theme, palette, navigation bars) as an RFC 7396 JSON merge patch: an object value merges into the stored object, null removes that key, any other value replaces it, and keys not sent are left alone, so one settings surface cannot wipe another's. `default_group_ids` (an array of at most 10 group ids, replaced whole; null removes it) may be sent with or instead of `ui`: it names the groups every newly provisioned account in the workspace joins, and a changed list naming anything but a live, unarchived group of this workspace is 400 invalid_default_group with nothing written. Any other top-level key is 400 invalid_value; the rest of the metadata bag is never touched. The merged `ui` is capped at 32768 bytes of JSON: over it is 413 metadata_too_large and nothing is written. Tenant admins on their own workspace and platform admins; any other member is 403, and a caller outside the workspace gets 404 as for an id that does not exist. Audited as tenant.metadata_updated with the changed key names (never values). Returns the whole tenant, metadata included.",
         "tags": [
           "tenants"
         ],
@@ -31478,6 +32429,141 @@
           }
         }
       },
+      "enforcer-v3_internal_domain_fulfillment.AssociatedStore": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "example": "Harbor Travel"
+          },
+          "id": {
+            "type": "string",
+            "example": "420c704c-3402-421d-8f65-40c7629c3773"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_fulfillment.CategoryBackfillResult": {
+        "type": "object",
+        "properties": {
+          "already_set": {
+            "description": "AlreadySet already carried this category.",
+            "type": "integer"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "merchant",
+              "travel"
+            ]
+          },
+          "changed": {
+            "description": "Changed carried a DIFFERENT category and was (would be) re-classified:\nthe merchant was re-categorised and its history follows.",
+            "type": "integer"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "emitted_ids": {
+            "description": "EmittedIDs are the sales whose settled event was (would be) emitted, in\ncreated_at order, capped at MaxBackfillEmittedIDs (EmittedIDsTruncated\nsays the cap was hit).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "emitted_ids_truncated": {
+            "type": "boolean"
+          },
+          "emitted_trusted": {
+            "description": "Scope sale_reemit only (0 / empty otherwise).\n\nEmittedTrusted are settled events for sales a SaleClassifierServices\nservice raised: byte-identical to the live confirm's event.\nEmittedUntrustedStripped are settled events for every other sale,\nemitted with category and merchant_reward_percentage \"\" and every other\nfield unchanged. EmittedTrusted + EmittedUntrustedStripped =\nSettledEmitted.",
+            "type": "integer"
+          },
+          "emitted_untrusted_stripped": {
+            "type": "integer"
+          },
+          "fulfillment_ids": {
+            "description": "FulfillmentIDs are the rows set or changed (or that would be). Always\nempty for scopes p2p and sale_reemit.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "matched": {
+            "description": "Matched is every live row the scope selected.",
+            "type": "integer"
+          },
+          "refunds_emitted": {
+            "type": "integer"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "store",
+              "p2p",
+              "sale_reemit"
+            ]
+          },
+          "set": {
+            "description": "Set, Changed and AlreadySet are always 0 for scopes p2p and sale_reemit:\nthose scopes never classify.\n\nSet had no category and got (would get) one.",
+            "type": "integer"
+          },
+          "settled_emitted": {
+            "description": "SettledEmitted counts fulfillment.settled events (re-)emitted for\nconfirmed matches; RefundsEmitted counts fulfillment.refunded events for\ntheir confirmed refunds. Both are what WOULD be emitted on a dry run.",
+            "type": "integer"
+          },
+          "skipped": {
+            "description": "Skipped matched the store reference but is not a sale (scope store), or\nis not a CONFIRMED sale (scope sale_reemit). Never changed or emitted.",
+            "type": "integer"
+          },
+          "skipped_untrusted": {
+            "description": "SkippedUntrusted matched the store reference and is a sale, but was not\nraised by a service allowed to state categories (created_by_service is\nnot in SaleClassifierServices): an account caller can stamp STORE: on\nPOST /fulfillments. Never changed and never re-emitted; listed in\nSkippedUntrustedIDs for follow-up. Scope store only: scope sale_reemit\nre-emits such a sale stripped and counts it in EmittedUntrustedStripped.",
+            "type": "integer"
+          },
+          "skipped_untrusted_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "store_id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_fulfillment.ClassificationStampItemResult": {
+        "type": "object",
+        "properties": {
+          "classification_slug": {
+            "type": "string"
+          },
+          "fulfillment_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "description": "Outcome is set, already_set, unchanged, not_found, skipped_untrusted,\nskipped_not_sale, or skipped_malformed_reference.",
+            "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_fulfillment.ClassificationStampResult": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.ClassificationStampItemResult"
+            }
+          },
+          "tenant_id": {
+            "type": "string"
+          }
+        }
+      },
       "enforcer-v3_internal_domain_fulfillment.CompletedSummary": {
         "type": "object",
         "properties": {
@@ -31544,13 +32630,33 @@
       "enforcer-v3_internal_domain_fulfillment.Fulfillment": {
         "type": "object",
         "properties": {
+          "associated_store": {
+            "description": "AssociatedStore is the store a customer should see on their own sale,\nbeside sender and receiver (the settlement accounts). Omitted when this\nrow is not an exact trusted STORE sale or the snapshot name is missing.\nNever derived from the memo, the reference's human copy, or a party name.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.AssociatedStore"
+              }
+            ]
+          },
           "block_number": {
             "type": "integer"
+          },
+          "category": {
+            "description": "Category classifies a SALE (migration 000157): merchant | travel, from\nthe selling merchant; absent on every non-sale. Set only at create by a\ntrusted service, or by the audited backfill lever. See category.go.",
+            "type": "string",
+            "enum": [
+              "merchant",
+              "travel"
+            ]
           },
           "chain_id": {
             "type": "integer"
           },
           "claimed_at": {
+            "type": "string"
+          },
+          "classification_slug": {
+            "description": "Booking type the payer should see (hotel, airline, …). Omitted when\nunknown or when this row is not a trusted store sale. Not category\nand not kind.",
             "type": "string"
           },
           "created_at": {
@@ -31615,6 +32721,11 @@
             "description": "bytes32 on-chain memo — the join key between this record and chain state.",
             "type": "string"
           },
+          "merchant_reward_percentage": {
+            "description": "MerchantRewardPercentage is the partner-stated figure enforcer-mp-merchant\nrecorded on the sale (numeric(5,2), 0..100), carried exactly. Service-set\nat create only; v3 never acts on it — it rides the settlement event.",
+            "type": "string",
+            "example": "12.50"
+          },
           "notional_actual": {
             "type": "string"
           },
@@ -31623,6 +32734,12 @@
           },
           "paid_uoa": {
             "description": "PaidUOA is the summed ROUTED settlements for this row's memo — what\nactually arrived, against NotionalUOA's what-was-owed. The excess is\nPaidUOA - NotionalUOA, and it is the reason this field exists: the\noverpaid filter finds rows where a payer routed the same memo twice or a\nroute declared more than the request asked for, but a boolean cannot tell\nsupport HOW MUCH.\n\nDERIVED, not a column (gorm:\"-\"): computed per page by the admin read\npaths. A POINTER because absent must stay distinguishable from zero — on\nany endpoint that does not compute it, a plain string would render \"0\",\nwhich reads as \"nothing ever arrived\" for a fully paid transfer.",
+            "type": "string"
+          },
+          "pay_lock_expires_at": {
+            "type": "string"
+          },
+          "pay_locked_by": {
             "type": "string"
           },
           "payer_address": {
@@ -31775,6 +32892,58 @@
           }
         }
       },
+      "enforcer-v3_internal_domain_fulfillment.StoreDisplayStampResult": {
+        "type": "object",
+        "properties": {
+          "already_set": {
+            "description": "AlreadySet already carried this exact name.",
+            "type": "integer"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "fulfillment_ids": {
+            "description": "FulfillmentIDs are the rows set (or that would be).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "matched": {
+            "description": "Matched is every live row whose reference is this store's.",
+            "type": "integer"
+          },
+          "set": {
+            "description": "Set had no snapshot and received (or would receive) this name.",
+            "type": "integer"
+          },
+          "skipped_malformed": {
+            "description": "SkippedMalformed matched the prefix but is not an exact store reference.",
+            "type": "integer"
+          },
+          "skipped_not_sale": {
+            "description": "SkippedNotSale matched the reference but is not a sale.",
+            "type": "integer"
+          },
+          "skipped_untrusted": {
+            "description": "SkippedUntrusted is a sale the account path could have tagged STORE:.\nNever updated.",
+            "type": "integer"
+          },
+          "store_id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "unchanged": {
+            "description": "Unchanged already carried a different name. A recorded receipt is not\nrewritten because the store was later renamed, deleted or archived.",
+            "type": "integer"
+          }
+        }
+      },
       "enforcer-v3_internal_domain_fulfillment.Summary": {
         "type": "object",
         "properties": {
@@ -31899,6 +33068,14 @@
             "description": "MemberCount is computed on load, not stored. It counts HUMAN members\nonly; service accounts (agents) are counted in AgentCount\n(AGENTS_CONTRACT §8: member counts are split).",
             "type": "integer"
           },
+          "membership": {
+            "description": "Membership is the CALLER's own membership, filled only on GET\n/groups?member=me|mine (nil elsewhere, and on a group listed under\nmine because the caller created it without being a member).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/enforcer-v3_internal_domain_group.MembershipInfo"
+              }
+            ]
+          },
           "name": {
             "type": "string"
           },
@@ -31914,6 +33091,35 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_group.MembershipInfo": {
+        "type": "object",
+        "properties": {
+          "expires_at": {
+            "type": "string"
+          },
+          "joined_at": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "member",
+              "manager"
+            ]
+          },
+          "starts_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "scheduled",
+              "expired"
+            ]
           }
         }
       },
@@ -32125,6 +33331,23 @@
           }
         }
       },
+      "enforcer-v3_internal_domain_mppdeposit.CloseResult": {
+        "type": "object",
+        "properties": {
+          "dust_wei": {
+            "type": "string"
+          },
+          "intent_id": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
       "enforcer-v3_internal_domain_mppdeposit.Intent": {
         "type": "object",
         "properties": {
@@ -32136,6 +33359,10 @@
             "type": "integer"
           },
           "created_at": {
+            "type": "string"
+          },
+          "dust_wei": {
+            "description": "DustWei is the forwarder balance left behind when the intent was\nclosed as closed_dust (base units of the input token); \"0\" otherwise.",
             "type": "string"
           },
           "expires_at": {
@@ -32325,6 +33552,10 @@
           "created_at": {
             "type": "string"
           },
+          "dust_wei": {
+            "description": "DustWei is the forwarder balance left behind when the intent was\nclosed as closed_dust (base units of the input token); \"0\" otherwise.",
+            "type": "string"
+          },
           "expires_at": {
             "type": "string"
           },
@@ -32460,6 +33691,21 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/enforcer-v3_internal_domain_mppdeposit.PlanStep"
+            }
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_mppdeposit.StateCounts": {
+        "type": "object",
+        "properties": {
+          "closed_dust_wei": {
+            "description": "ClosedDustWei is SUM(dust_wei) over closed_dust intents (decimal base\nunits of the input token): what was left in forwarders when they closed.",
+            "type": "string"
+          },
+          "counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
             }
           }
         }
@@ -34607,6 +35853,15 @@
           "cross_tenant": {
             "type": "integer"
           },
+          "expires_at_in_past": {
+            "type": "integer"
+          },
+          "inactive": {
+            "type": "integer"
+          },
+          "invalid_window": {
+            "type": "integer"
+          },
           "moved": {
             "type": "integer"
           },
@@ -34620,6 +35875,9 @@
             "type": "integer"
           },
           "removed": {
+            "type": "integer"
+          },
+          "renewed": {
             "type": "integer"
           },
           "results": {
@@ -34637,7 +35895,7 @@
             "type": "string"
           },
           "status": {
-            "description": "Status is one of:\n  added                  they are in the group, and were not before\n  already_member         they were already in it — an import re-run, not an error\n  not_found              no such account\n  cross_tenant           the account belongs to a different tenant\n  agent_consent_required the account is a service account (AGENTS_CONTRACT\n                         §6.5) and the caller is not a manager() of its\n                         bound agent (or TenantManage, for a plain\n                         service account with no agent)\n  not_group_member       the account is a service account and the caller\n                         — short of TenantManage/CrossTenant — is not\n                         themselves a member of this group",
+            "description": "Status is one of:\n  added                  they are in the group, and were not before\n  already_member         they were already in it — an import re-run, not an error\n  not_found              no such account\n  cross_tenant           the account belongs to a different tenant\n  agent_consent_required the account is a service account (AGENTS_CONTRACT\n                         §6.5) and the caller is not a manager() of its\n                         bound agent (or TenantManage, for a plain\n                         service account with no agent)\n  not_group_member       the account is a service account and the caller\n                         — short of TenantManage/CrossTenant — is not\n                         themselves a member of this group\n  renewed                an existing member added WITH a window: the\n                         window was merged into theirs in place\n  inactive               an existing EXPIRED or SCHEDULED member added\n                         WITHOUT a window: left unchanged (renew it by\n                         sending starts_at / expires_at, or PATCH it)\n  invalid_window         a renewal whose MERGED window would end before\n                         it starts: that row was left unchanged\n  expires_at_in_past     a renewal whose MERGED window has already\n                         ended: that row was left unchanged",
             "type": "string"
           }
         }
@@ -35097,6 +36355,13 @@
       "enforcer-v3_internal_usecase_tenants.MetadataPatchInput": {
         "type": "object",
         "properties": {
+          "default_group_ids": {
+            "description": "DefaultGroupIDs replaces metadata.default_group_ids whole (null removes\nit): the groups every newly provisioned account in the workspace joins.\nAt most 10, each a live group of this workspace (else 400\ninvalid_default_group).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "ui": {
             "description": "UI is merged into the stored metadata.ui as an RFC 7396 JSON merge\npatch: a key with an object value merges into the stored object, a key\nwith null removes that key, any other value replaces it, and a key not\nsent is left alone.",
             "type": "object",
@@ -35137,7 +36402,7 @@
             "type": "string"
           },
           "metadata": {
-            "description": "Metadata writes the tenant's `ui` section only (portal presentation:\nnavigation bars, theme). It MERGES: `ui` replaces the stored `ui`, a null\n`ui` removes it, and every other stored key is left alone. Any other key\nis refused (400) unless it echoes the stored value, so a client that\nround-trips the whole bag still works and nobody writes feature flags\nthrough a branding endpoint. `ui` is capped at 32 KiB (413\nmetadata_too_large, nothing stored). PATCH /tenants/{id}/metadata is the\nkey-merge alternative that cannot wipe another surface's keys.",
+            "description": "Metadata writes the tenant's `ui` section (portal presentation:\nnavigation bars, theme) and `default_group_ids` (the groups every new\naccount joins; validated, 400 invalid_default_group). It MERGES: `ui`\nreplaces the stored `ui`, a null `ui` removes it, and every other stored\nkey is left alone. Any other key is refused (400) unless it echoes the\nstored value, so a client that round-trips the whole bag still works and\nnobody writes feature flags through a branding endpoint. `ui` is capped at 32 KiB (413\nmetadata_too_large, nothing stored). PATCH /tenants/{id}/metadata is the\nkey-merge alternative that cannot wipe another surface's keys.",
             "type": "object",
             "additionalProperties": {},
             "x-max-ui-bytes": "32768"
@@ -36347,6 +37612,10 @@
               "type": "string"
             }
           },
+          "expires_at": {
+            "type": "string",
+            "example": "2028-11-08T00:00:00Z"
+          },
           "role": {
             "description": "Role every ADDED member joins in (member, the default, or manager).\nIgnored by bulk-remove; existing members keep their role.",
             "type": "string",
@@ -36354,6 +37623,11 @@
               "member",
               "manager"
             ]
+          },
+          "starts_at": {
+            "description": "StartsAt / ExpiresAt (RFC3339, optional; bulk add only) bound every\nadded membership and RENEW the window of every existing one.",
+            "type": "string",
+            "example": "2026-11-08T00:00:00Z"
           }
         }
       },
@@ -36412,6 +37686,69 @@
           }
         }
       },
+      "internal_delivery_http_handler.CategoryBackfillRequest": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "description": "Category is the store's MERCHANT category in enforcer-mp-merchant\n(GET /merchants/{id} there). Scope store only.",
+            "type": "string",
+            "enum": [
+              "merchant",
+              "travel"
+            ],
+            "example": "travel"
+          },
+          "created_after": {
+            "description": "CreatedAfter (inclusive) / CreatedBefore (exclusive), RFC3339. Optional\nfor scope store, both required for scopes p2p and sale_reemit.",
+            "type": "string",
+            "example": "2026-11-01T00:00:00Z"
+          },
+          "created_before": {
+            "type": "string",
+            "example": "2026-12-01T00:00:00Z"
+          },
+          "dry_run": {
+            "description": "DryRun defaults to TRUE when absent: only an explicit false writes.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason is required (at least 10 characters) and lands in the audit log.",
+            "type": "string",
+            "example": "Backfill November travel sales for store X (megprime-v2#146)"
+          },
+          "scope": {
+            "description": "Scope is \"store\" (default: classify one store's sales and re-emit),\n\"p2p\" (re-emit settled p2p payments in a window; changes nothing) or\n\"sale_reemit\" (re-emit one store's settled sales in a window; changes\nnothing; untrusted sales are emitted with category and\nmerchant_reward_percentage stripped).",
+            "type": "string",
+            "enum": [
+              "store",
+              "p2p",
+              "sale_reemit"
+            ],
+            "example": "store"
+          },
+          "store_id": {
+            "description": "StoreID is the enforcer-mp-merchant store whose sales are matched.\nMatched by EXACT reference: \"STORE:<store_id>\" or \"STORE:<store_id>:…\".\nScopes store and sale_reemit.",
+            "type": "string",
+            "example": "5f0c2a3e-8b1d-4e2a-9c3f-1a2b3c4d5e6f"
+          },
+          "tenant_id": {
+            "description": "TenantID defaults to the caller's tenant; naming another needs the\ncross-tenant (system admin) grant.",
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.CategoryBackfillResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.CategoryBackfillResult"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.ChallengeResponse": {
         "type": "object",
         "properties": {
@@ -36428,6 +37765,19 @@
         "properties": {
           "code": {
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.ClassificationStampItem": {
+        "type": "object",
+        "properties": {
+          "classification_slug": {
+            "type": "string",
+            "example": "hotel"
+          },
+          "fulfillment_id": {
+            "type": "string",
+            "example": "7f1c2e0a-4b6d-4c8e-9fa1-b2c3d4e5f6a7"
           }
         }
       },
@@ -36668,8 +38018,16 @@
       "internal_delivery_http_handler.CreateFulfillmentRequest": {
         "type": "object",
         "properties": {
+          "category": {
+            "description": "Category is NOT settable here either: a sale's classification is stated\nonly by a trusted service at POST /service/fulfillments, so a payer can\nnever mark their own payment travel. Sending it is refused (403\ncategory_service_only) rather than silently dropped.",
+            "type": "string"
+          },
           "chain_id": {
             "type": "integer"
+          },
+          "classification_slug": {
+            "description": "ClassificationSlug is NOT settable here. The booking type is stated\nonly by enforcer-mp-merchant. Sending it is refused (403\nclassification_service_only) rather than silently dropped.",
+            "type": "string"
           },
           "deadline": {
             "description": "RFC3339",
@@ -36690,6 +38048,10 @@
             "type": "integer"
           },
           "memo": {
+            "type": "string"
+          },
+          "merchant_reward_percentage": {
+            "description": "MerchantRewardPercentage: same rule as Category (403\nmerchant_reward_percentage_service_only).",
             "type": "string"
           },
           "notional_uoa": {
@@ -36716,6 +38078,10 @@
             "type": "string"
           },
           "sender_wallet": {
+            "type": "string"
+          },
+          "store_display_name": {
+            "description": "StoreDisplayName is NOT settable here. The selling store's name is\nstated only by enforcer-mp-merchant. Sending it is refused (403\nstore_display_service_only) rather than silently dropped.",
             "type": "string"
           }
         }
@@ -37613,6 +38979,149 @@
           }
         }
       },
+      "internal_delivery_http_handler.KioskCodeInvalidData": {
+        "type": "object",
+        "properties": {
+          "attempts_remaining": {
+            "type": "integer",
+            "example": 4
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskCodeInvalidResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.KioskCodeInvalidData"
+          },
+          "error": {
+            "type": "string",
+            "example": "invalid_code"
+          },
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean",
+            "example": false
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskEnrollmentCompleteRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "481632"
+          },
+          "pin": {
+            "type": "string",
+            "example": "042608"
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskEnrollmentCompletedData": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string",
+            "example": "3f6c2a91-8d47-4b0e-a1c5-6e2d9b7f4a10"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Maria Lopez"
+          },
+          "first_name": {
+            "type": "string",
+            "example": "Maria"
+          },
+          "last_name": {
+            "type": "string",
+            "example": "Lopez"
+          },
+          "person_id": {
+            "type": "string",
+            "example": "a8e1c4d2-5b39-4f6a-9c70-1d2e3f4a5b6c"
+          },
+          "pin_length": {
+            "type": "integer",
+            "example": 6
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskEnrollmentCompletedResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentCompletedData"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskEnrollmentRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "maria@example.com"
+          },
+          "first_name": {
+            "type": "string",
+            "example": "Maria"
+          },
+          "last_name": {
+            "type": "string",
+            "example": "Lopez"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+15125550142"
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskEnrollmentSentData": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ],
+            "example": "email"
+          },
+          "code_length": {
+            "type": "integer",
+            "example": 6
+          },
+          "enrollment_id": {
+            "type": "string",
+            "example": "7d0b5f0e-3c1a-4f7e-9a51-0c4d3f2b8e61"
+          },
+          "expires_at": {
+            "type": "string"
+          },
+          "sent_to": {
+            "type": "string",
+            "example": "m•••@example.com"
+          }
+        }
+      },
+      "internal_delivery_http_handler.KioskEnrollmentSentResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.KioskEnrollmentSentData"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.LinkContactRequest": {
         "type": "object",
         "properties": {
@@ -37626,6 +39135,17 @@
         "properties": {
           "refresh_token": {
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.MPPCloseResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_mppdeposit.CloseResult"
+          },
+          "success": {
+            "type": "boolean"
           }
         }
       },
@@ -37789,6 +39309,17 @@
           }
         }
       },
+      "internal_delivery_http_handler.MPPSettlerCloseRequest": {
+        "type": "object",
+        "properties": {
+          "dust_wei": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
       "internal_delivery_http_handler.MPPSettlerSettleRequest": {
         "type": "object",
         "properties": {
@@ -37803,6 +39334,17 @@
           },
           "max_input_amount": {
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.MPPStateCountsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_mppdeposit.StateCounts"
+          },
+          "success": {
+            "type": "boolean"
           }
         }
       },
@@ -37959,6 +39501,9 @@
       "internal_delivery_http_handler.MeGroup": {
         "type": "object",
         "properties": {
+          "expires_at": {
+            "type": "string"
+          },
           "group_type_id": {
             "description": "GroupTypeID is the group's taxonomy, so a client can gate on \"my groups\nof type X\" without a second call. Omitted for an untyped group.\n\nA slug alone is already unambiguous WITHIN a tenant (uk_groups_tenant_slug\nis on (tenant_id, slug), not (tenant_id, group_type_id, slug)), so a\nconsumer that knows its slugs up front does not need this field — it is\nfor the caller that wants to enumerate one taxonomy it does not have a\nslug list for.",
             "type": "string"
@@ -37970,6 +39515,10 @@
             "type": "string"
           },
           "slug": {
+            "type": "string"
+          },
+          "starts_at": {
+            "description": "StartsAt / ExpiresAt are the caller's membership window (000161),\nomitted when open on that side. Only ACTIVE memberships are listed:\nthe ids come from the accessor, which already excludes expired and\nnot-yet-started ones.",
             "type": "string"
           }
         }
@@ -38058,6 +39607,10 @@
           "account_id": {
             "type": "string"
           },
+          "expires_at": {
+            "type": "string",
+            "example": "2028-11-08T00:00:00Z"
+          },
           "role": {
             "description": "Role is the capacity the member joins in: member (default) or manager.\nIgnored for an account that is already a member — use PATCH to change it.",
             "type": "string",
@@ -38065,18 +39618,31 @@
               "member",
               "manager"
             ]
+          },
+          "starts_at": {
+            "description": "StartsAt / ExpiresAt (RFC3339, optional) bound the membership. Omitted\n= open-ended. Sent for an EXISTING member (even an expired one), they\nrenew that membership's window in place, MERGED: an omitted bound\nkeeps the membership's current value.",
+            "type": "string",
+            "example": "2026-11-08T00:00:00Z"
           }
         }
       },
       "internal_delivery_http_handler.MemberRoleRequest": {
         "type": "object",
         "properties": {
+          "expires_at": {
+            "type": "string",
+            "example": "2028-11-08T00:00:00Z"
+          },
           "role": {
             "type": "string",
             "enum": [
               "member",
               "manager"
             ]
+          },
+          "starts_at": {
+            "type": "string",
+            "example": "2026-11-08T00:00:00Z"
           }
         }
       },
@@ -38084,6 +39650,9 @@
         "type": "object",
         "properties": {
           "added_by": {
+            "type": "string"
+          },
+          "expires_at": {
             "type": "string"
           },
           "joined_at": {
@@ -38094,6 +39663,18 @@
             "enum": [
               "member",
               "manager"
+            ]
+          },
+          "starts_at": {
+            "description": "StartsAt / ExpiresAt are the validity window (000161); null = open on\nthat side. Status is where now falls in it.",
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "scheduled",
+              "expired"
             ]
           }
         }
@@ -38495,6 +40076,41 @@
           "handle": {
             "description": "Handle is the opaque handle signup/begin returned, echoed unchanged.",
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.PayLockData": {
+        "type": "object",
+        "properties": {
+          "expires_at": {
+            "type": "string"
+          },
+          "fulfillment": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.Fulfillment"
+          },
+          "lock_token": {
+            "description": "LockToken proves the lock is yours; send it back to refresh. Shown once.",
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.PayLockFulfillmentRequest": {
+        "type": "object",
+        "properties": {
+          "lock_token": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.PayLockResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.PayLockData"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
           }
         }
       },
@@ -39786,8 +41402,21 @@
       "internal_delivery_http_handler.ServiceCreateFulfillmentRequest": {
         "type": "object",
         "properties": {
+          "category": {
+            "description": "Category classifies the sale, from the selling merchant's category\n(closed vocabulary: merchant | travel). Optional; absent = uncategorised.\nOnly the services in ServiceFulfillmentCategoryCallers may set it, only on\na sale reference (STORE: — never p2p, bill-pay, direct, reward, deposit,\nterminal, withdrawal or refund), and it cannot be changed after create.",
+            "type": "string",
+            "enum": [
+              "merchant",
+              "travel"
+            ]
+          },
           "chain_id": {
             "type": "integer"
+          },
+          "classification_slug": {
+            "description": "ClassificationSlug is the booking type already resolved by\nenforcer-mp-merchant (payment_classifications.slug: hotel, airline, …).\nOptional. Not category (merchant|travel) and not kind. Lower-case\nkebab, 64 characters or fewer. Omit it and the customer response omits\nclassification_slug. v3 does not look the slug up and does not invent one.",
+            "type": "string",
+            "example": "hotel"
           },
           "deadline": {
             "description": "RFC3339",
@@ -39796,6 +41425,11 @@
           "idempotency_key": {
             "description": "IdempotencyKey, as on POST /fulfillments. A service has no /me list to\nrecover a lost create through, so this is how a retry finds the original.",
             "type": "string"
+          },
+          "merchant_reward_percentage": {
+            "description": "MerchantRewardPercentage is the partner-stated figure recorded on the\nsale, a 0..100 decimal with at most two places, carried exactly. Same\ncallers and same sale-only rule as Category. v3 never acts on it.",
+            "type": "string",
+            "example": "12.50"
           },
           "notional_uoa": {
             "type": "string"
@@ -39816,6 +41450,11 @@
           },
           "request_token": {
             "type": "string"
+          },
+          "store_display_name": {
+            "description": "StoreDisplayName is the selling store's name, shown to the payer on\ntheir own fulfillment as associated_store. Optional. enforcer-mp-merchant\nonly, and only on an exact STORE:<uuid>[:<client_ref>] reference.\nIt is not read back from a live store. Absent leaves the snapshot NULL\n(the customer response then omits associated_store).",
+            "type": "string",
+            "example": "Harbor Travel"
           }
         }
       },
@@ -39835,6 +41474,69 @@
           "idempotency_key": {
             "description": "IdempotencyKey makes a retry return the ORIGINAL refund instead of raising\na second one. Send the proposal id.",
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.ServiceStampClassificationsRequest": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "description": "DryRun defaults to true. A write requires false.",
+            "type": "boolean",
+            "example": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_delivery_http_handler.ClassificationStampItem"
+            }
+          }
+        }
+      },
+      "internal_delivery_http_handler.ServiceStampClassificationsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.ClassificationStampResult"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.ServiceStampStoreDisplayRequest": {
+        "type": "object",
+        "properties": {
+          "display_name": {
+            "type": "string",
+            "example": "Harbor Travel"
+          },
+          "dry_run": {
+            "description": "DryRun defaults to true. A write requires false.",
+            "type": "boolean",
+            "example": true
+          },
+          "max_rows": {
+            "description": "MaxRows bounds the match. 0 takes the server default. More than that\nis 422 store_display_too_many and writes nothing.",
+            "type": "integer",
+            "example": 2000
+          },
+          "store_id": {
+            "type": "string",
+            "example": "420c704c-3402-421d-8f65-40c7629c3773"
+          }
+        }
+      },
+      "internal_delivery_http_handler.ServiceStampStoreDisplayResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.StoreDisplayStampResult"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
           }
         }
       },

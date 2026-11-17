@@ -11,7 +11,7 @@
 import { defaultFetch } from '../lib/api/client.mjs';
 import { isMain } from '../src/is-main.mjs';
 import { commandArgs } from '../src/args.mjs';
-import { readCredentials, saveCredentials, authHeaders } from '../src/credentials.mjs';
+import { readCredentials, saveCredentials, authHeaders, withCredentialLock } from '../src/credentials.mjs';
 import { resolveConfig } from '../src/config.mjs';
 
 const API = '/api/v1/enforcer';
@@ -148,21 +148,27 @@ export async function switchWorkspace(query, { fetchImpl = defaultFetch, now = D
   const t = j?.data?.tokens || j?.data || j;
   const access = t.access_token;
   if (!access) throw new Error('Enforcer answered the switch without a token.');
-  // Re-read: authHeaders may have refreshed (and rotated) the pair in between.
-  const fresh = readCredentials();
-  const o = fresh.enforcer.oauth;
-  saveCredentials({
-    ...fresh,
-    enforcer: {
-      ...fresh.enforcer,
-      oauth: {
-        ...o,
-        access_token: access,
-        refresh_token: t.refresh_token || o.refresh_token,
-        expires_at: new Date(now() + (Number(t.expires_in) || 900) * 1000).toISOString(),
-        scope: t.scope || o.scope,
+  // Under the refresh lock, re-read: authHeaders may have refreshed (and rotated) the pair in between,
+  // and a refresh still in flight must not write the source workspace's pair back over this one.
+  await withCredentialLock(() => {
+    const fresh = readCredentials();
+    const { last_refresh_error: _drop, ...o } = fresh.enforcer.oauth;
+    const rtSecs = Number(t.refresh_token_expires_in || t.refresh_expires_in);
+    saveCredentials({
+      ...fresh,
+      enforcer: {
+        ...fresh.enforcer,
+        oauth: {
+          ...o,
+          access_token: access,
+          refresh_token: t.refresh_token || o.refresh_token,
+          expires_at: new Date(now() + (Number(t.expires_in) || 900) * 1000).toISOString(),
+          scope: t.scope || o.scope,
+          // The switch opens a NEW refresh family; its lifetime is its own, not the source's.
+          ...(t.refresh_token && rtSecs > 0 ? { refresh_expires_at: new Date(now() + rtSecs * 1000).toISOString() } : {}),
+        },
       },
-    },
+    });
   });
   return target;
 }

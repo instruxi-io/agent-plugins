@@ -365,6 +365,8 @@ function writeConfig(p, text) {
 }
 
 const origin = (cfg) => String(cfg.ingestUrl || baseUrl(cfg)).replace(/\/+$/, '');
+/** Where the export goes for a governor config: its ingestUrl, else the Enforcer base URL (the dispatcher's codex workers use it too). */
+export const ingestOrigin = origin;
 
 /** p, or a rejection after ms; the timer is cleared either way so it never holds a hook open. */
 async function withTimeout(p, ms) {

@@ -99,13 +99,32 @@ export async function landForCodex({
   if (rc) return fail('git_failed', `git add -A failed: ${clip(out, 300)}`);
   [rc, out] = git('diff', '--cached', '--numstat', 'HEAD');
   if (rc) return fail('git_failed', `git diff --cached failed: ${clip(out, 300)}`);
-  const refused = diffRefusal(parseNumstat(out), node);
+  let refused = diffRefusal(parseNumstat(out), node);
+  let commitNow = true;
+  if (refused && !refused.files.length) {
+    // Nothing new in the worktree. A retry after a landing that failed past the commit (a refused PR, a wrong base)
+    // finds that attempt's commit already on the branch: land the branch as it stands, judged by its whole diff
+    // against the base with the same rule. Nothing ahead of the base is still "no changes".
+    git('reset', '-q');
+    const baseRef = `origin/${String(base).replace(/^origin\//, '')}`;
+    git('fetch', '-q', 'origin');
+    const [arc, ahead] = git('rev-list', '--count', `${baseRef}..HEAD`);
+    if (arc === 0 && Number(String(ahead).trim()) > 0) {
+      [rc, out] = git('diff', '--numstat', `${baseRef}...HEAD`);
+      if (rc) return fail('git_failed', `git diff ${baseRef}...HEAD failed: ${clip(out, 300)}`);
+      refused = diffRefusal(parseNumstat(out), node);
+      commitNow = false;
+      if (!refused) say(`codex land ${node.key}: no new changes; landing the ${String(ahead).trim()} commit(s) already on ${branch}`);
+    }
+  }
   if (refused) {
     git('reset', '-q');
     return fail('destructive_or_empty_diff', refused.reason, { files: refused.files });
   }
-  [rc, out] = git('commit', '-q', '-m', commitMessage(node, runId));
-  if (rc) return fail('git_failed', `git commit failed: ${clip(out, 300)}`);
+  if (commitNow) {
+    [rc, out] = git('commit', '-q', '-m', commitMessage(node, runId));
+    if (rc) return fail('git_failed', `git commit failed: ${clip(out, 300)}`);
+  }
   [rc, out] = git('push', '-u', 'origin', `HEAD:refs/heads/${branch}`);
   if (rc) return fail('git_failed', `git push failed: ${clip(out, 300)}`);
   // reuse an open PR for the branch (a retry), else open one

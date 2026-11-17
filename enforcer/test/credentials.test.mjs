@@ -13,6 +13,7 @@ delete process.env.ENFORCER_API_KEY;
 delete process.env.GOVERNOR_HOME;
 delete process.env.ENFORCER_HOME;
 delete process.env.ENFORCER_PROFILE;
+process.env.ENFORCER_REFRESH_INPROCESS = '1'; // fetch is stubbed in this process
 mkdirSync(join(home, '.enforcer-governor'), { recursive: true });
 
 let pass = 0;
@@ -182,7 +183,7 @@ await okAsync('5xx keeps the old token and retries once', async () => {
   assert.equal(readCredentials().enforcer.oauth.refresh_token, 'r1');
 });
 
-await okAsync('invalid_grant signs out (after one retry)', async () => {
+await okAsync('invalid_grant signs out, without replaying the refused token', async () => {
   seedSoon();
   let calls = 0;
   const h = await authHeaders({
@@ -192,7 +193,9 @@ await okAsync('invalid_grant signs out (after one retry)', async () => {
     },
     backoffMs: 1,
   });
-  assert.equal(calls, 2);
+  // A replay of a refused token is refused again, and after the server's 30s grace it is read as
+  // theft and revokes the whole family (enforcer-v3 loadRefresh).
+  assert.equal(calls, 1);
   assert.deepEqual(h, {});
   assert.match(readCredentials().enforcer.oauth.last_refresh_error.reason, /signed out: HTTP 400 invalid_grant/);
 });
@@ -231,6 +234,46 @@ await okAsync('lost response after rotation recovers', async () => {
     backoffMs: 1,
   });
   assert.equal(second.Authorization, 'Bearer new');
+});
+
+await okAsync('a refused refresh never overwrites a sign-in saved meanwhile, and retries with it', async () => {
+  seedSoon();
+  const tokens = [];
+  const h = await authHeaders({
+    fetchImpl: async (_u, { body }) => {
+      const rt = new URLSearchParams(body).get('refresh_token');
+      tokens.push(rt);
+      if (rt === 'r1') {
+        // a sign-in (or workspace switch) saves its pair while this refresh is in flight
+        const d = readCredentials();
+        d.enforcer.oauth = { ...d.enforcer.oauth, access_token: 'login', refresh_token: 'r-login', expires_at: new Date(Date.now() - 1).toISOString() };
+        saveCredentials(d);
+        return resp(400, { error: 'invalid_grant' });
+      }
+      return resp(200, { access_token: 'after-login', refresh_token: 'r-login-2', expires_in: 900 });
+    },
+    backoffMs: 1,
+  });
+  assert.deepEqual(tokens, ['r1', 'r-login']);
+  assert.equal(h.Authorization, 'Bearer after-login');
+  const o = readCredentials().enforcer.oauth;
+  assert.equal(o.refresh_token, 'r-login-2');
+  assert.equal(o.last_refresh_error, undefined);
+});
+
+await okAsync('a failed refresh does not stamp (or resurrect) a pair that was signed out meanwhile', async () => {
+  seedSoon();
+  const h = await authHeaders({
+    fetchImpl: async () => {
+      const d = readCredentials();
+      delete d.enforcer.oauth; // logout
+      saveCredentials(d);
+      return resp(400, { error: 'invalid_grant' });
+    },
+    backoffMs: 1,
+  });
+  assert.deepEqual(h, {});
+  assert.equal(readCredentials()?.enforcer?.oauth, undefined);
 });
 
 console.log(`\n  ${pass} passed, 0 failed\n  fail 0`);

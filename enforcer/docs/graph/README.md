@@ -173,7 +173,7 @@ come from the plugin's `hooks/hooks.json`.
 
 Dispatching hands a finished plan to background workers: each ready node gets its own git worktree and a headless Claude worker that does the node, opens the pull request and lands it, while you do something else. Nothing here asks you to know a cache path or a flag.
 
-The one command is `/enforcer:dispatch <graph-id>` (or `enforcer dispatch <graph-id>` in a shell). It first checks sign-in, `gh`, the repo checkouts, that the installed governor allows a headless land, and that a node is claimable, and refuses to start if any check fails. Then it starts the dispatcher in the background with 3 workers, a sonnet cap, salvage and triage on and warm workers off. `enforcer dispatch status [<graph-id>]` says what is running and what needs you; `enforcer dispatch stop <graph-id>` lets running workers finish and exits. The full flag reference is in [DISPATCHER.md](DISPATCHER.md).
+The one command is `/enforcer:dispatch <graph-id>` (or `enforcer dispatch <graph-id>` in a shell). It first checks sign-in, `gh`, the repo checkouts, that the installed governor allows a headless land, and that a node is claimable, and refuses to start if any check fails. Then it starts the dispatcher in the background with 3 workers, a sonnet cap, and warm workers off. A run that stops without success is classified from lines already on record (see DISPATCHER.md); no triage model is launched. `enforcer dispatch status [<graph-id>]` says what is running and what needs you; `enforcer dispatch stop <graph-id>` lets running workers finish and exits. The full flag reference is in [DISPATCHER.md](DISPATCHER.md).
 
 It will ask three things of you: resolve the gates (smoke tests and releases are never dispatched), look at the review items where a verdict needs a person, and unblock a node marked "landing blocked" (a conflict or CI outage the dispatcher could not clear) or "needs you". Merged work is reported as done, never as failed.
 
@@ -285,12 +285,20 @@ caller uses:
 | pnpm test | `pnpm [-C <dir>] [--filter <package>] <test, lint, format:check, typecheck>`, or the same after `run` |
 | go test | `go [-C <dir>] test <./pkg/...> [-v -race -short -cover -failfast -json -count -p -run -tags -timeout]` |
 | go vet | `go [-C <dir>] vet <./pkg/...>` |
-| ls, cat, head, tail, wc, test | a few named flags and relative paths |
+| go build | `go [-C <dir>] build <./pkg/...> [-v -race -p -tags]`; never `-o`, `-toolexec`, `-ldflags` |
+| ls, cat, head, tail, wc, test | a few named flags and relative paths; `test ! -e\|-f\|-d\|-s <relative path>` proves absence (an absolute path stays refused) |
 | count threshold | `test $(<count>) -ge\|-gt\|-le\|-lt\|-eq\|-ne <integer>`, where `<count>` is `grep -c [flags] <literal> <one path>` or `wc -l\|-c\|-w\|-m <one path>` (`wc -c < <path>` too) |
 | grep | `grep [-cnilEFwvxrRhHqo] [-m N] <literal> <relative path>...` |
 | git grep | `git grep [-nciElwvFIhq] [-m N] <literal> [--] [relative path]...` |
 | git merge-base | `git merge-base --is-ancestor <sha> <ref>` |
 | gh pr view | `gh pr view <n> [-R <owner/repo>] [--json <fields>]` |
+| bun run | `bun run <test, lint, format:check, typecheck>` (the npm script set; `bun run build`, `bun install`, `bun x` refused) |
+| bun test | `bun test [relative path]...`, no flags |
+| vitest run | `bunx\|npx vitest run [--reporter=<name>] [--config <path>] [relative path]...`, only when the checkout has `node_modules/.bin/vitest` (so nothing is downloaded) |
+| npm view version | `npm view <[@scope/]pkg[@range]> version [--registry https://<host>]`; runs with no npm token (temporary HOME), so a private registry answers 401 |
+| terraform check | `terraform [-chdir=<dir>] fmt -check [-recursive -diff -no-color] [dir]`, `terraform [-chdir=<dir>] validate [-no-color]`; never init, plan, apply, import or state |
+| make check | `make [-C <dir>] check-charts`; no other target (`make roll-*`, `make apply` refused) |
+| timeout | `timeout <N>[s\|m\|h] <a line that matches another shape>`, N at most 1800 s, no timeout flags, not around gh or another timeout |
 
 Every argument is checked: no shell is used (the line is split into argv and
 spawned directly), no shell metacharacter (`; | & < > $` and backtick,

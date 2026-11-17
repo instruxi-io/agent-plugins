@@ -17,9 +17,11 @@ and, for each ready node, up to `--workers` at once:
   node, renewed each pass. A second dispatcher on the same graph exits (3)
   with a message unless `--takeover`. Graph and GitHub calls retry transient
   network errors (DNS blips, resets, 429/502/503/504) with backoff, 4 tries, and
-  a pass that still fails is skipped, never fatal. A failed node is triaged only
-  once its last run ended `--triage-grace` minutes ago (default 10) and it is
-  still failed when the triage launches. Worker pids are recorded in
+  a pass that still fails is skipped, never fatal. When a run stops without
+  success the dispatcher classifies why from lines already on record (the error,
+  a gate's options, a report or an observation) and writes `data.stop` on the
+  run plus a `dispatcher_note` observation. It does not launch a triage model.
+  `--triage-model` and `--triage-grace` are accepted and unused. Worker pids are recorded in
   `<state-dir>/pids.json`.
 - **Agent nodes** (`--types`, default `task,bug,chore,merge,scout,milestone,ops`; `release`
   and `gate` stay with a person): a git worktree of `data.repo` at
@@ -36,13 +38,25 @@ and, for each ready node, up to `--workers` at once:
   itself, so its own hooks capture its evidence.
 - **Model**: `data.model` (or the claim card's `model`) wins; a tier set by a
   person (`tier_source: user`) beats `--model`; otherwise `--model` caps it;
-  otherwise `mechanical`/`standard` -> sonnet, `deep` -> opus, default sonnet.
-  `enforcer dispatch` passes `--model` only when you give it.
+  otherwise `mechanical` -> `script-or-haiku`, `standard` -> sonnet, `deep` ->
+  opus, default sonnet. That is enforcer-graph `tiers.Model` (`mechanical` is
+  `script-or-haiku`, the same label the claim card carries). `enforcer dispatch`
+  passes `--model` only when you give it.
 - **Routes**: a route table (`--routes FILE`, `ENFORCER_ROUTES`, the graph's
   `node_defaults.routes`, `<config home>/dispatch/routes.json`; `--no-routes`
-  ignores them) gives each tier a harness, model and optional endpoint, probed
-  at `/v1/models` (cached `--route-probe-ttl` seconds, default 60) with a
-  per-route fallback. A bad table exits 5 at startup. See ROUTES.md.
+  ignores them) gives each tier, and any other named route, a harness, model and
+  optional endpoint. A node selects a named route with `data.route` (for example
+  `local`); otherwise the route is its tier. An endpoint is probed at
+  `/v1/models` (cached `--route-probe-ttl` seconds, default 60) with a per-route
+  fallback. A node is private when the server field `private` is true or
+  `data.private` is true (either one fails closed; the server field is
+  `data.private` copied out as a boolean). Only an endpoint route may run it;
+  a down endpoint waits and is retried, and the node never falls back to a
+  hosted model (no `claude-*`, no harness provider). A private node with no
+  endpoint route is refused, and so is a `data.route` the table does not have.
+  A bad table exits 5 at startup. See ROUTES.md. `routes.local.example.json` is
+  a local Qwen (`qwen3.8-flash-next`) route for the DGX host `spark-dd15`
+  (OpenAI-compatible base `http://spark-dd15:8000/v1`; the table stores the root).
 - **Turn cap**: `data.max_turns`, when set, is passed as `claude --max-turns`
   (accepted and enforced by Claude Code 2.1.288 though not in `--help`; the run
   ends `error_max_turns`). The dispatcher also counts assistant turns in the
@@ -149,7 +163,7 @@ The dispatcher reads the governor's decision records (from the governor log and 
 | code | dispatcher action |
 |---|---|
 | `push_needs_approval_surface` | salvage: push, open the PR and land it, as the worker could not |
-| `destructive_*` | never salvaged; the node goes to triage |
+| `destructive_*` | never salvaged; classified `policy_denied` and left for a person. No triage model is launched |
 | `graph_run_not_open` | remediation launch, with the code in the prompt |
 | any other deny/ask code | logged; neither salvaged nor relaunched |
 
@@ -181,7 +195,7 @@ The worktree, the commits-ahead count and the PR base all use the resolved base,
 
 ### Flags the server sets
 
-- **needs_person**: when a node's attempts are spent ("left for a person"), the dispatcher completes the run `failed` with `data.needs_person: true` and the reason in `data.reason` (best effort: a run the worker already closed may refuse it).
+- **needs_person**: when a node's attempts are spent ("left for a person"), the dispatcher completes the run `failed` with `data.needs_person: true` and the reason in `data.reason` (best effort: a run the worker already closed may refuse it). The same complete carries `data.stop` (`why`, `summary` of at most 300 characters, `tried`, `needs`, `options`, `suggested_who`). A `dispatcher_note` observation (`kind: summary`, `source: dispatcher_note`) carries the same record. The needs_person email is unchanged. A private node (`private` or `data.private`) still gets `data.stop` on that complete and does not get the observation, because posting one may send the body to the judgment model. An open question is copied the same way; the question email stays the server's.
 - **over_cap**: a heartbeat answer or claim card carrying `over_cap` stops that worker cleanly (logged `over cap: <key>`), spends no attempt, and the node is not relaunched this session.
 - **Rejudge**: a verdict that a server rejudge (`rejudged`) flipped to verified is accepted: no relaunch.
 - **Warm retry**: a remediation launch of a claude node whose previous session reported cleanly resumes it (`--resume <session>`, logged `mode=warm --resume`) instead of starting cold.
@@ -213,7 +227,7 @@ A worker delivers a node only the way the skills on its claim card say (agents/g
 
 ## Gemini workers (`--harness gemini`, experimental)
 
-`--harness gemini --experimental` launches `gemini -p <prompt> -o stream-json --approval-mode yolo [-m <model>]` (Gemini CLI 0.38; `GEMINI_BIN` or `args.gemini` overrides the binary). `-m` is passed only for a model starting `gemini` or `auto`. The NDJSON stream (`init`, `message` deltas, `tool_use`, `tool_result`, `result{stats}`) is read by `geminiEvents` in `src/dispatch/stream.mjs`, written from the recorded run in `test/fixtures/gemini-stream.jsonl`: a run of assistant deltas is one turn, each `tool_use` one more, and `run_shell_command` is reported as `Bash`. Usage comes from `result.stats` (`input_tokens`, `output_tokens`, `cached`).
+`--harness gemini --experimental` launches `gemini -p <prompt> -o stream-json --approval-mode yolo [-m <model>]` (Gemini CLI 0.38; `GEMINI_BIN` or `args.gemini` overrides the binary). `-m` is passed only for a model starting `gemini` or `auto`. The NDJSON stream (`init`, `message` deltas, `tool_use`, `tool_result`, `result{stats}`) is read by `geminiEvents` in `src/dispatch/harness/gemini.mjs` (the gemini adapter), written from the recorded run in `test/fixtures/gemini-stream.jsonl`: a run of assistant deltas is one turn, each `tool_use` one more, and `run_shell_command` is reported as `Bash`. Usage comes from `result.stats` (`input_tokens`, `output_tokens`, `cached`).
 
 The graph MCP server is wired with `enforcer harness install gemini`, which prints `gemini mcp add --scope user --transport http --trust enforcer "$ENFORCER_BASE_URL/mcp" -H "X-API-Key: $ENFORCER_API_KEY"` (there is no runtime copy to migrate). The gaps:
 
@@ -222,13 +236,60 @@ The graph MCP server is wired with `enforcer harness install gemini`, which prin
 - **No `--max-turns`, `--max-budget-usd`, `--allowedTools`, session resume or `--name`.** The dispatcher still counts turns from the stream and stops a worker past the cap; `--approval-mode yolo` approves every tool.
 - **Auth is the user's.** The CLI needs a working sign-in (`GEMINI_API_KEY` in `~/.gemini/.env` with `selectedType: gemini-api-key`, or Vertex AI); the personal Code Assist OAuth tier is refused by Google (`IneligibleTierError`).
 
+## Codex workers (`--harness codex` or a codex route, experimental)
+
+Everything that differs per harness lives in one adapter per harness, `src/dispatch/harness/<claude|codex|grok|gemini>.mjs` (the shape is documented in `harness/index.mjs`: capabilities, endpoint APIs, argv, environment, per-worker files, prompt rules, stream parser, preflight checks, sweep). A codex worker is launched as
+
+```
+codex exec --json --sandbox workspace-write -c sandbox_workspace_write.network_access=true [--model <model>] <prompt>
+```
+
+with **stdin closed** (`/dev/null`; every worker gets that, see `WORKER_STDIO` in `launch.mjs`): `codex exec` with an open stdin blocks on "Reading additional input from stdin..." and never starts. The sandbox is always `workspace-write`; the dispatcher never passes `danger-full-access` or `--dangerously-bypass-approvals-and-sandbox`, and there is no fallback to either.
+
+**On a route with an endpoint** (`api: openai`, docs/graph/ROUTES.md section 4) the worker gets a CODEX_HOME of its own, `<state-dir>/codex-<node-key>/` (mode 0700), holding:
+
+- `config.toml` (0600): the route's model, an OpenAI-compatible provider (`base_url = <url>/v1`, `wire_api = "responses"`, `env_key = "ENFORCER_ROUTE_TOKEN"`), `model_reasoning_effort = "medium"`, no update check, no analytics, file-only credential stores (so no keyring login or MCP OAuth token of the operator's is picked up), the `enforcer` MCP server with `env_http_headers = { "X-API-Key" = "ENFORCER_API_KEY" }` and `default_tools_approval_mode = "approve"`, and the `[otel]` export to governance;
+- `AGENTS.md` (0600): the graph-worker instructions (`agents/graph-worker.md` without its Claude Code frontmatter), which Codex reads from CODEX_HOME as global instructions.
+
+The directory is removed when the worker exits, on dispatcher shutdown, and at dispatcher start. Neither the route's token nor the worker's credential is in the file or in argv: the route token is in the worker's environment as `ENFORCER_ROUTE_TOKEN` (`none` when the route names no `token_env`) and the credential as `ENFORCER_API_KEY` (the minted worker token, or the `--agent` key); `OPENAI_API_KEY` is set to `none` and the operator's `OPENAI_BASE_URL`, `CODEX_HOME` and `CODEX_API_KEY` are never passed. Codex warns `Model metadata for <model> not found. Defaulting to fallback metadata` for a self-hosted model; it is harmless and left alone (Codex 0.164 has `model_context_window` and a `model_catalog_json` file for this, but the route table carries no context window and the catalog's format is not pinned here).
+
+**Telemetry.** The `[otel]` block is the codex telemetry adapter's own (`applyOtel` in `lib/governor/adapters/codex/telemetry.mjs`: full signal paths, protocol `binary`, the `X-API-Key` header written literally because Codex does not expand variables there, `trace_exporter = "none"`, prompt and response logging forced off), with this machine's telemetry-only ingest key for harness `codex` (`ensureIngestKey`, `src/ingest-key.mjs`). That key is the only secret in the file, and it can only write telemetry. When `codexTelemetry` is off in the governor config, or no key can be had within 8 s (signed out, agent disabled, Enforcer unreachable), the worker launches without telemetry and the dispatcher says why once: `codex workers run without telemetry: <reason>`. Telemetry never fails a worker.
+
+**Without an endpoint** nothing is written: the worker runs on the operator's CODEX_HOME (its ChatGPT login, its installed plugin and hooks, its own `[otel]`), with the enforcer server given on the command line (`-c mcp_servers.enforcer={url=..., default_tools_approval_mode="approve", env_http_headers={"X-API-Key"="ENFORCER_API_KEY"}}`). A per-worker CODEX_HOME there would need the operator's `auth.json`, whose refresh token rotates: a copy would sign the operator out, as with Claude's.
+
+**The graph tools** are the `enforcer` server's tools under Codex; with the worker's credential in `ENFORCER_API_KEY` the server answers as the worker's agent. The stream parser (`codexEvents`) names an MCP call `mcp__<server>__<tool>`, so a codex worker's `graph_next_work` and `graph_report` give the dispatcher its run id and its report exactly as Claude Code's do. Without a worker credential (no `--agent`, no `ENFORCER_WORKER_AGENT_ID`) an endpoint worker has no way to sign in to the server (its CODEX_HOME holds no OAuth token): run codex routes with `--agent`.
+
+**What the dispatcher still does for Codex.** The sandbox keeps a linked worktree's git metadata read-only, so a codex worker only edits and checks, then reports; the dispatcher commits its worktree, pushes, opens the PR and lands it, then posts the runner records (`codex-land.mjs`). The worker's prompt says so (`codexGitRules`). On an endpoint route Codex runs none of the plugin's hooks (its CODEX_HOME has no plugin installed): no governor check, no automatic heartbeat, no report gating; its evidence is what it passes in `graph_report` plus the dispatcher's runner records. No session resume (`HARNESS_CAPS.codex.resume` is false) and no `--max-turns`; the dispatcher counts turns from the stream.
+
+**The done line** for a codex worker adds `input=` and `reasoning=` to the usual `cache_read=` (Codex's `cached_input_tokens`) and `output=`, summed over the run's `turn.completed` events; a `turn.failed` ends as result `error_turn_failed` with its message.
+
+**Run usage.** A codex worker completes its run through MCP before it exits, without usage. After it exits the dispatcher posts the run's totals from the stream to `POST /graphs/{g}/nodes/{n}/runs/{r}/usage` (overwrite), as the run's claimant: the worker's own credential (the minted worker token, the agent key, or the operator's sign-in, whichever the worker ran on), before a minted token is revoked. The body is in graph's convention, where `input_tokens` excludes cache reads and writes: `input_tokens = input - cached_input - cache_write_input` (floor 0), `cache_read_input_tokens = cached_input`, `cache_creation_input_tokens = cache_write_input` or 0, `output_tokens = output` (reasoning is inside it), `turns`, the route's `model`, `source: "reported"`, no `cost_usd`. A stream without usage posts nothing. The log says `usage <key>: recorded ...` or why it skipped; a graph server without the route (405, or a 404 that is not `graph|node|run_not_found`) is said once per dispatcher, and no usage error ever fails the node. Harnesses opt in through the adapter's `usageAfterExit`; Claude Code reports usage through its hooks and has none.
+
+**The sandbox needs a host fix on Ubuntu 24.04.** Codex's Linux sandbox is bubblewrap with a new user and network namespace. Ubuntu restricts unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns = 1`), and without an AppArmor profile that grants `/usr/bin/bwrap` the `userns` permission every sandboxed command fails with `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. The fix (measured on the DGX Spark, 2026-11-10; with it `workspace-write` writes in the worktree and still denies writes outside it with `Read-only file system`) is a profile such as this, as `/etc/apparmor.d/bwrap`, loaded with `sudo apparmor_parser -r /etc/apparmor.d/bwrap`:
+
+```
+abi <abi/4.0>,
+include <tunables/global>
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}
+```
+
+(Some Ubuntu releases ship `/etc/apparmor.d/bwrap-userns-restrict`, which does the same.) Codex also refuses to create its helper binaries when CODEX_HOME is under `/tmp`; the dispatcher's state dir is under `~/.config/enforcer`, which is fine.
+
+**Preflight.** `enforcer dispatch` checks every harness the run can launch (`--harness`, each route's harness, each `route:<harness>` fallback). For codex it prints two lines and fails the start (exit 2, nothing claimed) when either fails:
+
+- `codex: <bin>: codex-cli <version>` from `codex --version` (`--codex` or `CODEX_BIN` names the binary);
+- `codex-sandbox: ...` from the cheapest probe that fails the way Codex does: `bwrap --unshare-user --unshare-net --ro-bind / / -- /bin/true` (`/usr/bin/bwrap` first, the path the AppArmor profiles attach to). Exit 0 passes; a failure prints bwrap's own error and the fix above. With no bwrap at all it fails only where `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is 1. Not on Linux, it is not probed. The route's `/v1/models` probe (the `route` lines) still says whether the endpoint serves the model.
+
 ## Worker rules (`--worker-rules on|off`)
 
 `enforcer dispatch run <graph> --worker-rules on|off` sets `ENFORCER_GOVERNOR_RULES` for every worker, which turns the governor's headless worker rules (push, pull request and land shapes, protected paths) on or off for that process tree without touching the machine-wide file. The default is `off`, because the governor reports data first and decisioning is on only when configured. The default lives in one constant, `DEFAULT_WORKER_RULES` in `src/dispatch/launch.mjs`. `on` always applies. `off` applies only when the user's own `config.json` sets `allowEnvOff: true` (`enforcer governor set allowEnvOff true`); without it the governor ignores the environment `off`, says so once per process on stderr, and the workers follow `config.json`. An organisation policy of `on` still beats `off`. Preflight prints a `worker-rules` line stating the mode, for example `workers run with the worker rules OFF (pass --worker-rules on to enforce them)`.
 
 ## Only the nodes assigned to you (`--for me|mine`)
 
-`enforcer dispatch <graph> --for mine` asks the frontier for `?for=mine`, so the dispatcher launches only nodes assigned to its caller's account or one of its groups (`--for me` also takes unassigned nodes). It is the server's own predicate (WORK_LOBBY_CONTRACT §8, the same one `graph_next_work`'s `for` uses), and it is advisory: the server would still let the caller claim anything it can edit, so `--for` is the dispatcher choosing what to take. With `--for`, a lapsed node is re-claimed only when the frontier lists it (the frontier lists reclaimable nodes itself), never from the full node list, so a lapsed node assigned to someone else is left alone. Assign a node with `PATCH /graphs/{g}/nodes/{n}` `assignee_account_id` or `assignee_group_slug`. With `--agent`, "you" is the agent's service account.
+`enforcer dispatch <graph> --for mine` asks the frontier for `?for=mine`, so the dispatcher launches only nodes assigned to its caller's account or one of its groups (`--for me` also takes unassigned nodes). Advisory assignment (`assignment_mode` `advisory`, the default) only narrows that filter: the server still lets the caller claim any node it can edit, so `--for` is the dispatcher choosing what to take. `assignment_mode` `required` is enforced. Only the assignee account, or a member of the assignee group, can claim; anyone else gets 409 `node_reserved` on the named claim and on StartRun. The dispatcher treats that 409 as a skip: logged once, no attempt, not a claim error. A node read that already says `claim_block: node_reserved`, or `required` with `viewer_can_claim: false`, is skipped the same way before a worker is launched. With `--for`, a lapsed node is re-claimed only when the frontier lists it (the frontier lists reclaimable nodes itself), never from the full node list, so a lapsed node assigned to someone else is left alone. Assign a node with `PATCH /graphs/{g}/nodes/{n}` `assignee_account_id`, `assignee_group_slug` and `assignment_mode`. With `--agent`, "you" is the agent's service account.
 
 ## A dispatcher on every graph that wants you (`enforcer dispatch watch`)
 
@@ -258,7 +319,7 @@ Claude Code prefers a stored `/mcp` OAuth sign-in for the plugin's MCP server ov
 ## Secret hygiene and what a worker can read
 
 - The agent key stays in the dispatcher. When `ENFORCER_WORKER_AGENT_ID` is set, each worker gets a minted one-day token (scopes `graph:read`, `graph:write`) as `GRAPH_API_KEY` and `ENFORCER_API_KEY`, and in its MCP config. When it is not set, the agent key is the only credential there is and is passed to workers as before: the trust boundary is that a worker, its Bash tool and any test it runs can print it. Set the variable to avoid that.
-- On start the dispatcher removes every stale `mcp-*.json`, redacts every existing `logs/*.jsonl`, and sets the state dir to 0700 and `pids.json` to 0600. Redaction also removes any bare `ag_` or `env3_` token.
+- On start the dispatcher removes every stale `mcp-*.json` and `codex-*/` (a codex worker's CODEX_HOME), redacts every existing `logs/*.jsonl`, and sets the state dir to 0700 and `pids.json` to 0600. Redaction also removes any bare `ag_` or `env3_` token.
 - A worker's environment is an explicit list: `PATH`, `HOME`, `LANG`, `TERM`, `TMPDIR`, `SHELL`, `USER`, `LOGNAME`, `LC_ALL`, `LC_CTYPE`, `LC_MESSAGES`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, the plugin and graph variables, and `GH_TOKEN` only from `ENFORCER_WORKER_GH_TOKEN`. No `CLAUDE_*` or `LC_*` prefix passes.
 - A worker keeps the operator's `HOME`, so `gh`, `git` and `ssh` credentials there are reachable. A per-worker `HOME` was considered and not done: copying Claude's single-use refresh token into another `HOME` would sign the operator out.
 

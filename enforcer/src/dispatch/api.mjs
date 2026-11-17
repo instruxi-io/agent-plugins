@@ -24,6 +24,35 @@ export class APIError extends Error {
   }
 }
 
+/** The machine code of an error body: error.code, a string `error`, or `code`. Null when the body is not that shape. */
+export function errorCode(body) {
+  let j = body;
+  if (typeof body === 'string') {
+    try {
+      j = JSON.parse(body);
+    } catch {
+      return null;
+    }
+  }
+  if (!j || typeof j !== 'object') return null;
+  const err = j.error;
+  const code = (err && typeof err === 'object' ? err.code : err) || j.code || null;
+  return typeof code === 'string' && code ? code : null;
+}
+
+/** A 405, or a 404 that is not the graph's own graph/node/run_not_found: the server has no such route (an older build). */
+export function usageRouteMissing(e) {
+  if (!(e instanceof APIError)) return false;
+  if (e.status === 405) return true;
+  if (e.status !== 404) return false;
+  return !/^(graph|node|run)_not_found$/.test(String(errorCode(e.body) || ''));
+}
+
+/** 409 node_reserved: assignment_mode is required and this caller is not the assignee. Not a failed attempt. */
+export function nodeReserved(e) {
+  return e instanceof APIError && e.status === 409 && errorCode(e.body) === 'node_reserved';
+}
+
 const one = (d) => (Array.isArray(d) ? d[0] : d);
 
 export class API {
@@ -71,8 +100,9 @@ export class API {
   async graph(g) {
     return (await this.call('GET', `/graphs/${g}`)).data || {};
   }
-  // `forWho` ('me' or 'mine') narrows the frontier to nodes assigned to the caller (and, for 'me', unassigned ones);
-  // assignment is advisory on the server, so this is the dispatcher choosing what to take. The path stays a literal
+  // `forWho` ('me' or 'mine') narrows the frontier to nodes assigned to the caller (and, for 'me', unassigned ones).
+  // Advisory assignment only narrows that filter. Required assignment is enforced by the server: a claim this caller
+  // may not take is 409 node_reserved (nodeReserved), which the dispatcher skips. The path stays a literal
   // (query after `?`) so scripts/extract-api-usage.mjs sees one route.
   async frontier(g, forWho = null) {
     // api-used: reads data
@@ -122,6 +152,19 @@ export class API {
   addEvidence(g, n, r, body) {
     return this.call('POST', `/graphs/${g}/nodes/${n}/runs/${r}/evidence`, body);
   }
+  /**
+   * Record a run's token usage after its worker exited (OVERWRITE: the body is the run's totals, not a delta). The
+   * graph allows it to the run's claimant while it runs or within a window after it ends. An older server has no
+   * such route: 405, or a 404 that is not graph/node/run_not_found (usageRouteMissing).
+   */
+  // api-used: sends model,input_tokens,output_tokens,cache_read_input_tokens,cache_creation_input_tokens,turns,source
+  recordUsage(g, n, r, body) {
+    return this.call('POST', `/graphs/${g}/nodes/${n}/runs/${r}/usage`, body);
+  }
+  /** The same client (base, retries, timeout) speaking as another credential: `headers` is an async () => object. */
+  withHeaders(headers) {
+    return new API(this.base, { ...this.o, headers });
+  }
   // api-used: reads data
   async runs(g, n) {
     return (await this.call('GET', `/graphs/${g}/nodes/${n}/runs`)).data || [];
@@ -137,6 +180,19 @@ export class API {
   // api-used: reads data
   async observations(g, n) {
     return (await this.call('GET', `/graphs/${g}/nodes/${n}/observations`)).data || [];
+  }
+  /**
+   * Append a fact. Idempotent on the body: an identical re-post returns the existing row.
+   * kind is finding | decision | summary | brief. A dispatcher note uses kind summary and source dispatcher_note.
+   */
+  // api-used: sends body,kind,source,data
+  addObservation(g, n, body) {
+    return this.call('POST', `/graphs/${g}/nodes/${n}/observations`, body);
+  }
+  /** Unanswered questions. The question email is the server's; this only reads. The query is stripped by the usage extractor. */
+  // api-used: reads data
+  async questions(g) {
+    return (await this.call('GET', `/graphs/${g}/questions?open=true`)).data || [];
   }
 }
 

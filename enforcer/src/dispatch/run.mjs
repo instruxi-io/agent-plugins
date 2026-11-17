@@ -1,14 +1,14 @@
 // @ts-nocheck TODO(typecheck): many inferred-shape errors from untyped option objects, not bugs; annotate with JSDoc when tightening
 // The dispatcher runtime: one pass (tick), reaping, the lease, pids.json, usage-limit and CI holds,
 // SIGTERM/SIGINT drain, and `main` (the `enforcer dispatch` entry).
-// Warm sessions, salvage, landing-blocked and triage launches live in the sibling modules.
+// Warm sessions and salvage live in the sibling modules. A stop is classified in stop.mjs (no model).
 import { spawnSync } from 'node:child_process';
 import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, appendFileSync } from 'node:fs';
 import { hostname, homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { API, APIError } from './api.mjs';
+import { API, APIError, nodeReserved, usageRouteMissing } from './api.mjs';
 import { Lease, LEASE_KEY, LEASE_TTL } from './lease.mjs';
 import { worktreeFor, worktreeSetup, BaseMissing, StaleWorktree, resolveBase, defaultBranch, inputBindings, resolveInputBindings } from './worktree.mjs';
 import {
@@ -31,22 +31,22 @@ import {
   LAND_PR,
   DEFAULT_WORKER_RULES,
   WORKER_RULES_MODES,
-  writeAgentMcpConfig,
-  mcpConfigPath,
-  removeAgentMcpConfigs,
+  sweepWorkerFiles,
+  adapterFor,
   governorLane,
   drainGovernorLane,
 } from './launch.mjs';
-import { routeFor, nodeMaxTurns, escalate } from './model.mjs';
+import { routeFor, nodeMaxTurns, escalate, isPrivate, reservedForAssignee } from './model.mjs';
 import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError, DEFAULT_PROBE_TTL, HOLD_NOTE_SECONDS } from './routes.mjs';
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
+import { classifyStop, planStopWrites, questionStopPlan, stopStep } from './stop.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
-import { nonClaudeGitRules, checkDestructiveMerge } from './git-guard.mjs';
-import { codexGitRules, landForCodex } from './codex-land.mjs';
+import { checkDestructiveMerge } from './git-guard.mjs';
+import { landForCodex } from './codex-land.mjs';
 import HEADLESS_PROFILE from '../../lib/governor/profiles/headless-worker.mjs';
 import { loadRepoBases } from './prune.mjs';
 import { clip, parseTs } from './util.mjs';
@@ -189,6 +189,23 @@ export async function dispatchClients(env, headers) {
   return { api: new API(cfg.graphUrl, o), credApi: new API(cfg.enforcerUrl, o) };
 }
 
+/**
+ * The branch a codex worker's pull request targets: the node's data.base, else the repo's default branch as the
+ * worktree resolved it (origin/HEAD, gh, origin/main|master), else main. Before 1.11.0 this was data.base or a literal
+ * 'main', so a repo whose default branch is master got "Base ref must be a branch" and nothing landed.
+ */
+export function codexLandBase(node, repoRoot, repo, branchOf = defaultBranch) {
+  const own = String(node?.data?.base || '').trim();
+  if (own) return own.replace(/^origin\//, '');
+  let ref = null;
+  try {
+    ref = repoRoot && repo ? branchOf(join(repoRoot, repo)) : null;
+  } catch {
+    ref = null;
+  }
+  return ref ? String(ref).replace(/^origin\//, '') : 'main';
+}
+
 export class Dispatcher {
   // credApi is v3: worker credentials are minted and revoked there, the graph service has no /agents routes.
   constructor(api, args, out = (s) => process.stdout.write(s), credApi = api) {
@@ -204,11 +221,17 @@ export class Dispatcher {
     this.workers = new Map();
     this.routes = null; // the route table in force (docs/graph/ROUTES.md); null is today's --harness and TIER_MODEL
     this.probes = new ProbeCache({ ttl: args.routeProbeTtl ?? DEFAULT_PROBE_TTL, env: args.routesEnv || process.env });
+    this.saidOnce = new Set(); // notes said once per dispatcher (adapter prepare notes)
+    this.usageRouteSaid = false; // a graph server without the run usage route (404/405) is said once per dispatcher
     this.holds = new Map(); // endpoint url -> {tier, reason, keys}: nodes held this pass by a down endpoint (fallback wait)
     this.holdNoted = new Map();
+    this.refused = new Set(); // keys refused this pass (unknown route, or a private node with no endpoint route)
     this.attempts = new Map();
     this.epoch = null; // the graph's epoch, read at each launch; it names the worker logs
     this.failures = new Map();
+    this.stopped = new Set(); // keys whose stop is recorded: not relaunched (attempts spent, or a denial that does not remediate)
+    this.questionsNoted = new Set(); // open question ids already copied to a dispatcher note
+    this.questionsRouteMissing = false;
     this.denied = new Map();
     this.lastSkip = new Map();
     this.peak = 0;
@@ -297,7 +320,7 @@ export class Dispatcher {
       if (this.types && !this.types.has(n.type)) return false;
       if (n.key === LEASE_KEY || n.data?.dispatcher_lease) return false;
       if (n.data?.triage_of) return false; // launched by the dispatcher that made it, never from the frontier
-      if (this.denied.has(n.key)) return false;
+      if (this.stopped.has(n.key) || this.denied.has(n.key)) return false;
       return (this.attempts.get(n.key) || 0) < this.args.maxAttempts;
     });
   }
@@ -343,10 +366,14 @@ export class Dispatcher {
     }
     const launched = [];
     this.holds = new Map();
+    this.refused = new Set();
     for (const n of chosen) {
       try {
-        // a node held by a down endpoint is not launched and spends no attempt
-        if ((await this.launch(n)) !== 'held') launched.push(n);
+        // held (endpoint down), refused (private, or an unknown route) and skipped (node_reserved) launch nothing
+        // and spend no attempt. A skip is not kept in `refused`: that set holds the dispatcher up, and a node
+        // reserved for someone else is not this dispatcher's work.
+        const outcome = await this.launch(n);
+        if (outcome !== 'held' && outcome !== 'refused' && outcome !== 'skipped') launched.push(n);
       } catch (e) {
         if (e instanceof APIError) throw e;
         this.say(`launch ${n.key} failed (${e.name}: ${e.message}); continuing`);
@@ -383,10 +410,17 @@ export class Dispatcher {
     return 0;
   }
 
-  /** The route a node launches on this pass (probe and fallback included); see resolveRoute. */
+  /** The route a node launches on this pass (probe and fallback included); see resolveRoute. A private node with no table is a refusal. */
   async pickRoute(n) {
-    if (!this.routes) return { hold: false, route: routeFor(n, null, this.args), fallbackFrom: null };
-    return resolveRoute(n, this.routes, this.args, this.probes);
+    return resolveRoute(n, this.routes, this.args, this.routes ? this.probes : null);
+  }
+
+  /** 409 node_reserved, or a read that already says so: skip once, spend no attempt, do not treat it as a claim error. */
+  noteReserved(n) {
+    const why = 'skip: node reserved for its assignee';
+    if (this.lastSkip.get(n.key) !== why) this.say(`skip ${n.key}: node reserved for its assignee`);
+    this.lastSkip.set(n.key, why);
+    return 'skipped';
   }
 
   noteHold(n, pick) {
@@ -474,15 +508,31 @@ export class Dispatcher {
       return;
     }
     const tag = n._lapsed ? ' (lease lapsed; re-claim)' : '';
+    if (reservedForAssignee(n)) return this.noteReserved(n);
     const mt = mergeTarget(n);
     if (mt) return this.launchMerge(n, mt, tag);
     // chosen once, here, and carried on the worker (and in pids.json): reap, shutdown and resume read it, never this.args
     const pick = await this.pickRoute(n);
+    if (pick.refuse) {
+      const why = `refused: ${pick.reason}`;
+      if (this.lastSkip.get(n.key) !== why) this.say(`REFUSE ${n.key}: ${pick.reason}`);
+      this.lastSkip.set(n.key, why);
+      this.refused.add(n.key);
+      return 'refused';
+    }
     if (pick.hold) {
       this.noteHold(n, pick);
       return 'held';
     }
     const r = pick.route;
+    // a private node that reached here without an endpoint, or on a claude-* model, must not launch
+    if (isPrivate(n) && (pick.fallbackFrom || !r.endpoint || /^claude-/i.test(String(r.model || '')))) {
+      const why = `refused: ${pick.reason || 'private node has no endpoint route'}`;
+      if (this.lastSkip.get(n.key) !== why) this.say(`REFUSE ${n.key}: ${pick.reason || 'private node has no endpoint route'}`);
+      this.lastSkip.set(n.key, why);
+      this.refused.add(n.key);
+      return 'refused';
+    }
     const { harness } = r;
     // a retry after a failure moves up a rung (escalate): unless a person pinned data.model, or the route has an endpoint
     const priorFails = (this.failures.get(n.key) || []).length;
@@ -557,17 +607,18 @@ export class Dispatcher {
     if (warmed) t2 += ` (warm: node ${warmed.nodes + 1} of session ${warmed.session}, after ${warmed.lastKey})`;
     const session = prior || warmed?.session || randomUUID();
     const mode = prior ? 'warm --resume' : warmed ? 'warm' : 'cold';
-    // An agent run talks to the API through its own MCP connection (see writeAgentMcpConfig), never the stored sign-in.
-    const ownMcp = a.agent && a.agentKey && a.mcpUrl && harness === 'claude';
-    const mcpConfig = ownMcp ? mcpConfigPath(this.state, n.key) : null;
-    // codex cannot write git metadata in its sandbox: it edits and checks only, and the dispatcher lands (landCodex)
-    if (harness === 'codex') prompt += '\n' + codexGitRules();
-    else if (harness !== 'claude') prompt += '\n' + nonClaudeGitRules(LAND_PR);
+    // The harness's per-worker files (claude: an agent run's own MCP connection, see writeAgentMcpConfig), as paths only:
+    // they are written after the credential is minted, just before the spawn.
+    const adapter = adapterFor(harness);
+    const plan = adapter.plan({ state: this.state, key: n.key, args: a, route: r });
+    // non-claude harnesses get git rules (codex cannot write git metadata in its sandbox: the dispatcher lands, landCodex)
+    const rules = adapter.promptRules();
+    if (rules) prompt += '\n' + rules;
     const cmd = launchCmd(prompt, model, a, n.key, {
       session,
       resume: Boolean(prior || warmed),
       maxTurns: turnsCap,
-      mcpConfig,
+      ...plan,
       harness,
       endpoint: Boolean(r?.endpoint),
     });
@@ -616,12 +667,27 @@ export class Dispatcher {
         return;
       }
     }
-    if (mcpConfig) {
+    let prepared = { env: {}, cleanup: [] };
+    if (adapter.prepare) {
       try {
-        writeAgentMcpConfig(this.state, n.key, a.mcpUrl, token || a.agentKey);
+        prepared = await adapter.prepare(plan, {
+          state: this.state,
+          key: n.key,
+          args: a,
+          token,
+          route: r,
+          env: a.routesEnv || process.env,
+          deps: this.harnessDeps || {},
+        });
       } catch (e) {
-        this.say(`refuse ${n.key}: could not write its MCP config: ${e.message}`);
+        this.say(`refuse ${n.key}: could not ${adapter.prepareWhat || 'prepare its harness files'}: ${e.message}`);
         return;
+      }
+      // said once per dispatcher (e.g. codex workers without telemetry): the same reason every launch is noise
+      for (const m of prepared.notes || []) {
+        if (this.saidOnce.has(m)) continue;
+        this.saidOnce.add(m);
+        this.say(m);
       }
     }
     const env = workerEnv(this.g, process.env, {
@@ -635,15 +701,19 @@ export class Dispatcher {
       routeEnv: a.routesEnv || process.env,
       harness,
     });
+    Object.assign(env, prepared.env);
     const proc = spawnWorker(cmd, {
       cwd: path,
       logPath,
       env,
-      cleanup: mcpConfig ? [mcpConfig] : [],
+      cleanup: prepared.cleanup,
       secrets: [a.agentKey, token, routeToken(r, a.routesEnv || process.env)].filter(Boolean),
     });
     proc.done.then(() => this.wakeUp());
     proc.done.then(async () => {
+      // The run's usage, for a harness that cannot report it itself (codex), posted as the run's claimant: the
+      // worker's own credential, so it goes before the revoke below. Never throws.
+      if (adapter.usageAfterExit) await this.recordUsage(w, this.claimantApi(token));
       // Ship the lane's tail while the worker's credential still works: after the revoke nothing can ship it as this run.
       if (governorHome) await (this.drainLane || drainGovernorLane)(env);
       if (enforcerHome) rmSync(enforcerHome, { recursive: true, force: true });
@@ -705,6 +775,11 @@ export class Dispatcher {
     try {
       card = await this.api.claim(this.g, n.id, 'graph-dispatch');
     } catch (e) {
+      // required assignment: this caller is not the assignee. Not an error and not an attempt.
+      if (nodeReserved(e)) {
+        this.attempts.set(n.key, Math.max(0, (this.attempts.get(n.key) || 0) - 1));
+        return this.noteReserved(n);
+      }
       this.say(`claim ${n.key} refused: ${e.message}`);
       return;
     }
@@ -797,23 +872,202 @@ export class Dispatcher {
       },
     };
     if (!ok) body.error = `land-pr.sh exit ${rc} (${LAND_CODES[rc] || 'unknown'}): ${out.trim().slice(-500)}`;
+    let stop = null;
+    if (!ok) {
+      stop = classifyStop({
+        node: w.node,
+        error: body.error,
+        attempts: this.attempts.get(w.key) || 0,
+        maxAttempts: this.args.maxAttempts,
+        tried: [{ run: w.runId, harness: null, model: null, route: null, error: body.error }],
+      });
+      body.data.stop = stop;
+    }
     try {
       await this.api.complete(this.g, w.node.id, w.runId, body);
       this.say(`land ${w.key} exit=${rc} -> run ${w.runId} ${body.status}`);
     } catch (e) {
       this.say(`complete ${w.key} failed: ${e.message}`);
     }
+    if (stop) await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
   }
 
-  /** Left for a person: complete the run failed with data.needs_person and the reason (a closed run may refuse; best effort). */
-  async flagNeedsPerson(w, s, outcome) {
-    const reason = `graph-dispatch: ${this.args.maxAttempts} attempt(s) spent; left for a person: ${clip(outcome.error || 'no error recorded', 300)}`;
-    try {
-      await this.api.complete(this.g, w.node.id, s.run_id, { status: 'failed', error: reason, data: { runner: 'graph-dispatch', needs_person: true, reason } });
-      this.say(`needs_person ${w.key}: run ${s.run_id} flagged`);
-    } catch (e) {
-      this.say(`needs_person ${w.key}: could not flag run ${s.run_id}: ${e.message}`);
+  /** Write data.stop on the run (when we are already completing it) and the dispatcher_note observation. */
+  async publishStop(node, plan, { runId = null } = {}) {
+    if (plan.complete && runId) {
+      try {
+        await this.api.complete(this.g, node.id, runId, plan.complete);
+        const why = plan.complete.data?.stop?.why;
+        if (plan.complete.data?.needs_person) this.say(`needs_person ${node.key}: run ${runId} flagged${why ? ` (${why})` : ''}`);
+        else this.say(`stop ${node.key}: run ${runId} recorded${why ? ` (${why})` : ''}`);
+      } catch (e) {
+        this.say(`stop ${node.key}: could not flag run ${runId}: ${e.message}`);
+      }
     }
+    if (plan.withheld === 'private') {
+      this.say(`stop ${node.key}: private; dispatcher_note withheld`);
+      return;
+    }
+    if (plan.observation && typeof this.api.addObservation === 'function') {
+      try {
+        await this.api.addObservation(this.g, node.id, plan.observation);
+        this.say(`dispatcher_note ${node.key}: ${plan.observation.data?.stop?.why || 'stop'}`);
+      } catch (e) {
+        this.say(`dispatcher_note ${node.key}: ${e.message}`);
+      }
+    }
+  }
+
+  /**
+   * A run stopped without success. Classify from lines already in hand (and, for a node that is
+   * not private, its observations). `email` keeps the needs_person complete the give-up path already sends.
+   * A private node is not given an observation: that route may judge the body.
+   */
+  async recordStop(w, s, outcome, { email = false, complete = false, tried = [] } = {}) {
+    let observations = [];
+    if (!isPrivate(w.node) && typeof this.api.observations === 'function') {
+      try {
+        observations = await this.api.observations(this.g, w.node.id);
+      } catch {
+        observations = [];
+      }
+    }
+    const stop = classifyStop({
+      node: w.node,
+      error: outcome?.error || s?.error_text || s?.report_error || null,
+      report: s?.result_text || null,
+      reportError: s?.report_error || null,
+      reportData: s?.report_data || null,
+      observations,
+      denialKind: outcome?.denialKind || null,
+      denialCode: outcome?.denialCode || null,
+      harnessLimit: outcome?.harnessLimit || null,
+      overCap: !!(w.overCap || outcome?.overCap),
+      mcp: s?.mcp || null,
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried,
+    });
+    const runId = complete && s?.run_id ? s.run_id : null;
+    const reason = email
+      ? `graph-dispatch: ${this.args.maxAttempts} attempt(s) spent; left for a person: ${clip(outcome?.error || 'no error recorded', 300)}`
+      : outcome?.error || null;
+    const plan = planStopWrites({ node: w.node, stop, runId, reason, email: !!(email && runId) });
+    await this.publishStop(w.node, plan, { runId });
+    return stop;
+  }
+
+  triedRows(key, current = null) {
+    const prior = (this.failures.get(key) || []).map((f) => ({
+      run: f.run || null,
+      harness: f.harness || null,
+      model: f.model || null,
+      route: f.route || null,
+      error: f.error || null,
+    }));
+    if (current) prior.push(current);
+    return prior;
+  }
+
+  /** Open questions: copy the question text onto a dispatcher note. The ask email is already sent. */
+  async noteOpenQuestions(nodes) {
+    if (this.args.dryRun || this.questionsRouteMissing || typeof this.api.questions !== 'function') return;
+    let qs;
+    try {
+      qs = await this.api.questions(this.g);
+    } catch (e) {
+      if (e instanceof APIError && (e.status === 404 || e.status === 405 || e.status === 400)) {
+        this.questionsRouteMissing = true;
+        this.say(`questions: open questions are not copied to a dispatcher note (${e.message})`);
+        return;
+      }
+      this.say(`questions: ${e.message}`);
+      return;
+    }
+    let list = nodes;
+    if (!list && typeof this.api.nodes === 'function') {
+      try {
+        list = await this.api.nodes(this.g);
+      } catch {
+        list = [];
+      }
+    }
+    const byId = new Map((list || []).map((n) => [n.id, n]));
+    for (const q of qs || []) {
+      if (!q?.id || q.answer || this.questionsNoted.has(q.id)) continue;
+      this.questionsNoted.add(q.id);
+      const node = byId.get(q.node_id) || { id: q.node_id, key: q.node_id };
+      if (!node.id) continue;
+      const plan = questionStopPlan(node, { id: q.id, text: q.text, to: q.to }, { tried: this.triedRows(node.key) });
+      if (plan.withheld === 'private') {
+        this.say(`stop ${node.key}: private; question ${q.id} withheld`);
+        continue;
+      }
+      await this.publishStop(node, plan);
+    }
+  }
+
+  /**
+   * The client that speaks as a worker's run claimant. The worker claims its run through the enforcer MCP server on
+   * its own credential (`token`: the minted worker token when ENFORCER_WORKER_AGENT_ID is set, which is the worker
+   * agent's account and not necessarily the dispatcher's --agent account; else the agent key, which IS the
+   * dispatcher's; null: the operator's sign-in, which the dispatcher also speaks as). The graph's usage route admits
+   * only the claimant, so the post goes out on that credential. `workerApi` is a test seam.
+   */
+  claimantApi(token) {
+    if (!token) return this.api;
+    if (this.workerApi) return this.workerApi(token);
+    return typeof this.api.withHeaders === 'function' ? this.api.withHeaders(async () => ({ 'X-API-Key': token })) : this.api;
+  }
+
+  /**
+   * After a worker exits, on a harness whose adapter has usageAfterExit (codex): post its run's token usage, once,
+   * from the finished stream. A codex worker completes its run through MCP before it exits, without usage; the totals
+   * are only known from its --json stream afterwards. Skipped (one line) with no run id or no usage in the stream; a
+   * server without the route (404/405) is said once per dispatcher. Never throws and never fails the node.
+   */
+  async recordUsage(w, api = this.api) {
+    let adapter;
+    try {
+      adapter = adapterFor(workerHarness(w));
+    } catch {
+      return null;
+    }
+    if (!adapter.usageAfterExit) return null;
+    let s;
+    let body;
+    try {
+      s = summarize(w.logPath, workerHarness(w));
+      body = adapter.usageAfterExit(s, { model: w.model || null, endpoint: w.endpoint || null });
+    } catch (e) {
+      this.say(`usage ${w.key}: skipped: could not read the stream: ${e.message}`);
+      return null;
+    }
+    if (!s.run_id) {
+      this.say(`usage ${w.key}: skipped: no run id in the stream`);
+      return null;
+    }
+    if (!body) {
+      this.say(`usage ${w.key}: skipped: the stream reported no usage (run ${s.run_id})`);
+      return null;
+    }
+    try {
+      await api.recordUsage(this.g, w.node.id, s.run_id, body);
+    } catch (e) {
+      if (usageRouteMissing(e)) {
+        if (!this.usageRouteSaid) {
+          this.usageRouteSaid = true;
+          this.say(`usage ${w.key}: skipped: this graph server has no run usage route (HTTP ${e.status}); said once`);
+        }
+        return null;
+      }
+      this.say(`usage ${w.key}: could not record on run ${s.run_id}: ${typeof e.detail === 'function' ? e.detail() : e.message}`);
+      return null;
+    }
+    this.say(
+      `usage ${w.key}: recorded run=${s.run_id} input=${body.input_tokens} cache_read=${body.cache_read_input_tokens} cache_creation=${body.cache_creation_input_tokens} output=${body.output_tokens} turns=${body.turns ?? '-'}`,
+    );
+    return body;
   }
 
   /** A codex worker reported succeeded: commit its worktree on the card branch, push, open the PR, land it with
@@ -837,7 +1091,7 @@ export class Dispatcher {
         runId: run.runId,
         cwd: w.path,
         branch: w.branch,
-        base: w.node.data?.base || 'main',
+        base: codexLandBase(w.node, this.args.repoRoot, w.repo),
         landPr: LAND_PR,
         landTimeout: this.args.landTimeout,
         logDir: this.logs,
@@ -851,17 +1105,26 @@ export class Dispatcher {
       return null;
     }
     this.say(`codex land ${w.key}: ${res.code}: ${clip(res.error, 300)}`);
+    const stop = classifyStop({
+      node: w.node,
+      error: res.error,
+      denialCode: res.code || null,
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried: this.triedRows(w.key, { run: run.runId, harness: w.harness || 'codex', model: w.model || null, route: w.route || null, error: res.error }),
+    });
     try {
       await this.api.complete(this.g, w.node.id, run.runId, {
         status: 'failed',
         error: res.error,
         ...(res.evidence ? { evidence: res.evidence } : {}),
-        data: { runner: 'graph-dispatch', codex_land: { code: res.code, url: res.url || null, files: res.files || [] } },
+        data: { runner: 'graph-dispatch', codex_land: { code: res.code, url: res.url || null, files: res.files || [] }, stop },
       });
       this.say(`codex land ${w.key}: run ${run.runId} reported failed`);
     } catch (e) {
       this.say(`codex land ${w.key}: could not fail run ${run.runId}: ${e.message}`);
     }
+    await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
     return res;
   }
 
@@ -881,31 +1144,55 @@ export class Dispatcher {
     let runId = s.run_id;
     if (!runId) runId = (await latestRun(this.api, this.g, w.node).catch(() => null))?.runId;
     if (!runId) return found;
+    const stop = classifyStop({
+      node: w.node,
+      error: found.reason,
+      denialCode: 'destructive_merge',
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried: this.triedRows(w.key, { run: runId, harness: w.harness || null, model: w.model || null, route: w.route || null, error: found.reason }),
+    });
     try {
       await this.api.complete(this.g, w.node.id, runId, {
         status: 'failed',
         error: found.reason,
-        data: { runner: 'graph-dispatch', destructive_merge: { url: found.url, files: found.files } },
+        data: { runner: 'graph-dispatch', destructive_merge: { url: found.url, files: found.files }, stop },
       });
       this.say(`destructive_merge ${w.key}: run ${runId} reported failed`);
     } catch (e) {
       this.say(`destructive_merge ${w.key}: could not fail run ${runId}: ${e.message}`);
     }
+    await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
     return found;
   }
 
   async failOrphan(w, s) {
-    const body = {
-      status: 'failed',
-      data: { runner: 'graph-dispatch' },
-      error: `graph-dispatch: worker exited (code ${w.proc.returncode}, ${s.turns} turns) without reporting; log ${w.logPath}`,
-    };
+    const error = `graph-dispatch: worker exited (code ${w.proc.returncode}, ${s.turns} turns) without reporting; log ${w.logPath}`;
+    const stop = classifyStop({
+      node: w.node,
+      error: s.report_error || s.error_text || error,
+      report: s.result_text || null,
+      reportError: s.report_error || null,
+      reportData: s.report_data || null,
+      mcp: s.mcp || null,
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried: this.triedRows(w.key, {
+        run: s.run_id,
+        harness: w.harness || null,
+        model: w.model || null,
+        route: w.route || null,
+        error: s.report_error || s.error_text || error,
+      }),
+    });
+    const body = { status: 'failed', data: { runner: 'graph-dispatch', stop }, error };
     try {
       await this.api.complete(this.g, w.node.id, s.run_id, body);
       this.say(`failed orphan run ${s.run_id} of ${w.key}`);
     } catch (e) {
       this.say(`could not fail orphan run of ${w.key}: ${e.message}`);
     }
+    await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
   }
 
   /**
@@ -960,6 +1247,22 @@ export class Dispatcher {
         this.attempts.set(key, Math.max(0, (this.attempts.get(key) || 0) - 1));
         this.say(`over cap: ${key} stopped; not relaunched this session`);
         this.denied.set(key, w.path || '-');
+        await this.recordStop(
+          w,
+          s,
+          { error: s.error_text || s.result_text || null, overCap: true },
+          {
+            email: false,
+            complete: false,
+            tried: this.triedRows(key, {
+              run: s.run_id || null,
+              harness,
+              model: w.model || null,
+              route: w.route || null,
+              error: s.error_text || s.result_text || null,
+            }),
+          },
+        );
         continue;
       }
       // a worker that lost its endpoint: probe it again before the next launch instead of trusting the cached answer
@@ -985,12 +1288,23 @@ export class Dispatcher {
         this.say(
           `HARNESS-LIMITED ${key}: ${clip(limitText, 160)}; no attempt spent; ${this.args.onLimit === 'wait' ? 'waiting' : 'exiting'} until ${stamp(until)}`,
         );
+        // the run is left to lapse (not the node's fault). The stop is the observation; there is no write that sets data without closing the run.
+        await this.recordStop(
+          w,
+          s,
+          { error: limitText, harnessLimit: true },
+          {
+            email: false,
+            complete: false,
+            tried: this.triedRows(key, { run: s.run_id || null, harness, model: w.model || null, route: w.route || null, error: limitText }),
+          },
+        );
         continue;
       }
       const u = s.usage || {};
       const compactions = harness === 'claude' ? countCompactions(w.logPath) : 0;
       this.say(
-        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
+        `done ${key} exit=${w.proc.returncode} turns=${s.turns} result=${s.result} denials=${s.denials} run=${s.run_id || '-'} reported=${s.reported} cost=${s.cost} session=${w.session} ${w.mode || 'cold'} cache_read=${u.cache_read_input_tokens ?? '-'} cache_creation=${u.cache_creation_input_tokens ?? '-'} output=${u.output_tokens ?? '-'}${harness === 'codex' ? ` input=${u.input_tokens ?? '-'} reasoning=${u.reasoning_output_tokens ?? '-'}` : ''}${this.args.autocompact && this.args.autocompact !== 'auto' ? ` autocompact=${this.args.autocompact}` : ''}${compactions > 0 ? ` compactions=${compactions}` : ''}`,
       );
       // codex cannot commit in its sandbox: the dispatcher commits, pushes and lands its worktree, then posts the records
       const codexFail = harness === 'codex' ? await this.landCodex(w) : null;
@@ -1025,7 +1339,6 @@ export class Dispatcher {
           ? null
           : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
       if (apiDone) this.say(`${key}: API shows a succeeded run; not relaunching`);
-      if (s.run_id && !s.reported && !apiDone) await this.failOrphan(w, s);
       const down = Object.entries(s.mcp).filter(([k, v]) => k.startsWith('plugin:enforcer') && v !== 'connected');
       if (down.length && !s.run_id) {
         // never reached the graph (a needs-auth flake): not the node's fault; three in a row is an outage
@@ -1046,9 +1359,47 @@ export class Dispatcher {
         this.say(`BLOCKED: ${graphDenied.join(', ')} denied in a headless worker; launching no more workers (drain).`);
       }
       const [kind, rec] = denialClass(s);
-      if (outcome && !graphDenied.length && (kind === 'salvage' || kind === 'denied') && !this.denied.has(key)) {
-        this.denied.set(key, w.path || '-');
-        this.say(`DENIED ${key}: ${rec?.code || '-'}; not relaunching it this session. Worktree: ${w.path} (a person can land it)`);
+      const row = {
+        run: s.run_id || null,
+        harness,
+        model: w.model || null,
+        route: w.route || null,
+        error: outcome?.error || null,
+        rejection: outcome?.rejection || null,
+      };
+      const terminal =
+        outcome &&
+        !graphDenied.length &&
+        stopStep({
+          attempts: this.attempts.get(key) || 0,
+          maxAttempts: this.args.maxAttempts,
+          noTriage: !!this.args.noTriage,
+          triaged: this.stopped.has(key),
+          denialKind: kind,
+        }) === 'stop';
+      if (s.run_id && !s.reported && !apiDone && !terminal) await this.failOrphan(w, s);
+      if (terminal) {
+        const email = kind !== 'salvage' && kind !== 'denied' && kind !== 'triage';
+        const list = this.failures.get(key) || [];
+        if (email) {
+          list.push(row);
+          this.failures.set(key, list);
+        }
+        const stop = await this.recordStop(
+          w,
+          s,
+          { ...outcome, denialKind: kind, denialCode: rec?.code || null },
+          { email, complete: true, tried: email ? this.triedRows(key) : this.triedRows(key, row) },
+        );
+        this.stopped.add(key);
+        if (email) {
+          this.say(
+            `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: left for a person (${stop.why})`,
+          );
+        } else {
+          this.denied.set(key, w.path || '-');
+          this.say(`DENIED ${key}: ${rec?.code || '-'}; classified ${stop.why}; not relaunching it this session. Worktree: ${w.path || '-'}`);
+        }
         outcome = null;
       }
       if (!outcome && s.reported && w.session && harnessCanResume(harness)) {
@@ -1062,14 +1413,10 @@ export class Dispatcher {
       }
       if (outcome && !graphDenied.length) {
         const list = this.failures.get(key) || [];
-        list.push(outcome);
+        list.push(row);
         this.failures.set(key, list);
-        const exhausted = (this.attempts.get(key) || 0) >= this.args.maxAttempts;
-        if (s.reported && w.session && harnessCanResume(harness) && !exhausted) this.sessions.set(key, w.session);
-        this.say(
-          `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: ${exhausted ? 'left for a person' : 'remediation launch'}`,
-        );
-        if (exhausted && s.run_id) await this.flagNeedsPerson(w, s, outcome);
+        if (s.reported && w.session && harnessCanResume(harness)) this.sessions.set(key, w.session);
+        this.say(`FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: remediation launch`);
       }
       this.workers.delete(key);
     }
@@ -1177,7 +1524,7 @@ export class Dispatcher {
       }
     }
     this.workers.clear();
-    if (this.state) removeAgentMcpConfigs(this.state);
+    if (this.state) sweepWorkerFiles(this.state);
     this.writePids();
     await this.lease.release();
   }
@@ -1199,7 +1546,7 @@ export class Dispatcher {
         mkdirSync(this.state, { recursive: true, mode: 0o700 });
         chmodSync(this.state, 0o700);
         await this.reapOrphans();
-        removeAgentMcpConfigs(this.state); // a SIGKILLed dispatcher leaves the per-run configs (and their key) behind
+        sweepWorkerFiles(this.state); // a SIGKILLed dispatcher leaves the per-run configs (mcp-*.json, codex-*/) and their keys behind
         try {
           mkdirSync(this.logs, { recursive: true, mode: 0o700 });
           redactLogsDir(this.logs, [a.agentKey].filter(Boolean));
@@ -1338,12 +1685,12 @@ export class Dispatcher {
           if ([401, 403, 'auth'].includes(e.status)) return 1; // a 404 here is retried: the main loop applies the grace window
         }
         this.writePids();
-        if (a.attend) {
-          try {
-            await this.attention(await this.api.nodes(this.g));
-          } catch (e) {
-            this.say(`attention failed during a hold (${e.name}: ${e.message}); continuing`);
-          }
+        try {
+          const heldNodes = await this.api.nodes(this.g);
+          if (a.attend) await this.attention(heldNodes);
+          await this.noteOpenQuestions(heldNodes);
+        } catch (e) {
+          this.say(`attention failed during a hold (${e.name}: ${e.message}); continuing`);
         }
         await this.sleep(Math.min(Math.max(a.interval, 1) * 1000, (Math.max(this.limitedUntil - now(), 0) + 0.01) * 1000, 300000));
         continue;
@@ -1394,12 +1741,11 @@ export class Dispatcher {
       }
       const busy = nodes.some((n) => n.status === 'running' && !lapsed(n));
       let attendOpen = 0;
-      if (a.attend) {
-        try {
-          attendOpen = await this.attention(nodes, frontier);
-        } catch (e) {
-          this.say(`attention failed (${e.name}: ${e.message}); continuing`);
-        }
+      try {
+        if (a.attend) attendOpen = await this.attention(nodes, frontier);
+        await this.noteOpenQuestions(nodes);
+      } catch (e) {
+        this.say(`attention failed (${e.name}: ${e.message}); continuing`);
       }
       const waiting = a.exitWhenIdle ? [] : this.verifyingGate(nodes);
       if (waiting.length && !this.workers.size && !launched.length && !busy) {
@@ -1416,8 +1762,8 @@ export class Dispatcher {
         }
         await this.sleep(a.attendPoll * 1000);
         continue;
-      } else if (!a.exitWhenIdle && this.holds.size && !this.workers.size && !launched.length && !busy) {
-        idle = 0; // nodes held by a down endpoint are waiting, not done; noteHolds says so every 10 minutes
+      } else if (!a.exitWhenIdle && (this.holds.size || this.refused.size) && !this.workers.size && !launched.length && !busy) {
+        idle = 0; // a down endpoint, or a refused private/unknown route, is waiting, not done
       } else if (!this.workers.size && !launched.length && !busy) {
         if (++idle >= 2) {
           const left = nodes
@@ -1483,7 +1829,8 @@ const OPTS = {
   grok: { type: 'string' },
   codex: { type: 'string' },
   claude: { type: 'string' },
-  // accepted for compatibility with the Python dispatcher's front door; salvage and triage are not in the Node runtime yet
+  // --no-salvage is accepted and still does not run salvage. --no-triage skips nothing visible:
+  // a stop is classified from lines already on record, and no triage model is launched.
   'no-salvage': { type: 'boolean' },
   'no-triage': { type: 'boolean' },
   warm: { type: 'boolean' },
@@ -1529,6 +1876,8 @@ export function parseDispatchArgs(argv, env = process.env) {
   if (v.for !== undefined && !FOR_VALUES.includes(v.for)) throw new Error(`--for must be one of ${FOR_VALUES.join(', ')}`);
   const cfg = env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
   const stateDir = v['state-dir'] || join(cfg, 'dispatch', graph);
+  const triageGrace = num(v['triage-grace'], 10);
+  if (!(triageGrace >= 0)) throw new Error('--triage-grace must be a number of minutes >= 0');
   const d = defaultArgs();
   return {
     ...d,
@@ -1577,6 +1926,11 @@ export function parseDispatchArgs(argv, env = process.env) {
     warmMaxNodes,
     warmMaxAge,
     handoff,
+    noSalvage: !!v['no-salvage'],
+    noTriage: !!v['no-triage'],
+    // accepted from the Python front door. Classification does not wait out a grace period and does not call a model.
+    triageGrace,
+    triageModel: v['triage-model'] || null,
   };
 }
 

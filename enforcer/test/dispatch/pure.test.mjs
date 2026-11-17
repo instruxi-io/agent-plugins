@@ -42,7 +42,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'dpure-'));
 
 // ---- TierToModel
 test('tiers map to models', () => {
-  assert.equal(modelFor(node('a', 'task', { tier: 'mechanical' })), 'sonnet');
+  assert.equal(modelFor(node('a', 'task', { tier: 'mechanical' })), 'script-or-haiku');
   assert.equal(modelFor(node('a', 'task', { tier: 'standard' })), 'sonnet');
   assert.equal(modelFor(node('a', 'task', { tier: 'deep' })), 'opus');
   assert.equal(modelFor(node('a')), 'sonnet');
@@ -54,7 +54,7 @@ test('cap applies to planner tier', () => {
 });
 test('user tier wins over cap', () => {
   assert.equal(modelFor(node('a', 'task', { tier: 'deep', tier_source: 'user' }), 'sonnet'), 'opus');
-  assert.equal(modelFor(node('a', 'task', { tier: 'mechanical', tier_source: 'user' }), 'opus'), 'sonnet');
+  assert.equal(modelFor(node('a', 'task', { tier: 'mechanical', tier_source: 'user' }), 'opus'), 'script-or-haiku');
 });
 test('explicit model wins', () => {
   assert.equal(modelFor(node('a', 'task', { tier: 'deep', tier_source: 'user', model: 'haiku' }), 'sonnet'), 'haiku');

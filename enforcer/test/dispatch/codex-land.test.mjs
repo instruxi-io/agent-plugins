@@ -13,13 +13,15 @@ const FX = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'disp
 const NODE = { id: 'id-k', key: 'k', title: 'Add the thing', type: 'task', data: { paths: ['src/'] } };
 
 /** A fake git + gh: `numstat` is what `git diff --cached --numstat HEAD` prints. Records every call. */
-function fakeShell({ numstat = '3\t1\tsrc/a.js\n', prList = '', failOn = null } = {}) {
+function fakeShell({ numstat = '3\t1\tsrc/a.js\n', prList = '', failOn = null, ahead = '0', branchNumstat = '' } = {}) {
   const calls = [];
   const run = (cmd) => {
     calls.push(cmd);
     const line = cmd.join(' ');
     if (failOn && line.startsWith(failOn)) return [1, `fatal: ${failOn} refused`];
     if (line.startsWith('git diff --cached --numstat')) return [0, numstat];
+    if (line.startsWith('git rev-list --count')) return [0, `${ahead}\n`];
+    if (line.startsWith('git diff --numstat')) return [0, branchNumstat];
     if (line.startsWith('gh pr list')) return [0, prList];
     if (line.startsWith('gh pr create')) return [0, 'https://github.com/o/r/pull/9'];
     return [0, ''];
@@ -250,4 +252,31 @@ test('reap: a codex worker whose run did not succeed is not landed', async () =>
   d.codexLander = async () => assert.fail('landed a failed run');
   d.workers.set('k', codexWorker());
   await d.reap();
+});
+
+test('a retry with nothing new lands the commit an earlier attempt left on the branch (no second commit)', async () => {
+  const api = new FakeAPI();
+  const sh = fakeShell({ numstat: '', ahead: '1', branchNumstat: '2\t0\tsrc/a.js\n' });
+  const res = await landForCodex(opts({ api, run: sh.run, base: 'master', land: async () => ({ rc: 0 }) }));
+  const lines = sh.calls.map((c) => c.join(' '));
+  assert.ok(lines.includes('git rev-list --count origin/master..HEAD'), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.startsWith('git commit')), 'no new commit');
+  assert.ok(lines.some((l) => l.startsWith('git push -u origin HEAD:refs/heads/graph/k')));
+  assert.ok(lines.some((l) => l.startsWith('gh pr create --base master')));
+  assert.notEqual(res.code, 'destructive_or_empty_diff');
+});
+
+test('nothing new and nothing ahead of the base is still refused as empty', async () => {
+  const sh = fakeShell({ numstat: '', ahead: '0' });
+  const res = await landForCodex(opts({ api: new FakeAPI(), run: sh.run, land: async () => ({ rc: 0 }) }));
+  assert.equal(res.code, 'destructive_or_empty_diff');
+  assert.match(res.error, /left no changes/);
+});
+
+test('an earlier commit that only deletes outside the stated paths is still refused', async () => {
+  const sh = fakeShell({ numstat: '', ahead: '1', branchNumstat: '0\t40\tREADME.md\n' });
+  const res = await landForCodex(opts({ api: new FakeAPI(), run: sh.run, land: async () => ({ rc: 0 }) }));
+  assert.equal(res.code, 'destructive_or_empty_diff');
+  assert.match(res.error, /deletes 40 line/);
+  assert.ok(!sh.calls.some((c) => c[0] === 'git' && c[1] === 'push'), 'nothing pushed');
 });
