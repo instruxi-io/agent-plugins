@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 1.14.0
+
+- When a dispatch run stops without success, the dispatcher writes `data.stop` on the run (`why`, `summary` of at most 300 characters, `tried`, `needs`, `options`, `suggested_who`) and posts the same record as a `dispatcher_note` observation (`POST /graphs/{graphId}/nodes/{nodeId}/observations`, `kind: summary`, `source: dispatcher_note`). `why` is `needs_decision`, `needs_credential`, `needs_human_action`, `prereq`, `harness_limit`, `policy_denied`, or `failed_after_n`. The text is taken from the error, a gate's options, or a report or observation line. The needs_person email is unchanged. Attempts still remaining are a remediation launch. A denial of salvage, denied, or destructive stops on this attempt and is classified the same way. No triage model is launched (`--triage-model` and `--triage-grace` are accepted and unused).
+- An open question (`GET /graphs/{graphId}/questions?open=true`) is copied onto that same note so the question text is on the node. The question email stays the server's.
+- A private node (`private` or `data.private`) still gets `data.stop` on the run complete and does not get the observation. Posting an observation may send the body to the judgment model, and this path does not call one.
+- Graph API dependencies, not new routes: the observation `kind` enum has no `dispatcher_note`; Needs-you (an open gate or arbitration) does not read `data.stop` or the note; a closed run is `409 run_already_ended` and there is no write that sets `data` without closing the run (a harness-limit hold leaves the run to lapse and carries the stop on the observation only); `question.asked` metadata never includes the question text.
+
 ## 1.13.1
 
 - The graph spec is re-pinned to enforcer-graph 43f32e7c (enforceable node assignment): `assignment_mode` is `advisory` or `required`, and node reads carry `assignment_mode`, `private`, `viewer_can_claim` and `claim_block` (`null` or `node_reserved`). A required node the caller cannot claim answers 409 `node_reserved` on the named claim and on StartRun. The dispatcher treats that 409 as a skip: logged once, no attempt, not a claim error. A row that already says `claim_block: node_reserved` (or `required` with `viewer_can_claim: false`) is skipped the same way. A node is private when the server field `private` is true or `data.private` is true; either one fails closed.

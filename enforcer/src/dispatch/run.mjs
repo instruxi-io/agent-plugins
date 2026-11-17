@@ -1,7 +1,7 @@
 // @ts-nocheck TODO(typecheck): many inferred-shape errors from untyped option objects, not bugs; annotate with JSDoc when tightening
 // The dispatcher runtime: one pass (tick), reaping, the lease, pids.json, usage-limit and CI holds,
 // SIGTERM/SIGINT drain, and `main` (the `enforcer dispatch` entry).
-// Warm sessions, salvage, landing-blocked and triage launches live in the sibling modules.
+// Warm sessions and salvage live in the sibling modules. A stop is classified in stop.mjs (no model).
 import { spawnSync } from 'node:child_process';
 import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync, appendFileSync } from 'node:fs';
 import { hostname, homedir } from 'node:os';
@@ -41,6 +41,7 @@ import { loadRoutes, routeLines, routeNote, resolveRoute, ProbeCache, RouteError
 import { mergeTarget, mergeRefusal, repoOf, resourcesOf, lapsed, select, affinityOrder } from './select.mjs';
 import { WarmPool, laneOf, collectHandoffs, handoffAskFor, DEFAULT_WARM_MAX_NODES, DEFAULT_WARM_MAX_AGE } from './warm.mjs';
 import { summarize, failedOutcome, workerPrompt, remediationPrompt, harnessLimitText, limitResetAt, judgeLines, denialClass } from './summarize.mjs';
+import { classifyStop, planStopWrites, questionStopPlan, stopStep } from './stop.mjs';
 import { countTurns, countCompactions } from './stream.mjs';
 import { unsafeIdent } from './ident.mjs';
 import { needsRunnerRecords, attachRunnerRecords, latestRun, runDone } from './check-records.mjs';
@@ -228,6 +229,9 @@ export class Dispatcher {
     this.attempts = new Map();
     this.epoch = null; // the graph's epoch, read at each launch; it names the worker logs
     this.failures = new Map();
+    this.stopped = new Set(); // keys whose stop is recorded: not relaunched (attempts spent, or a denial that does not remediate)
+    this.questionsNoted = new Set(); // open question ids already copied to a dispatcher note
+    this.questionsRouteMissing = false;
     this.denied = new Map();
     this.lastSkip = new Map();
     this.peak = 0;
@@ -316,7 +320,7 @@ export class Dispatcher {
       if (this.types && !this.types.has(n.type)) return false;
       if (n.key === LEASE_KEY || n.data?.dispatcher_lease) return false;
       if (n.data?.triage_of) return false; // launched by the dispatcher that made it, never from the frontier
-      if (this.denied.has(n.key)) return false;
+      if (this.stopped.has(n.key) || this.denied.has(n.key)) return false;
       return (this.attempts.get(n.key) || 0) < this.args.maxAttempts;
     });
   }
@@ -868,22 +872,138 @@ export class Dispatcher {
       },
     };
     if (!ok) body.error = `land-pr.sh exit ${rc} (${LAND_CODES[rc] || 'unknown'}): ${out.trim().slice(-500)}`;
+    let stop = null;
+    if (!ok) {
+      stop = classifyStop({
+        node: w.node,
+        error: body.error,
+        attempts: this.attempts.get(w.key) || 0,
+        maxAttempts: this.args.maxAttempts,
+        tried: [{ run: w.runId, harness: null, model: null, route: null, error: body.error }],
+      });
+      body.data.stop = stop;
+    }
     try {
       await this.api.complete(this.g, w.node.id, w.runId, body);
       this.say(`land ${w.key} exit=${rc} -> run ${w.runId} ${body.status}`);
     } catch (e) {
       this.say(`complete ${w.key} failed: ${e.message}`);
     }
+    if (stop) await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
   }
 
-  /** Left for a person: complete the run failed with data.needs_person and the reason (a closed run may refuse; best effort). */
-  async flagNeedsPerson(w, s, outcome) {
-    const reason = `graph-dispatch: ${this.args.maxAttempts} attempt(s) spent; left for a person: ${clip(outcome.error || 'no error recorded', 300)}`;
+  /** Write data.stop on the run (when we are already completing it) and the dispatcher_note observation. */
+  async publishStop(node, plan, { runId = null } = {}) {
+    if (plan.complete && runId) {
+      try {
+        await this.api.complete(this.g, node.id, runId, plan.complete);
+        const why = plan.complete.data?.stop?.why;
+        if (plan.complete.data?.needs_person) this.say(`needs_person ${node.key}: run ${runId} flagged${why ? ` (${why})` : ''}`);
+        else this.say(`stop ${node.key}: run ${runId} recorded${why ? ` (${why})` : ''}`);
+      } catch (e) {
+        this.say(`stop ${node.key}: could not flag run ${runId}: ${e.message}`);
+      }
+    }
+    if (plan.withheld === 'private') {
+      this.say(`stop ${node.key}: private; dispatcher_note withheld`);
+      return;
+    }
+    if (plan.observation && typeof this.api.addObservation === 'function') {
+      try {
+        await this.api.addObservation(this.g, node.id, plan.observation);
+        this.say(`dispatcher_note ${node.key}: ${plan.observation.data?.stop?.why || 'stop'}`);
+      } catch (e) {
+        this.say(`dispatcher_note ${node.key}: ${e.message}`);
+      }
+    }
+  }
+
+  /**
+   * A run stopped without success. Classify from lines already in hand (and, for a node that is
+   * not private, its observations). `email` keeps the needs_person complete the give-up path already sends.
+   * A private node is not given an observation: that route may judge the body.
+   */
+  async recordStop(w, s, outcome, { email = false, complete = false, tried = [] } = {}) {
+    let observations = [];
+    if (!isPrivate(w.node) && typeof this.api.observations === 'function') {
+      try {
+        observations = await this.api.observations(this.g, w.node.id);
+      } catch {
+        observations = [];
+      }
+    }
+    const stop = classifyStop({
+      node: w.node,
+      error: outcome?.error || s?.error_text || s?.report_error || null,
+      report: s?.result_text || null,
+      reportError: s?.report_error || null,
+      reportData: s?.report_data || null,
+      observations,
+      denialKind: outcome?.denialKind || null,
+      denialCode: outcome?.denialCode || null,
+      harnessLimit: outcome?.harnessLimit || null,
+      overCap: !!(w.overCap || outcome?.overCap),
+      mcp: s?.mcp || null,
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried,
+    });
+    const runId = complete && s?.run_id ? s.run_id : null;
+    const reason = email
+      ? `graph-dispatch: ${this.args.maxAttempts} attempt(s) spent; left for a person: ${clip(outcome?.error || 'no error recorded', 300)}`
+      : outcome?.error || null;
+    const plan = planStopWrites({ node: w.node, stop, runId, reason, email: !!(email && runId) });
+    await this.publishStop(w.node, plan, { runId });
+    return stop;
+  }
+
+  triedRows(key, current = null) {
+    const prior = (this.failures.get(key) || []).map((f) => ({
+      run: f.run || null,
+      harness: f.harness || null,
+      model: f.model || null,
+      route: f.route || null,
+      error: f.error || null,
+    }));
+    if (current) prior.push(current);
+    return prior;
+  }
+
+  /** Open questions: copy the question text onto a dispatcher note. The ask email is already sent. */
+  async noteOpenQuestions(nodes) {
+    if (this.args.dryRun || this.questionsRouteMissing || typeof this.api.questions !== 'function') return;
+    let qs;
     try {
-      await this.api.complete(this.g, w.node.id, s.run_id, { status: 'failed', error: reason, data: { runner: 'graph-dispatch', needs_person: true, reason } });
-      this.say(`needs_person ${w.key}: run ${s.run_id} flagged`);
+      qs = await this.api.questions(this.g);
     } catch (e) {
-      this.say(`needs_person ${w.key}: could not flag run ${s.run_id}: ${e.message}`);
+      if (e instanceof APIError && (e.status === 404 || e.status === 405 || e.status === 400)) {
+        this.questionsRouteMissing = true;
+        this.say(`questions: open questions are not copied to a dispatcher note (${e.message})`);
+        return;
+      }
+      this.say(`questions: ${e.message}`);
+      return;
+    }
+    let list = nodes;
+    if (!list && typeof this.api.nodes === 'function') {
+      try {
+        list = await this.api.nodes(this.g);
+      } catch {
+        list = [];
+      }
+    }
+    const byId = new Map((list || []).map((n) => [n.id, n]));
+    for (const q of qs || []) {
+      if (!q?.id || q.answer || this.questionsNoted.has(q.id)) continue;
+      this.questionsNoted.add(q.id);
+      const node = byId.get(q.node_id) || { id: q.node_id, key: q.node_id };
+      if (!node.id) continue;
+      const plan = questionStopPlan(node, { id: q.id, text: q.text, to: q.to }, { tried: this.triedRows(node.key) });
+      if (plan.withheld === 'private') {
+        this.say(`stop ${node.key}: private; question ${q.id} withheld`);
+        continue;
+      }
+      await this.publishStop(node, plan);
     }
   }
 
@@ -985,17 +1105,26 @@ export class Dispatcher {
       return null;
     }
     this.say(`codex land ${w.key}: ${res.code}: ${clip(res.error, 300)}`);
+    const stop = classifyStop({
+      node: w.node,
+      error: res.error,
+      denialCode: res.code || null,
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried: this.triedRows(w.key, { run: run.runId, harness: w.harness || 'codex', model: w.model || null, route: w.route || null, error: res.error }),
+    });
     try {
       await this.api.complete(this.g, w.node.id, run.runId, {
         status: 'failed',
         error: res.error,
         ...(res.evidence ? { evidence: res.evidence } : {}),
-        data: { runner: 'graph-dispatch', codex_land: { code: res.code, url: res.url || null, files: res.files || [] } },
+        data: { runner: 'graph-dispatch', codex_land: { code: res.code, url: res.url || null, files: res.files || [] }, stop },
       });
       this.say(`codex land ${w.key}: run ${run.runId} reported failed`);
     } catch (e) {
       this.say(`codex land ${w.key}: could not fail run ${run.runId}: ${e.message}`);
     }
+    await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
     return res;
   }
 
@@ -1015,31 +1144,55 @@ export class Dispatcher {
     let runId = s.run_id;
     if (!runId) runId = (await latestRun(this.api, this.g, w.node).catch(() => null))?.runId;
     if (!runId) return found;
+    const stop = classifyStop({
+      node: w.node,
+      error: found.reason,
+      denialCode: 'destructive_merge',
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried: this.triedRows(w.key, { run: runId, harness: w.harness || null, model: w.model || null, route: w.route || null, error: found.reason }),
+    });
     try {
       await this.api.complete(this.g, w.node.id, runId, {
         status: 'failed',
         error: found.reason,
-        data: { runner: 'graph-dispatch', destructive_merge: { url: found.url, files: found.files } },
+        data: { runner: 'graph-dispatch', destructive_merge: { url: found.url, files: found.files }, stop },
       });
       this.say(`destructive_merge ${w.key}: run ${runId} reported failed`);
     } catch (e) {
       this.say(`destructive_merge ${w.key}: could not fail run ${runId}: ${e.message}`);
     }
+    await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
     return found;
   }
 
   async failOrphan(w, s) {
-    const body = {
-      status: 'failed',
-      data: { runner: 'graph-dispatch' },
-      error: `graph-dispatch: worker exited (code ${w.proc.returncode}, ${s.turns} turns) without reporting; log ${w.logPath}`,
-    };
+    const error = `graph-dispatch: worker exited (code ${w.proc.returncode}, ${s.turns} turns) without reporting; log ${w.logPath}`;
+    const stop = classifyStop({
+      node: w.node,
+      error: s.report_error || s.error_text || error,
+      report: s.result_text || null,
+      reportError: s.report_error || null,
+      reportData: s.report_data || null,
+      mcp: s.mcp || null,
+      attempts: this.attempts.get(w.key) || 0,
+      maxAttempts: this.args.maxAttempts,
+      tried: this.triedRows(w.key, {
+        run: s.run_id,
+        harness: w.harness || null,
+        model: w.model || null,
+        route: w.route || null,
+        error: s.report_error || s.error_text || error,
+      }),
+    });
+    const body = { status: 'failed', data: { runner: 'graph-dispatch', stop }, error };
     try {
       await this.api.complete(this.g, w.node.id, s.run_id, body);
       this.say(`failed orphan run ${s.run_id} of ${w.key}`);
     } catch (e) {
       this.say(`could not fail orphan run of ${w.key}: ${e.message}`);
     }
+    await this.publishStop(w.node, planStopWrites({ node: w.node, stop, email: false }));
   }
 
   /**
@@ -1094,6 +1247,22 @@ export class Dispatcher {
         this.attempts.set(key, Math.max(0, (this.attempts.get(key) || 0) - 1));
         this.say(`over cap: ${key} stopped; not relaunched this session`);
         this.denied.set(key, w.path || '-');
+        await this.recordStop(
+          w,
+          s,
+          { error: s.error_text || s.result_text || null, overCap: true },
+          {
+            email: false,
+            complete: false,
+            tried: this.triedRows(key, {
+              run: s.run_id || null,
+              harness,
+              model: w.model || null,
+              route: w.route || null,
+              error: s.error_text || s.result_text || null,
+            }),
+          },
+        );
         continue;
       }
       // a worker that lost its endpoint: probe it again before the next launch instead of trusting the cached answer
@@ -1118,6 +1287,17 @@ export class Dispatcher {
         this.limitedUntil = Math.max(this.limitedUntil, until);
         this.say(
           `HARNESS-LIMITED ${key}: ${clip(limitText, 160)}; no attempt spent; ${this.args.onLimit === 'wait' ? 'waiting' : 'exiting'} until ${stamp(until)}`,
+        );
+        // the run is left to lapse (not the node's fault). The stop is the observation; there is no write that sets data without closing the run.
+        await this.recordStop(
+          w,
+          s,
+          { error: limitText, harnessLimit: true },
+          {
+            email: false,
+            complete: false,
+            tried: this.triedRows(key, { run: s.run_id || null, harness, model: w.model || null, route: w.route || null, error: limitText }),
+          },
         );
         continue;
       }
@@ -1159,7 +1339,6 @@ export class Dispatcher {
           ? null
           : await this.settleOutcome(w, s, failedOutcome(s, w.proc.returncode));
       if (apiDone) this.say(`${key}: API shows a succeeded run; not relaunching`);
-      if (s.run_id && !s.reported && !apiDone) await this.failOrphan(w, s);
       const down = Object.entries(s.mcp).filter(([k, v]) => k.startsWith('plugin:enforcer') && v !== 'connected');
       if (down.length && !s.run_id) {
         // never reached the graph (a needs-auth flake): not the node's fault; three in a row is an outage
@@ -1180,9 +1359,47 @@ export class Dispatcher {
         this.say(`BLOCKED: ${graphDenied.join(', ')} denied in a headless worker; launching no more workers (drain).`);
       }
       const [kind, rec] = denialClass(s);
-      if (outcome && !graphDenied.length && (kind === 'salvage' || kind === 'denied') && !this.denied.has(key)) {
-        this.denied.set(key, w.path || '-');
-        this.say(`DENIED ${key}: ${rec?.code || '-'}; not relaunching it this session. Worktree: ${w.path} (a person can land it)`);
+      const row = {
+        run: s.run_id || null,
+        harness,
+        model: w.model || null,
+        route: w.route || null,
+        error: outcome?.error || null,
+        rejection: outcome?.rejection || null,
+      };
+      const terminal =
+        outcome &&
+        !graphDenied.length &&
+        stopStep({
+          attempts: this.attempts.get(key) || 0,
+          maxAttempts: this.args.maxAttempts,
+          noTriage: !!this.args.noTriage,
+          triaged: this.stopped.has(key),
+          denialKind: kind,
+        }) === 'stop';
+      if (s.run_id && !s.reported && !apiDone && !terminal) await this.failOrphan(w, s);
+      if (terminal) {
+        const email = kind !== 'salvage' && kind !== 'denied' && kind !== 'triage';
+        const list = this.failures.get(key) || [];
+        if (email) {
+          list.push(row);
+          this.failures.set(key, list);
+        }
+        const stop = await this.recordStop(
+          w,
+          s,
+          { ...outcome, denialKind: kind, denialCode: rec?.code || null },
+          { email, complete: true, tried: email ? this.triedRows(key) : this.triedRows(key, row) },
+        );
+        this.stopped.add(key);
+        if (email) {
+          this.say(
+            `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: left for a person (${stop.why})`,
+          );
+        } else {
+          this.denied.set(key, w.path || '-');
+          this.say(`DENIED ${key}: ${rec?.code || '-'}; classified ${stop.why}; not relaunching it this session. Worktree: ${w.path || '-'}`);
+        }
         outcome = null;
       }
       if (!outcome && s.reported && w.session && harnessCanResume(harness)) {
@@ -1196,14 +1413,10 @@ export class Dispatcher {
       }
       if (outcome && !graphDenied.length) {
         const list = this.failures.get(key) || [];
-        list.push(outcome);
+        list.push(row);
         this.failures.set(key, list);
-        const exhausted = (this.attempts.get(key) || 0) >= this.args.maxAttempts;
-        if (s.reported && w.session && harnessCanResume(harness) && !exhausted) this.sessions.set(key, w.session);
-        this.say(
-          `FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: ${exhausted ? 'left for a person' : 'remediation launch'}`,
-        );
-        if (exhausted && s.run_id) await this.flagNeedsPerson(w, s, outcome);
+        if (s.reported && w.session && harnessCanResume(harness)) this.sessions.set(key, w.session);
+        this.say(`FAILED ${key} (attempt ${list.length} of ${this.args.maxAttempts} this session): ${clip(outcome.error, 200)}; next: remediation launch`);
       }
       this.workers.delete(key);
     }
@@ -1472,12 +1685,12 @@ export class Dispatcher {
           if ([401, 403, 'auth'].includes(e.status)) return 1; // a 404 here is retried: the main loop applies the grace window
         }
         this.writePids();
-        if (a.attend) {
-          try {
-            await this.attention(await this.api.nodes(this.g));
-          } catch (e) {
-            this.say(`attention failed during a hold (${e.name}: ${e.message}); continuing`);
-          }
+        try {
+          const heldNodes = await this.api.nodes(this.g);
+          if (a.attend) await this.attention(heldNodes);
+          await this.noteOpenQuestions(heldNodes);
+        } catch (e) {
+          this.say(`attention failed during a hold (${e.name}: ${e.message}); continuing`);
         }
         await this.sleep(Math.min(Math.max(a.interval, 1) * 1000, (Math.max(this.limitedUntil - now(), 0) + 0.01) * 1000, 300000));
         continue;
@@ -1528,12 +1741,11 @@ export class Dispatcher {
       }
       const busy = nodes.some((n) => n.status === 'running' && !lapsed(n));
       let attendOpen = 0;
-      if (a.attend) {
-        try {
-          attendOpen = await this.attention(nodes, frontier);
-        } catch (e) {
-          this.say(`attention failed (${e.name}: ${e.message}); continuing`);
-        }
+      try {
+        if (a.attend) attendOpen = await this.attention(nodes, frontier);
+        await this.noteOpenQuestions(nodes);
+      } catch (e) {
+        this.say(`attention failed (${e.name}: ${e.message}); continuing`);
       }
       const waiting = a.exitWhenIdle ? [] : this.verifyingGate(nodes);
       if (waiting.length && !this.workers.size && !launched.length && !busy) {
@@ -1617,7 +1829,8 @@ const OPTS = {
   grok: { type: 'string' },
   codex: { type: 'string' },
   claude: { type: 'string' },
-  // accepted for compatibility with the Python dispatcher's front door; salvage and triage are not in the Node runtime yet
+  // --no-salvage is accepted and still does not run salvage. --no-triage skips nothing visible:
+  // a stop is classified from lines already on record, and no triage model is launched.
   'no-salvage': { type: 'boolean' },
   'no-triage': { type: 'boolean' },
   warm: { type: 'boolean' },
@@ -1663,6 +1876,8 @@ export function parseDispatchArgs(argv, env = process.env) {
   if (v.for !== undefined && !FOR_VALUES.includes(v.for)) throw new Error(`--for must be one of ${FOR_VALUES.join(', ')}`);
   const cfg = env.ENFORCER_CONFIG_HOME || join(homedir(), '.config', 'enforcer');
   const stateDir = v['state-dir'] || join(cfg, 'dispatch', graph);
+  const triageGrace = num(v['triage-grace'], 10);
+  if (!(triageGrace >= 0)) throw new Error('--triage-grace must be a number of minutes >= 0');
   const d = defaultArgs();
   return {
     ...d,
@@ -1711,6 +1926,11 @@ export function parseDispatchArgs(argv, env = process.env) {
     warmMaxNodes,
     warmMaxAge,
     handoff,
+    noSalvage: !!v['no-salvage'],
+    noTriage: !!v['no-triage'],
+    // accepted from the Python front door. Classification does not wait out a grace period and does not call a model.
+    triageGrace,
+    triageModel: v['triage-model'] || null,
   };
 }
 
