@@ -1,0 +1,165 @@
+name: Sync specs
+
+# Keep enforcer/lib/api/spec/{v3,files,graph,governance}.json and mcp-manifest.json in
+# lockstep with each source service's DEFAULT branch, so a merged API change reaches the
+# plugin and the npm CLI without anyone remembering `npm run sync:spec -- --bump`. The
+# plugin sat 25 v3 operations behind (351 vs 376) before this existed.
+#
+# How: shallow blobless clones of the five sources next to the checkout (SPEC_REPOS_DIR),
+# then the ordinary `node lib/api/sync-spec.mjs --bump` and `npm run gen:api`. If the spec
+# files did not change (only the pinned refs moved) everything is put back and no PR opens.
+# Otherwise: one patch bump over main (manifests + a changes/ fragment with the operation
+# counts) and an open/updated PR on chore/sync-specs. Re-runs recompute from main, so an
+# open PR is updated, not stacked. Cutting the release is still the tag (docs/RELEASE_CHECKLIST.md).
+#
+# Triggers: daily schedule (backstop), workflow_dispatch, repository_dispatch `spec-updated`
+# (sent by notify-hooks.yml in enforcer-v3, enforcer-files, enforcer-graph, enforcer-governance).
+#
+# SETUP: repo secret SPEC_SYNC_TOKEN, a token with contents:read on the enforcer-* service
+# repos AND contents:write + pull-requests:write on this repo. checkout must be given it
+# too: the persisted read-only GITHUB_TOKEN would 403 the push, and a push made with
+# GITHUB_TOKEN never starts the PR's CI. Until the secret exists this workflow skips cleanly.
+on:
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [spec-updated]
+  schedule:
+    - cron: '23 6 * * *'
+
+concurrency:
+  group: sync-specs
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the cross-repo token
+        id: guard
+        env:
+          TOKEN: ${{ secrets.SPEC_SYNC_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::SPEC_SYNC_TOKEN not set - skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          token: ${{ secrets.SPEC_SYNC_TOKEN }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          node-version: 22
+
+      - name: Install
+        if: steps.guard.outputs.skip != 'true'
+        working-directory: enforcer
+        run: npm ci
+
+      - name: Clone each source's default branch
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          TOKEN: ${{ secrets.SPEC_SYNC_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/specsrc"
+          mkdir -p "$src"
+          for name in enforcer-v3 enforcer-files enforcer-graph enforcer-governance enforcer-v3-mcp; do
+            git clone -q --depth 1 --filter=blob:none --no-checkout \
+              "https://x-access-token:${TOKEN}@github.com/${ORG}/${name}.git" "$src/$name"
+            echo "$name $(git -C "$src/$name" symbolic-ref --short refs/remotes/origin/HEAD) @ $(git -C "$src/$name" rev-parse --short origin/HEAD)"
+          done
+          echo "SPEC_REPOS_DIR=$src" >> "$GITHUB_ENV"
+
+      - name: Sync, regenerate, bump
+        id: sync
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SPEC_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          count() { node -e '
+            const fs=require("fs"),d="enforcer/lib/api/spec/",o={};
+            for (const n of ["v3","graph","files","governance"]) { let c=0;
+              for (const p of Object.values(JSON.parse(fs.readFileSync(d+n+".json","utf8")).paths)) for (const x of Object.values(p)) if (x && x.operationId) c++;
+              o[n]=c; }
+            const t=JSON.parse(fs.readFileSync(d+"mcp-manifest.json","utf8")).tools; o.mcp_tools=Array.isArray(t)?t.length:Object.keys(t).length;
+            console.log(JSON.stringify(o));'; }
+          count > "$RUNNER_TEMP/ops.before.json"
+          (cd enforcer && node lib/api/sync-spec.mjs --bump && npm run gen:api)
+          if git diff --quiet -- enforcer/lib/api/spec/; then
+            git checkout -- enforcer/lib/api
+            echo "No spec drift (only pinned refs moved)."
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only -- enforcer/lib/api/spec/ | xargs -n1 basename | tr '\n' ' ')
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          count > "$RUNNER_TEMP/ops.after.json"
+          # One patch bump over main; the fragment satisfies CI's version-bump job.
+          base=$(node -p "require('./enforcer/plugin.json').version")
+          next=$(node -e 'const [a,b,c]=process.argv[1].split(".");console.log(`${a}.${b}.${+c+1}`)' "$base")
+          node -e '
+            const fs=require("fs"),b=require(process.argv[1]),a=require(process.argv[2]);
+            const parts=Object.keys(a).filter(k=>a[k]!==b[k]).map(k=>`${k} ${b[k]} -> ${a[k]}`);
+            fs.writeFileSync("changes/spec-sync-auto.md","The embedded API specs are re-synced to each service default branch ("+parts.join(", ")+"); generated types regenerated.\n");
+          ' "$RUNNER_TEMP/ops.before.json" "$RUNNER_TEMP/ops.after.json"
+          node scripts/release.mjs bump "$next"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          node --test test/version-identity.test.mjs
+          (cd enforcer && node --test test/api-lock.test.mjs test/api-gen.test.mjs)
+
+      - name: Open / update PR
+        if: steps.guard.outputs.skip != 'true' && steps.sync.outputs.changed != '0'
+        env:
+          TOKEN: ${{ secrets.SPEC_SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.SPEC_SYNC_TOKEN }}
+          CHANGED: ${{ steps.sync.outputs.changed }}
+          VERSION: ${{ steps.sync.outputs.version }}
+        run: |
+          set -euo pipefail
+          branch=chore/sync-specs
+          git config user.name  "spec-sync[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A
+          open_pr=$(gh pr list --state open --head "$branch" --json number --jq 'length')
+          # An open sync PR that already carries these specs: do not re-push (a new SHA re-runs CI for nothing).
+          if [ "${open_pr:-0}" -gt 0 ] \
+             && git fetch --quiet --depth 1 origin "$branch" \
+             && git diff --cached --quiet FETCH_HEAD -- enforcer/lib/api/spec/; then
+            echo "Open sync PR already carries these specs - not re-pushing."
+            exit 0
+          fi
+          git commit -q -m "chore(sync): resync API specs from service default branches (v$VERSION)" -m "Changed: $CHANGED"
+          git push -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+          {
+            echo "Automated spec resync: these specs drifted behind their service's default branch. Version bumped to $VERSION."
+            echo
+            echo "**Changed:** \`$CHANGED\`"
+            echo
+            echo "| Source | Operations before | after |"
+            echo "|---|---|---|"
+            node -e '
+              const b = require(process.argv[1]), a = require(process.argv[2]);
+              for (const k of Object.keys(a)) if (a[k] !== b[k]) console.log(`| ${k} | ${b[k] ?? "-"} | ${a[k]} |`);
+            ' "$RUNNER_TEMP/ops.before.json" "$RUNNER_TEMP/ops.after.json"
+            echo
+            echo "After merge, tag the merge commit \`v$VERSION\` to publish (docs/RELEASE_CHECKLIST.md)."
+            echo
+            echo "🤖 Generated by .github/workflows/sync-specs.yml"
+          } > "$RUNNER_TEMP/pr-body.md"
+          if [ "${open_pr:-0}" -gt 0 ]; then
+            gh pr edit "$branch" --body-file "$RUNNER_TEMP/pr-body.md"
+          else
+            gh pr create --base main --head "$branch" \
+              --title "chore(sync): resync API specs from service default branches" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+          fi

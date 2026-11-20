@@ -32,13 +32,13 @@ test('vendored graph spec publishes assignment_mode and 409 node_reserved', () =
     assert.match(op.description, /409 node_reserved/);
   }
   const types = readFileSync(new URL('../../lib/api/graph.d.ts', import.meta.url), 'utf8');
-  assert.match(types, /enforcer-graph@43f32e7c2d0f60e977c4cc843ae02738e43035b1/);
   assert.match(types, /assignment_mode\?: "advisory" \| "required"/);
   assert.match(types, /claim_block\?: "node_reserved" \| null/);
   assert.match(types, /private\?: boolean/);
   assert.match(types, /viewer_can_claim\?: boolean/);
   const lock = JSON.parse(readFileSync(new URL('../../lib/api/spec.lock.json', import.meta.url), 'utf8'));
-  assert.equal(lock.sources.graph.ref, '43f32e7c2d0f60e977c4cc843ae02738e43035b1');
+  // The ref moves with every spec sync; the generated header must name whatever the lock pins.
+  assert.ok(types.includes(`enforcer-graph@${lock.sources.graph.ref}`));
 });
 
 test('nodeReserved matches only 409 node_reserved', () => {

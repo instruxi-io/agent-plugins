@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.14.1
+
+- graph skill: human-run work (deploys, rolls, publishes) is planned as prep/gate/apply/verify nodes, and a gate decides but does no work; `!` commands are only for recording decisions.
+- The embedded API specs are re-pinned to each service's default branch on 2026-11-20: v3 351 -> 376 operations (enforcer-v3 1dafaebb), graph 323 -> 325 (enforcer-graph 8be031af), files 68 -> 70 (enforcer-files cd8313bf), governance unchanged at 77, MCP manifest at enforcer-v3-mcp fe276371; generated types regenerated. The npm CLI (1.9.7 on the registry) carried 342 v3 and 310 graph operations.
+
 ## 1.14.0
 
 - When a dispatch run stops without success, the dispatcher writes `data.stop` on the run (`why`, `summary` of at most 300 characters, `tried`, `needs`, `options`, `suggested_who`) and posts the same record as a `dispatcher_note` observation (`POST /graphs/{graphId}/nodes/{nodeId}/observations`, `kind: summary`, `source: dispatcher_note`). `why` is `needs_decision`, `needs_credential`, `needs_human_action`, `prereq`, `harness_limit`, `policy_denied`, or `failed_after_n`. The text is taken from the error, a gate's options, or a report or observation line. The needs_person email is unchanged. Attempts still remaining are a remediation launch. A denial of salvage, denied, or destructive stops on this attempt and is classified the same way. No triage model is launched (`--triage-model` and `--triage-grace` are accepted and unused).

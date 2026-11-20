@@ -3217,7 +3217,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "History for MegPrime/megprime-v2#146. Sales created now carry their merchant's category from enforcer-mp-merchant; this covers the ones before, and follows a merchant that was re-categorised.\n\n**scope `store` (default)** — sets `category` (the store's MERCHANT category, stated by the operator) on the store's existing sales. **Matching is exact, never name-based**: a fulfillment matches when its reference is `STORE:<store_id>` or starts with `STORE:<store_id>:`, in the tenant, optionally within `created_after` (inclusive) / `created_before` (exclusive). An uncategorised sale is `set`, one with a different category is `changed`, one already carrying it is `already_set`; a matching row that is not a sale is `skipped`. **Only sales a trusted service raised are classified**: a sale whose reference matches but which was created on the account path (`POST /fulfillments`, where anyone can type `STORE:`) or by a service that may not state categories is counted in `skipped_untrusted`, listed in `skipped_untrusted_ids`, and neither changed nor re-emitted. Every confirmed classified match re-emits `fulfillment.settled` (plus `fulfillment.refunded` for its confirmed refunds).\n\n**scope `p2p`** — changes nothing; re-emits `fulfillment.settled` (plus `fulfillment.refunded`) for every confirmed p2p payment with `created_after` <= created_at < `created_before` (both required).\n\n**scope `sale_reemit`** — changes nothing (no `category`; writes no fulfillment); re-emits `fulfillment.settled` (plus `fulfillment.refunded` for confirmed refunds) for every CONFIRMED sale of `store_id`, matched exactly as scope `store`, with `created_after` <= created_at < `created_before` (both required). Its purpose is to carry `input_token`/`input_spent` to a consumer that recorded the settlement before the event had them. A sale raised by a service allowed to state categories is emitted exactly as its live confirm would (`emitted_trusted`); any other sale is emitted with `category` and `merchant_reward_percentage` set to `\"\"` and every other field unchanged (`emitted_untrusted_stripped`). A matching row that is not a confirmed sale is `skipped`. `set`/`changed`/`already_set` are always 0 and `fulfillment_ids` empty; `emitted_ids` lists the emitted sales (first 500; `emitted_ids_truncated` when capped).\n\nThe body is strict JSON: an unknown key is a 400 `invalid_body` (a misspelled window or store would otherwise silently widen the run).\n\n**dry_run defaults to true** and writes and emits nothing. A real run (`dry_run: false`) writes and emits through the outbox in one transaction; consumers are idempotent, so a repeat run is safe. `reason` (10+ characters) is required and audited with the counts. Refuses (422 `backfill_too_many`) a run matching more than 2000 rows: narrow the window.",
+        "description": "History for MegPrime/megprime-v2#146. Sales created now carry their merchant's category from enforcer-mp-merchant; this covers the ones before, and follows a merchant that was re-categorised.\n\n**scope `store` (default)** — sets `category` (the store's MERCHANT category, stated by the operator) on the store's existing sales. **Matching is exact, never name-based**: a fulfillment matches when its reference is `STORE:<store_id>` or starts with `STORE:<store_id>:`, in the tenant, optionally within `created_after` (inclusive) / `created_before` (exclusive). An uncategorised sale is `set`, one with a different category is `changed`, one already carrying it is `already_set`; a matching row that is not a sale is `skipped`. **Only sales a trusted service raised are classified**: a sale whose reference matches but which was created on the account path (`POST /fulfillments`, where anyone can type `STORE:`) or by a service that may not state categories is counted in `skipped_untrusted`, listed in `skipped_untrusted_ids`, and neither changed nor re-emitted. Every confirmed classified match re-emits `fulfillment.settled` (plus `fulfillment.refunded` for its confirmed refunds).\n\n**scope `p2p`** — changes nothing; re-emits `fulfillment.settled` (plus `fulfillment.refunded`) for every confirmed p2p payment with `created_after` <= created_at < `created_before` (both required).\n\n**scope `sale_reemit`** — changes nothing (no `category`; writes no fulfillment); re-emits `fulfillment.settled` (plus `fulfillment.refunded` for confirmed refunds) for every CONFIRMED sale of `store_id`, matched exactly as scope `store`, with `created_after` <= created_at < `created_before` (both required). Its purpose is to carry `input_token`/`input_spent` to a consumer that recorded the settlement before the event had them. A sale raised by a service allowed to state categories is emitted exactly as its live confirm would (`emitted_trusted`); any other sale is emitted with `category`, `merchant_reward_percentage` and `classification_slug` set to `\"\"` and every other field unchanged (`emitted_untrusted_stripped`). A matching row that is not a confirmed sale is `skipped`. `set`/`changed`/`already_set` are always 0 and `fulfillment_ids` empty; `emitted_ids` lists the emitted sales (first 500; `emitted_ids_truncated` when capped).\n\n**scope `billpay_reemit`** — changes nothing (no `store_id`, no `category`; writes no fulfillment); re-emits `fulfillment.billpay-funding` for every CONFIRMED bill-pay funding (reference `BP:<budget>:<nonce>…`) in the tenant with `created_after` <= created_at < `created_before` (both required), built exactly as the live confirm builds it — including `input_token` / `input_spent` (the token that left the payer and its base units, summed over a chip-in's legs; `\"\"` when unknown). Every event re-emitted by this scope also carries `\"replay\": true` (the live confirm's payload has no `replay` key): enforcer-cybrid treats a replay as fill-only — it fills `input_token`/`input_spent` on a funding intent it already has and never creates a funding intent or queued payment for a nonce it has not seen. Its purpose is to carry those two fields to enforcer-cybrid's funding intents, which it fills once and never overwrites (the consumer is idempotent on (tenant, allocation_nonce)). A `BP:` row that is not confirmed or does not parse is `skipped`. Counts are `matched`, `emitted`, `skipped`; `emitted_ids` lists the emitted fundings (first 500; `emitted_ids_truncated` when capped). `settled_emitted`/`refunds_emitted` stay 0.\n\nThe body is strict JSON: an unknown key is a 400 `invalid_body` (a misspelled window or store would otherwise silently widen the run).\n\n**dry_run defaults to true** and writes and emits nothing. A real run (`dry_run: false`) writes and emits through the outbox in one transaction; consumers are idempotent, so a repeat run is safe. `reason` (10+ characters) is required and audited with the counts. Refuses (422 `backfill_too_many`) a run matching more than 2000 rows: narrow the window.\n**scope `direct_payment_reemit`** — changes nothing (no `store_id`, no `category`; writes no fulfillment); re-emits `fulfillment.direct-payment` for every CONFIRMED one-off direct payment (reference `DIRECT:<counterparty>:<nonce>…`) in the tenant with `created_after` <= created_at < `created_before` (both required), built exactly as the live confirm builds it — including `input_token` / `input_spent` (same rules as `billpay_reemit`) — and marked `\"replay\": true`. enforcer-cybrid treats a replay as fill-only: it fills `input_token`/`input_spent` on a direct payment it already has and never records or pays a direct payment for a nonce it has not seen. A `DIRECT:` row that is not confirmed or does not parse is `skipped`. Counts are `matched`, `emitted`, `skipped`; `emitted_ids` lists the emitted payments (first 500; `emitted_ids_truncated` when capped).",
         "tags": [
           "fulfillment"
         ],
@@ -3490,6 +3490,146 @@
           },
           "404": {
             "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/fulfillments/{id}/confirm": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "For a fulfillment whose confirmation (the Router `Routed` webhook / indexer event) was missed. **Nothing in the body is trusted**: the lever reads the receipt of `tx_hash` on the fulfillment's own chain (the tenant's chain RPC), decodes the Z5 Router `Routed` event(s) for the fulfillment's memo with the same decoder the webhook edges use, and delivers them through the indexer's own confirm path — the same payer, chain, recipient and funded-amount bindings — so it can only confirm what the indexer would have.\n\n**dry_run defaults to true** and writes nothing: it runs the same ledger insert and confirm in a transaction that is rolled back, and reports the match (payer, recipient, notional), `payer_binding` (`no_rule`, `expected_payer`, `sender_wallet` — a refund paid from a wallet of its sender account —, `no_payer_evidence`, `not_allowed`) and `verdict`. A real run (`dry_run: false`) confirms, writes the outbox events and the audit event `fulfillment.admin_confirmed` (actor, tx_hash, reason); a refused real run is audited as `fulfillment.admin_confirm_refused`.\n\nIdempotent: an already-confirmed fulfillment answers 200 `already_confirmed` with its current state and changes nothing. Only pending, claimed or submitted rows can be confirmed (409 `not_in_flight`). Fenced to the caller's tenant, or `tenant_id` for the admin role; another tenant's id is a 404.\n\nRefusals carry `data` with what was found. 400 `invalid_body` / `invalid_tx_hash` / `reason_required`; 404 `fulfillment_not_found` / `tx_not_found` (no mined tx on the chain); 409 `not_in_flight` / `not_confirmed` (the row moved during the run); 422 `no_routed_event_for_memo`, `payer_not_allowed`, `chain_mismatch`, `amount_short`, `recipient_not_allowed`, `tx_reverted`; 502 `chain_unavailable` (RPC error, nothing concluded); 503 `chain_not_configured`.",
+        "tags": [
+          "fulfillment"
+        ],
+        "summary": "Confirm a fulfillment from its on-chain Routed event (system admin, dry_run by default)",
+        "operationId": "adminConfirmFulfillment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "fulfillment id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "description": "act in another tenant (admin only)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "tx_hash, reason, dry_run",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body / invalid_tx_hash / reason_required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fulfillment_not_found / tx_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not_in_flight / not_confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "no_routed_event_for_memo / payer_not_allowed / chain_mismatch / amount_short / recipient_not_allowed / tx_reverted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "chain_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "chain_not_configured",
             "content": {
               "application/json": {
                 "schema": {
@@ -10212,7 +10352,7 @@
     },
     "/auth/config": {
       "get": {
-        "description": "Public: given an optional `tenant_code`, reports how that tenant's login UI should authenticate (native OTP/passkey/SIWE vs. Privy custom auth), plus the tenant's public `privy_app_id` (never a secret) so the client can initialize the right SDK before the user picks a method. Also publishes what a drop-in login widget needs pre-auth: the OTP `methods` the tenant can use now (`phone` only with a usable Twilio Verify connection), `otp_length`, the tenant's `name`/`logo_url`, and `self_join_policy`. The join code is never echoed back. An expired workspace code gets 404 `tenant_code_expired`.",
+        "description": "Public: given an optional `tenant_code` (join code) or `tenant_id` (workspace UUID), reports how that tenant's login UI should authenticate (native OTP/passkey/SIWE vs. Privy custom auth), plus the tenant's public `privy_app_id` (never a secret) so the client can initialize the right SDK before the user picks a method. Also publishes what a drop-in login widget needs pre-auth: the OTP `methods` the tenant can use now (`phone` only with a usable Twilio Verify connection), `otp_length`, the tenant's `name`/`logo_url`, and `self_join_policy`. Either identifier resolves the same tenant. Sending both that name different workspaces is 400 `conflicting_tenant`. An unknown or malformed `tenant_id` is the same 404 `tenant_not_found` as an unknown join code. The join code is never echoed back. An expired workspace code gets 404 `tenant_code_expired` even when `tenant_id` is also sent.",
         "tags": [
           "auth"
         ],
@@ -10222,7 +10362,15 @@
           {
             "name": "tenant_code",
             "in": "query",
-            "description": "tenant routing code",
+            "description": "workspace join code",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "description": "workspace UUID; alternative to tenant_code",
             "schema": {
               "type": "string"
             }
@@ -10466,7 +10614,7 @@
     },
     "/auth/login": {
       "post": {
-        "description": "Authenticates a credential and, on success, issues an enforcer access/refresh token pair (200, `handler.AuthResponse`). `provider` in the request selects the scheme and its required fields: `email_otp` needs `email`+`code`, `phone_otp` needs `phone`+`code`, `siwe` needs `message`+`signature`, every other provider needs `token` (e.g. a Privy access token). 401 on a rejected credential or wrong/expired OTP, 403 `account_inactive` for a deactivated account or `wrong_auth_scheme` when the tenant requires a different provider, 404 when no tenant matches the credential, 409 only on a benign concurrent-refresh race elsewhere in the family, 503 when the upstream identity provider (Privy/Google) is unreachable. An expired workspace code gets 404 `tenant_code_expired`.",
+        "description": "Authenticates a credential and, on success, issues an enforcer access/refresh token pair (200, `handler.AuthResponse`). `provider` in the request selects the scheme and its required fields: `email_otp` needs `email`+`code`, `phone_otp` needs `phone`+`code`, `siwe` needs `message`+`signature`, every other provider needs `token` (e.g. a Privy access token). The workspace is named by `tenant_code` (join code) or `tenant_id` (UUID); both are optional and either one resolves the same tenant and the same membership, self-join and invite rules. Sending both that name different workspaces is 400 `conflicting_tenant`. An unknown or malformed `tenant_id` is the same 404 `tenant_not_found` as an unknown join code. A provider that stamps the tenant (Privy app id, SSO connection) still wins, and these fields are not consulted. 401 on a rejected credential or wrong/expired OTP, 403 `account_inactive` for a deactivated account or `wrong_auth_scheme` when the tenant requires a different provider, 404 when no tenant matches the credential, 409 only on a benign concurrent-refresh race elsewhere in the family, 503 when the upstream identity provider (Privy/Google) is unreachable. An expired workspace code gets 404 `tenant_code_expired` even when `tenant_id` is also sent.",
         "tags": [
           "auth"
         ],
@@ -11801,7 +11949,7 @@
     },
     "/auth/otp/request": {
       "post": {
-        "description": "Public: starts the native `email_otp` login/registration flow by emailing a one-time code to `email` (optionally scoped by `tenant_code`). Always 200 `{message:\"code sent\"}` on success; the code itself is only echoed in the response body when the deployment has `expose_dev_otp` enabled (local/dev only). An expired workspace code gets 404 `tenant_code_expired`. Send the Cloudflare Turnstile widget response as `turnstile_token`: when the deployment has Turnstile configured, a sent token that fails is 403 `turnstile_failed` (503 `turnstile_unavailable` if Cloudflare cannot be reached), and a deployment with `otp_require_turnstile` on refuses a missing one the same way. 429 `rate_limited` when the caller's address or the email's send budget (per address, across workspaces: by default 5 codes per 10 minutes and 20 per hour) is spent.",
+        "description": "Public: starts the native `email_otp` login/registration flow by emailing a one-time code to `email`. The workspace is named by `tenant_code` (join code) or `tenant_id` (UUID); either one resolves the same tenant and runs the same membership, self-join and invite rules (an invite-only workspace still answers 200 and mails no code to an address it would refuse). Sending both that name different workspaces is 400 `conflicting_tenant`. An unknown or malformed `tenant_id` is the same 404 `tenant_not_found` as an unknown join code. Always 200 `{message:\"code sent\"}` on success; the code itself is only echoed in the response body when the deployment has `expose_dev_otp` enabled (local/dev only). An expired workspace code gets 404 `tenant_code_expired` even when `tenant_id` is also sent. Send the Cloudflare Turnstile widget response as `turnstile_token`: when the deployment has Turnstile configured, a sent token that fails is 403 `turnstile_failed` (503 `turnstile_unavailable` if Cloudflare cannot be reached), and a deployment with `otp_require_turnstile` on refuses a missing one the same way. 429 `rate_limited` when the caller's address or the email's send budget (per address, across workspaces: by default 5 codes per 10 minutes and 20 per hour) is spent. The send budget is per address across workspaces, unchanged by which identifier named the workspace.",
         "tags": [
           "auth"
         ],
@@ -12275,6 +12423,7 @@
     },
     "/auth/passkey/login/begin": {
       "post": {
+        "description": "Public: starts a usernameless passkey login. The workspace is named by `tenant_code` (join code) or `tenant_id` (UUID); either one resolves the same tenant. Naming either binds the ceremony to that workspace (finish refuses a passkey whose person has no account there). Sending both that name different workspaces is 400 `conflicting_tenant`. An unknown or malformed `tenant_id` is the same 404 `tenant_not_found` as an unknown join code. With neither, the login is unbound and the passkey names the account. Finish does not read `tenant_id` again. An expired workspace code gets 404 `tenant_code_expired`.",
         "tags": [
           "auth"
         ],
@@ -12282,7 +12431,7 @@
         "operationId": "beginPasskeyLogin",
         "requestBody": {
           "required": true,
-          "description": "optional tenant code",
+          "description": "optional workspace (join code or UUID)",
           "content": {
             "application/json": {
               "schema": {
@@ -12304,6 +12453,16 @@
           },
           "400": {
             "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
@@ -12337,6 +12496,7 @@
     },
     "/auth/passkey/login/finish": {
       "post": {
+        "description": "Verifies the assertion from beginPasskeyLogin and issues tokens. The workspace is the one begin resolved (and, when the caller named one, bound the ceremony to). This call does not accept `tenant_id` or `tenant_code`.",
         "tags": [
           "auth"
         ],
@@ -12891,7 +13051,7 @@
     },
     "/auth/register": {
       "post": {
-        "description": "Creates an account/person via the same per-provider verification `login` uses (see `login`'s description for the `provider` field rules), but returns the created account (`handler.RegisterResponse`) rather than issuing tokens; the caller must still call `login` (or, for `privy_custom_auth` tenants, complete the Privy flow) to sign in. 200 if the account already existed for this credential (idempotent), 201 if newly created, 409 `email_taken` if the email is already registered in this tenant under a different provider. An expired workspace code gets 404 `tenant_code_expired`.",
+        "description": "Creates an account/person via the same per-provider verification `login` uses (see `login`'s description for the `provider` field rules and for `tenant_code` / `tenant_id`), but returns the created account (`handler.RegisterResponse`) rather than issuing tokens; the caller must still call `login` (or, for `privy_custom_auth` tenants, complete the Privy flow) to sign in. 200 if the account already existed for this credential (idempotent), 201 if newly created, 409 `email_taken` if the email is already registered in this tenant under a different provider. An expired workspace code gets 404 `tenant_code_expired`. Sending both `tenant_id` and `tenant_code` that name different workspaces is 400 `conflicting_tenant`.",
         "tags": [
           "auth"
         ],
@@ -14966,7 +15126,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Partial update (ResourceAuth write: tenant_admin/admin only). Scoped by the ROW's tenant, not the caller's: a platform admin (cross_tenant role) may update a connection in any tenant by id, a tenant_admin only in their own; there is no tenant_id field here and the row never moves tenant. A config field sent as the redacted marker value (i.e. round-tripping what Get returned) leaves that key's stored secret untouched rather than overwriting it with the literal marker — only fields with a REAL new value replace the sealed credential.",
+        "description": "Partial update (ResourceAuth write: tenant_admin/admin only). Scoped by the ROW's tenant, not the caller's: a platform admin (cross_tenant role) may update a connection in any tenant by id, a tenant_admin only in their own; there is no tenant_id field here and the row never moves tenant. A config field sent as the redacted marker value (i.e. round-tripping what Get returned) leaves that key's stored secret untouched rather than overwriting it with the literal marker — only fields with a REAL new value replace the sealed credential.\n\n`wallet_send_whitelist`, when present, REPLACES the row's list of addresses rwa's signing gateway treats as unmetered (no per-transaction cap, no pricing) for every member of the tenant; send `[]` to clear it. PLATFORM ADMIN ONLY (403 `wallet_send_whitelist_platform_only` otherwise). Entries must be 0x-prefixed 20-byte hex, at most 256 (422 `invalid_wallet_send_whitelist`); they are lowercased and deduped. rwa reads the union over the tenant's active rows on every send, so a change applies to the next send. The audit event lists the addresses added and removed.",
         "tags": [
           "connections"
         ],
@@ -15037,6 +15197,16 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
             "content": {
               "application/json": {
                 "schema": {
@@ -17159,7 +17329,7 @@
             "BearerAuth": []
           }
         ],
-        "description": "Creates a payment intent — a \"send\" (sender defaults to the caller) or, when sender_user_id or sender_wallet names someone else, a \"request\" the caller becomes the receiver of. deadline is required RFC3339. memo is the join key to on-chain settlement: 409 memo_taken if it's already held by a live (pending/claimed/submitted) fulfillment in the tenant — omit it and the server mints one. 422 amount_over_limit if a DIRECT-tagged payment exceeds the per-payment cap (max_uoa/max_cents echoed in the error body).\n\n**idempotency_key (optional, 8..255 chars) — pass one if your client can retry.** A second create with the same key in the same tenant returns the ORIGINAL fulfillment, same id, instead of minting a second payment. The key is durable for the row's whole life, so a retry that arrives after the original settled still resolves to it — that is the \"response was lost, client retried\" case. Without a key, behaviour is unchanged: every call creates a new payment intent. Note the counterparty notification fires only on the real create, never on a replay.\n\n**reference tags reserved to services.** A reference starting `RWD:`, `REFUND:` or `DEPOSIT:` (case-insensitive, after trimming whitespace) is refused with 400 `reserved_reference`: those kinds are raised only by trusted services (POST /service/fulfillments, refunds, the deposit bridge). `BP:`, `DIRECT:`, `WD:` and `TERMINAL:` are accepted.",
+        "description": "Creates a payment intent — a \"send\" (sender defaults to the caller) or, when sender_user_id or sender_wallet names someone else, a \"request\" the caller becomes the receiver of. deadline is required RFC3339. memo is the join key to on-chain settlement: 409 memo_taken if it's already held by a live (pending/claimed/submitted) fulfillment in the tenant — omit it and the server mints one. 422 amount_over_limit if a DIRECT-tagged payment exceeds the per-payment cap (max_uoa/max_cents echoed in the error body).\n\n**idempotency_key (optional, 8..255 chars) — pass one if your client can retry.** A second create with the same key in the same tenant returns the ORIGINAL fulfillment, same id, instead of minting a second payment. The key is durable for the row's whole life, so a retry that arrives after the original settled still resolves to it — that is the \"response was lost, client retried\" case. Without a key, behaviour is unchanged: every call creates a new payment intent. Note the counterparty notification fires only on the real create, never on a replay.\n\n**reference tags reserved to services.** A reference starting `RWD:`, `REFUND:` or `DEPOSIT:` (case-insensitive, after trimming whitespace) is refused with 400 `reserved_reference`: those kinds are raised only by trusted services (POST /service/fulfillments, refunds, the deposit bridge). `BP:`, `DIRECT:`, `WD:` and `TERMINAL:` are accepted.\n\n**payee_category_id (optional, UUID) — direct payments only.** The enforcer-cybrid payee category a `DIRECT:` payment is for. 400 `invalid_payee_category_id` if it is not a UUID; 400 `payee_category_id_not_allowed` on a reference without the `DIRECT:` tag. Stored on the fulfillment and forwarded on the `fulfillment.direct-payment` event (`\"\"` when omitted). Not checked against the payee's categories: cybrid falls back to its default rule for an id it does not recognise. Omit it and nothing changes.",
         "tags": [
           "fulfillments"
         ],
@@ -17188,7 +17358,7 @@
             }
           },
           "400": {
-            "description": "Bad Request",
+            "description": "bad_request / reserved_reference / invalid_address / chain_mismatch / invalid_payee_category_id / payee_category_id_not_allowed",
             "content": {
               "application/json": {
                 "schema": {
@@ -17420,7 +17590,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Creates a group type. An admin with no tenant_id creates a GLOBAL type; a tenant admin creates one in their own tenant. 409 group_type_reserved if a tenant type would take the slug of a RESERVED global type.",
+        "description": "Creates a group type. An admin with no tenant_id creates a GLOBAL type; a tenant admin creates one in their own tenant. 409 group_type_reserved if a tenant type would take the slug of a RESERVED global type, or if the slug starts with sys_ (the system namespace — only a migration creates those, for every caller).",
         "tags": [
           "group-types"
         ],
@@ -17905,7 +18075,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Any authenticated member creates a group in their own tenant. 400 invalid_group_type if group_type_id (or group_type, by slug) is set but doesn't name a type visible to the caller (global or their tenant's). A group of a MEMBERS-ONLY type (e.g. graph_team) is private: its creator is added as its manager, and only its members and tenant admins can see it. 403 group_type_reserved if it names a RESERVED type — only the owning service creates those.",
+        "description": "Any authenticated member creates a group in their own tenant. 400 invalid_group_type if group_type_id (or group_type, by slug) is set but doesn't name a type visible to the caller (global or their tenant's). A group of a MEMBERS-ONLY type (e.g. graph_team) is private: its creator is added as its manager, and only its members and tenant admins can see it. 403 group_type_reserved if it names a RESERVED type — only the owning service creates those. 403 group_type_admin_only if it names an ADMIN-ONLY type (e.g. sys_app_groups) and the caller lacks the admin_managed grant; an admin-only group's creator is NOT auto-joined.",
         "tags": [
           "groups"
         ],
@@ -17939,6 +18109,499 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/access-requests": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The approver inbox: access requests in the caller's workspace, only on groups the caller could add members to (exactly the POST /groups/{id}/members gate — for sys_app_groups, workspace admins). Each row carries the requester {account_id, name, email} (account_id null on a pre-membership request filed by a service for someone with no account yet), the message, the intake a service attached, and the group. Newest first.",
+        "tags": [
+          "groups"
+        ],
+        "summary": "List access requests to decide",
+        "operationId": "listGroupAccessRequests",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "pending (default) | approved | denied | cancelled; anything else is 400 invalid_status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "approved",
+                "denied",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "group_id",
+            "in": "query",
+            "description": "only this group",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size (default 50, max 200); 0 = count only",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "page offset",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestInboxPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/access-requests/mine": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The caller's own access requests in their current workspace, newest first, each with its group {id, slug, name} (omitted once the group is deleted) and decision (status, decision_note, decided_at).",
+        "tags": [
+          "groups"
+        ],
+        "summary": "List my access requests",
+        "operationId": "listMyGroupAccessRequests",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size (default 50, max 200); 0 = count only",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "page offset",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestPageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/access-requests/{request_id}/approve": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Grants a PENDING request. A member request adds the membership through the ordinary add-member path (audit group.member_added with via = access_request, the group.membership event and any membership email) and emails the requester groups.access_approved. A pre-membership request (filed by a service for an email with no account in the workspace) creates a group invite for that email (the auth.tenant_invite email; group_ids = [the group]): accepting it creates the account and the membership. Gate: exactly POST /groups/{id}/members' (for sys_app_groups, workspace admins). 404 access_request_not_found for an unknown request, another workspace's, or one on a group the caller cannot add members to; 403 cannot_decide_own_request when the caller filed it (or it names the caller's own email), whatever their role; 409 access_request_not_pending once decided (two concurrent approvals grant once); 409 membership_inactive; 409 account_inactive when a member requester's account is no longer active in the workspace (checked inside the approval claim; the request stays pending, nothing is granted, and group.access_approval_refused is audited); 409 use_member_request when the email has meanwhile become an account in the workspace; 409 invite_pending when a pending invite for the email already exists (issuing one would rewrite it: settle that invite first); 429 invite_quota_exceeded.",
+        "tags": [
+          "groups"
+        ],
+        "summary": "Approve an access request",
+        "operationId": "approveGroupAccessRequest",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "description": "access request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestInboxResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/access-requests/{request_id}/cancel": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Withdraws the caller's own PENDING request. 404 access_request_not_found for anyone else's request (or another workspace's); 409 access_request_not_pending once it was decided. Only from the person's own sign-in, like the request itself.",
+        "tags": [
+          "groups"
+        ],
+        "summary": "Cancel my access request",
+        "operationId": "cancelGroupAccessRequest",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "description": "access request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/access-requests/{request_id}/deny": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Refuses a PENDING request with an optional note (at most 500 characters). A member requester is emailed groups.access_denied with the note; a pre-membership requester is not mailed (the address is unverified) and gets no account. The same person may ask again for this group after 24 h. Same gate and errors as approve.",
+        "tags": [
+          "groups"
+        ],
+        "summary": "Deny an access request",
+        "operationId": "denyGroupAccessRequest",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "description": "access request id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "description": "optional note to the requester",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestDenyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestInboxResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/requestable": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The live, unarchived groups in the caller's tenant that an admin marked requestable and whose TYPE allows access requests (today only sys_app_groups), with the caller's status on each: none, pending (a request is waiting) or member (an active membership). This is the only way a non-member learns such a group exists: it deliberately lists members-only groups that GET /groups hides from them. People only (403 service_account for a service principal).",
+        "tags": [
+          "groups"
+        ],
+        "summary": "List groups I can request access to",
+        "operationId": "listRequestableGroups",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.RequestableGroupsResponse"
                 }
               }
             }
@@ -18283,7 +18946,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Updates a group's name/description/type (ResourceAuth write: creator, tenant admin, or system admin). 400 invalid_group_type if type_id doesn't resolve to a type the caller's tenant can use. 403 group_type_reserved on a group of a RESERVED type, or a retag onto one — those belong to their service. 409 group_archived on an archived group (unarchive first).",
+        "description": "Updates a group's name/description/type (ResourceAuth write: creator, tenant admin, or system admin). 400 invalid_group_type if type_id doesn't resolve to a type the caller's tenant can use. 403 group_type_reserved on a group of a RESERVED type, or a retag onto one — those belong to their service. 403 group_type_admin_only on a group of an ADMIN-ONLY type (e.g. sys_app_groups), or a retag onto one, without the admin_managed grant. 409 group_archived on an archived group (unarchive first). requestable (true lets the workspace's members ask to join through POST /groups/{id}/access-requests) is 400 group_type_not_requestable unless the group's type allows access requests (group_types.access_requests, today only sys_app_groups); a retag onto a type that does not allow them clears it.",
         "tags": [
           "groups"
         ],
@@ -18354,6 +19017,116 @@
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/groups/{id}/access-requests": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "The caller asks to join a requestable group (see GET /groups/requestable). Only from the person's own sign-in: service principals (403 service_account) and API keys, portal links, agent and OAuth/delegated tokens (403 person_credential_required) are refused. The group's approvers (its manager-role members who may add members, else the workspace's admins; at most 10, never the requester) are emailed groups.access_requested with a review_link. Errors: 404 group_not_found (unknown, another workspace's, archived, not requestable, or of a type that does not allow requests — one answer); 409 already_member; 409 membership_inactive (an expired or scheduled membership exists: re-granting is an admin act); 409 access_request_pending (one pending request per person and group); 409 access_request_cooldown (a request on this group was denied less than 24 h ago); 429 access_request_rate_limited (more than 5 requests in this workspace in 24 h); 400 invalid_message (over 500 characters).",
+        "tags": [
+          "groups"
+        ],
+        "summary": "Request access to a group",
+        "operationId": "createGroupAccessRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "description": "optional message to the approvers",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestCreateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -20061,6 +20834,358 @@
         }
       }
     },
+    "/me/billing-addresses": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The caller's card billing addresses on this account (tenant), the default first, then oldest first (at most 10). Owner-only; Cache-Control: no-store.",
+        "tags": [
+          "person"
+        ],
+        "summary": "List my billing addresses",
+        "operationId": "listMyBillingAddresses",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.BillingAddressListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Adds a card billing address to the caller's account. full_name, line1, city and country (ISO 3166-1 alpha-2) are required; label at most 40 characters; phone is digits with + ( ) - . / and spaces; email a plain address. The first address becomes the default; is_default true makes this one the default. At most 10 (409 billing_address_limit). Street lines, phone and email are sealed at rest. Audited as person.billing_address_created (id only).",
+        "tags": [
+          "person"
+        ],
+        "summary": "Add a billing address",
+        "operationId": "createMyBillingAddress",
+        "requestBody": {
+          "required": true,
+          "description": "billing address",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.BillingAddressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.BillingAddressResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/billing-addresses/{id}": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "One of the caller's billing addresses. Another account's address is 404.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Get a billing address",
+        "operationId": "getMyBillingAddress",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "billing address id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.BillingAddressResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Removes one of the caller's billing addresses. When it was the default, the oldest remaining address becomes the default. Another account's address is 404. Audited as person.billing_address_deleted (id only).",
+        "tags": [
+          "person"
+        ],
+        "summary": "Remove a billing address",
+        "operationId": "deleteMyBillingAddress",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "billing address id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Partial update of one of the caller's billing addresses: a present field is applied (\"\" clears; full_name, line1, city and country cannot be cleared), an absent one is unchanged. is_default true makes it the default (\"Make default\"). Another account's address is 404. Audited as person.billing_address_updated (id only).",
+        "tags": [
+          "person"
+        ],
+        "summary": "Update a billing address",
+        "operationId": "updateMyBillingAddress",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "billing address id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "fields to change",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.BillingAddressRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.BillingAddressResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/contacts/unseen-counts": {
       "get": {
         "security": [
@@ -21068,6 +22193,135 @@
         }
       }
     },
+    "/me/fulfillments/{id}/recheck": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "For the SENDER of a `submitted` fulfillment whose confirmation never arrived (a missed Router `Routed` webhook). v3 reads the receipt of the transaction on the fulfillment's own chain, decodes the Z5 Router `Routed` event for the fulfillment's memo and delivers it through the indexer's own confirm path — the same code as `POST /admin/fulfillments/{id}/confirm` with `dry_run: false` — so it can only confirm what the indexer would have: the same payer, chain, recipient and funded-amount bindings apply.\n\nBody optional: `tx_hash` names the transaction; absent, the hash recorded at submit is used (409 `no_tx_recorded` when there is none). Only the fulfillment's sender (`sender_user_id`, in the caller's tenant) may call it; anyone else gets the same 404 as a missing id. A confirmed fulfillment answers 200 `already_confirmed` with its state; any other status but `submitted` is 409 `not_in_flight`. One re-check per fulfillment per 30 seconds (429 `rate_limited`, `Retry-After`). Every re-check that reads the chain is audited as `fulfillment.owner_rechecked` (actor, tx_hash, verdict).\n\nRefusals carry `data` with what was found. 400 `invalid_body` / `invalid_tx_hash`; 404 `fulfillment_not_found` / `tx_not_found`; 409 `not_in_flight` / `no_tx_recorded` / `not_confirmed`; 422 `no_routed_event_for_memo`, `payer_not_allowed`, `chain_mismatch`, `amount_short`, `recipient_not_allowed`, `evidence_incomplete`, `tx_reverted` (the row is unchanged); 429 `rate_limited`; 502 `chain_unavailable` (RPC error, nothing concluded); 503 `chain_not_configured`.",
+        "tags": [
+          "fulfillments"
+        ],
+        "summary": "Re-check my submitted payment against the chain (sender only)",
+        "operationId": "recheckFulfillment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "fulfillment id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "description": "optional tx_hash",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.RecheckFulfillmentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.RecheckFulfillmentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_body / invalid_tx_hash",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "fulfillment_not_found / tx_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "not_in_flight / no_tx_recorded / not_confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "no_routed_event_for_memo / payer_not_allowed / chain_mismatch / amount_short / recipient_not_allowed / evidence_incomplete / tx_reverted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AdminConfirmErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "rate_limited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "chain_unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "chain_not_configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/fulfillments/{id}/submit": {
       "post": {
         "security": [
@@ -21234,6 +22488,7 @@
             "ApiKeyAuth": []
           }
         ],
+        "description": "The caller's own person, plus the owner-only profile block (title, middle name, residence country, frequent-flyer number, passport with only number_last4, loyalty programs, preferences) and verified_identity: the KYC-verified date of birth, present only while the person has opted in (PATCH use_verified_identity) and the account has passed KYC/KYB. Gender and nationality are not returned: the KYC provider does not expose them.",
         "tags": [
           "person"
         ],
@@ -21245,7 +22500,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/internal_delivery_http_handler.PersonResponse"
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.MyPersonResponse"
                 }
               }
             }
@@ -21338,7 +22593,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Partial update of the caller's own person. A first_name or last_name in the patch is also copied onto the account display name teammates see in the directory and in group member lists: onto every one of the person's accounts when the person's own login session makes the edit, and onto the calling account alone for an API key, OAuth app or exchanged token, which act in one workspace. A non empty first_name or last_name must be at most 100 characters, contain a letter, and hold no control or invisible characters (400 invalid_name); an empty one clears it.",
+        "description": "Partial update of the caller's own person. A first_name or last_name in the patch is also copied onto the account display name teammates see in the directory and in group member lists: onto every one of the person's accounts when the person's own login session makes the edit, and onto the calling account alone for an API key, OAuth app or exchanged token, which act in one workspace. A non empty first_name or last_name must be at most 100 characters, contain a letter, and hold no control or invisible characters (400 invalid_name); an empty one clears it. The profile fields (title, middle_name, residence_country, frequent_flyer_number, passport_number, passport_expiry, passport_issuing_country, passport_nationality, loyalty_programs, preferences, use_verified_identity) are self-service only; a bad one is 400 invalid_profile. Countries are ISO 3166-1 alpha-2, dates YYYY-MM-DD, and passport_number (5 to 20 letters or digits) is write-only and sealed at rest: reads show passport.number_last4. loyalty_programs and preferences replace the whole value. use_verified_identity true opts in to verified_identity on reads, false opts out; nothing is copied either way.",
         "tags": [
           "person"
         ],
@@ -21350,7 +22605,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/internal_delivery_http_handler.UpdatePersonRequest"
+                "$ref": "#/components/schemas/internal_delivery_http_handler.UpdateMyPersonRequest"
               }
             }
           }
@@ -21361,7 +22616,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/internal_delivery_http_handler.PersonUpdateResponse"
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.MyPersonUpdateResponse"
                 }
               }
             }
@@ -21478,6 +22733,63 @@
         }
       }
     },
+    "/me/person/documents/reveal": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Returns the caller's own full passport, Known Traveler and Redress numbers (normal reads show only their last four characters), for filling a booking at checkout. The person's own login session only: an API key, OAuth app, agent or exchanged token is 403. Answers Cache-Control: no-store and writes a person.documents_revealed audit row (never a number). A number is \"\" when none is stored.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Reveal my document numbers",
+        "operationId": "revealMyDocuments",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.RevealedDocumentsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/me/person/first-name": {
       "post": {
         "security": [
@@ -21558,6 +22870,425 @@
           },
           "500": {
             "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/person/travelers": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Family members and others the caller books for, oldest first (at most 20). Document numbers appear only as their last four characters; dob is returned in full to the owner.",
+        "tags": [
+          "person"
+        ],
+        "summary": "List my travelers",
+        "operationId": "listMyTravelers",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.TravelerListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Adds a family member or someone else the caller books for. A first_name or last_name is required; at most 20 travelers (409 traveler_limit). relationship is one of spouse_partner, child, parent, sibling, other (optional). Countries are ISO 3166-1 alpha-2; dates YYYY-MM-DD (dob in the past). passport_number (5 to 20), known_traveler_number (8 to 15) and redress_number (5 to 13) are letters or digits, write-only and sealed at rest, as is dob.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Add a traveler",
+        "operationId": "createMyTraveler",
+        "requestBody": {
+          "required": true,
+          "description": "traveler",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.TravelerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.TravelerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/person/travelers/{id}": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "One of the caller's travelers. Another person's traveler is 404.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Get a traveler",
+        "operationId": "getMyTraveler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "traveler id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.TravelerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "tags": [
+          "person"
+        ],
+        "summary": "Remove a traveler",
+        "operationId": "deleteMyTraveler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "traveler id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Partial update of one of the caller's travelers: a present field is applied (\"\" clears), an absent one is unchanged. Another person's traveler is 404.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Update a traveler",
+        "operationId": "updateMyTraveler",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "traveler id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "fields to change",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.TravelerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.TravelerResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/person/travelers/{id}/documents/reveal": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Returns one of the caller's travelers' full passport, Known Traveler and Redress numbers, for filling a booking at checkout. Same rules as POST /me/person/documents/reveal: the person's own login session only, Cache-Control: no-store, audited without a number. Another person's traveler is 404.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Reveal a traveler's document numbers",
+        "operationId": "revealMyTravelerDocuments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "traveler id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.RevealedDocumentsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
@@ -21853,6 +23584,125 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/enforcer-v3_internal_delivery_http_middleware.ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me/preferences": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The caller's website preferences on this account (tenant): language, currency, results view, hotel sort and email toggles, with defaults applied when never saved (en, USD, list, recommended; trip reminders and cash back paid on, deals off). Booking emails are always on.",
+        "tags": [
+          "person"
+        ],
+        "summary": "Get my site preferences",
+        "operationId": "getMyPreferences",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.SitePreferencesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Partial update of the caller's website preferences: a present field is applied (\"\" resets it to the default), an absent one is unchanged. language is a code such as en or en-US; currency ISO 4217; results_view one of list, compact, map; hotel_sort one of recommended, price_asc, price_desc. Booking emails cannot be switched off. Audited as person.preferences_updated (field names only).",
+        "tags": [
+          "person"
+        ],
+        "summary": "Update my site preferences",
+        "operationId": "updateMyPreferences",
+        "requestBody": {
+          "required": true,
+          "description": "preferences to change",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.SitePreferencesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.SitePreferencesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
                 }
               }
             }
@@ -24856,6 +26706,74 @@
         }
       }
     },
+    "/service/email-templates": {
+      "put": {
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "A trusted service (service key in X-API-Key) creates or replaces a SYSTEM-DEFAULT template under its own prefix only: enforcer-xeni writes xeni.* and nothing else (never auth.*, never another service's prefix). Idempotent by template_id. tenant_id is refused: tenants override a default through POST /email-templates as before.",
+        "tags": [
+          "email-templates"
+        ],
+        "summary": "Upsert a service's own email template",
+        "operationId": "upsertServiceEmailTemplate",
+        "requestBody": {
+          "required": true,
+          "description": "template_id, subject, body_template, optional format (html|text); no tenant_id",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/enforcer-v3_internal_usecase_emailtemplates.WriteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.TemplateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/service/fulfillments": {
       "post": {
         "description": "Service-key only (X-API-Key must be a service key this route trusts; today enforcer-mp-merchant and enforcer-airdrop). Creates an OPEN payment request that pays `payee_account_id`: the payee is creator, sender and receiver, and the use case opens it to any same-tenant payer. The body cannot name a different payer or creator. Tenant is `X-Tenant-ID`; the payee must belong to it.\n\n**category (optional, closed vocabulary: `merchant`, `travel`) and merchant_reward_percentage (optional, 0..100, ≤ 2 decimals).** Describe a SALE (reference `STORE:…`, kind `sale`) from the selling merchant, for the payer's activity, statement and rewards. enforcer-mp-merchant only (403 `category_forbidden` for any other service); an unknown category is 400 `invalid_category`, a malformed percentage 400 `invalid_merchant_reward_percentage`; either on anything but a sale reference is 400 `category_not_allowed`. Set at create and never changed after.\n\n**store_display_name (optional, 1..120 characters).** The selling store's display name, snapshotted onto the sale and returned to the payer as `associated_store` on their own fulfillment. enforcer-mp-merchant only (403 `store_display_forbidden`); a name with control characters or over 120 characters is 400 `invalid_store_display_name`; a name on anything but a sale is 400 `store_display_not_allowed`; a STORE: reference that is not `STORE:<uuid>` or `STORE:<uuid>:<client_ref>` is 400 `store_reference_invalid`. v3 does not call the store service. Omit it and the snapshot stays empty — the customer response then omits `associated_store` rather than inventing a name. Sender and receiver are unchanged.\n\n**classification_slug (optional, lower-case kebab, ≤ 64 characters).** The booking type enforcer-mp-merchant already resolved (`hotel`, `airline`, …). Returned to the payer as `classification_slug` on their own fulfillment. Not `category` and not `kind`. enforcer-mp-merchant only (403 `classification_forbidden`); a bad slug is 400 `invalid_classification_slug`; a slug on anything but an exact `STORE:<uuid>[:<client_ref>]` sale is 400 `classification_not_allowed`. Omit it and the field stays absent. v3 does not guess a type from the memo, the store, or the party.",
@@ -25399,7 +27317,7 @@
     },
     "/service/fulfillments/{id}/refunds": {
       "post": {
-        "description": "Service-key only (today enforcer-mp-merchant). Raises a refund of the settled payment `id`: an OPEN request the account that was paid settles from the wallet that received the sale, sent to the wallet that actually paid it.\n\n**The body names an amount and nothing else.** Destination (`receiver_wallet` = the original's `payer_address`), payer (`sender_user_id` = the original's `receiver_user_id`), the wallet allowed to settle it (`expected_payer_wallet` = the original's `receiver_wallet`), token and chain are all read from the original. A caller that names the wrong payment refunds money to the person who paid THAT payment.\n\nRefuses more than is refundable: what actually arrived (routed settlements) minus refunds already live or confirmed against it, checked under a lock on the original so two refunds cannot each claim the full balance. The refusal carries `refundable_uoa`.",
+        "description": "Service-key only (today enforcer-mp-merchant). Raises a refund of the settled payment `id`: an OPEN request the account that was paid settles from the wallet that received the sale, sent to the wallet that actually paid it.\n\n**The body names an amount and nothing else.** Destination (`receiver_wallet` = the original's `payer_address`), payer (`sender_user_id` = the original's `receiver_user_id`), the wallet allowed to settle it (`expected_payer_wallet` = the original's `receiver_wallet`), token and chain are all read from the original. **Who may fund it:** the refund confirms when its Routed payer is `expected_payer_wallet` OR any wallet v3 has registered to the sender account (`sender_user_id`'s smart/embedded wallets — the store owner paying in the app pays from their own smart wallet); a payment from any other wallet is ledgered but never confirms the refund. A caller that names the wrong payment refunds money to the person who paid THAT payment.\n\nRefuses more than is refundable: what actually arrived (routed settlements) minus refunds already live or confirmed against it, checked under a lock on the original so two refunds cannot each claim the full balance. The refusal carries `refundable_uoa`.",
         "tags": [
           "fulfillments"
         ],
@@ -25592,6 +27510,94 @@
           },
           "409": {
             "description": "tx_hash_conflict / not_pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/service/group-access-requests": {
+      "post": {
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "A trusted service (service key in X-API-Key; today enforcer-wf's sign-up) asks, on behalf of an EMAIL that is not yet an account in the workspace, to join one requestable group. tenant_id is explicit; nothing is read from a user credential. Nothing is created but the request: the approvers are emailed groups.access_requested with a review_link, and approval sends that email a group invite — accepting it proves the address and creates the account and the membership. name is required; intake is an optional JSON object (at most 8 KiB) stored for the approvers and never interpreted. Errors: 401 invalid_service_key; 400 invalid_tenant_id / invalid_group_id / invalid_email / invalid_name / invalid_message / invalid_intake; 404 group_not_found (unknown or inactive workspace, or a group that is not requestable — one answer); 409 use_member_request (the email already has an account in the workspace: that person signs in and asks as a member — the same fact the invite flow tells an inviter); 409 access_request_pending (one pending request per workspace, group and email); 409 access_request_cooldown (denied less than 24 h ago); 429 access_request_rate_limited (more than 5 requests for this email in 24 h, or more than 100 pre-membership requests in the workspace in 24 h).",
+        "tags": [
+          "groups"
+        ],
+        "summary": "File a pre-membership access request (service)",
+        "operationId": "createServiceGroupAccessRequest",
+        "requestBody": {
+          "required": true,
+          "description": "tenant_id, group_id, email, name, optional message and intake",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.ServiceAccessRequestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_delivery_http_handler.ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
             "content": {
               "application/json": {
                 "schema": {
@@ -32204,6 +34210,13 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "wallet_send_whitelist": {
+            "description": "WalletSendWhitelist is the tenant-global list of addresses rwa's signing\ngateway treats as UNMETERED (no per-transaction cap, no pricing): venues,\nrouters, and the like. rwa reads the union over the tenant's active rows on\nevery send (directory ResolveTenant), so a change bites on the next send.\nPlaintext and lowercased. Writable only by a platform admin (see\nconnections.ErrWalletSendWhitelistPlatformOnly): an entry lifts a compliance\ncap for every member of the tenant.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -32463,8 +34476,12 @@
           "dry_run": {
             "type": "boolean"
           },
+          "emitted": {
+            "description": "Emitted counts fulfillment.billpay-funding / fulfillment.direct-payment\nevents (re-)emitted (scopes billpay_reemit / direct_payment_reemit) — what\nWOULD be emitted on a dry run. Scope billpay_reemit only (0 otherwise;\nthat scope leaves SettledEmitted and RefundsEmitted 0).",
+            "type": "integer"
+          },
           "emitted_ids": {
-            "description": "EmittedIDs are the sales whose settled event was (would be) emitted, in\ncreated_at order, capped at MaxBackfillEmittedIDs (EmittedIDsTruncated\nsays the cap was hit).",
+            "description": "EmittedIDs are the rows whose event was (would be) emitted — the sales\n(scope sale_reemit) or the bill-pay fundings (scope billpay_reemit) — in\ncreated_at order, capped at MaxBackfillEmittedIDs (EmittedIDsTruncated\nsays the cap was hit).",
             "type": "array",
             "items": {
               "type": "string"
@@ -32474,7 +34491,7 @@
             "type": "boolean"
           },
           "emitted_trusted": {
-            "description": "Scope sale_reemit only (0 / empty otherwise).\n\nEmittedTrusted are settled events for sales a SaleClassifierServices\nservice raised: byte-identical to the live confirm's event.\nEmittedUntrustedStripped are settled events for every other sale,\nemitted with category and merchant_reward_percentage \"\" and every other\nfield unchanged. EmittedTrusted + EmittedUntrustedStripped =\nSettledEmitted.",
+            "description": "Scope sale_reemit only (0 / empty otherwise).\n\nEmittedTrusted are settled events for sales a SaleClassifierServices\nservice raised: byte-identical to the live confirm's event.\nEmittedUntrustedStripped are settled events for every other sale,\nemitted with category, merchant_reward_percentage and\nclassification_slug \"\" and every other field unchanged.\nEmittedTrusted + EmittedUntrustedStripped = SettledEmitted.",
             "type": "integer"
           },
           "emitted_untrusted_stripped": {
@@ -32499,7 +34516,8 @@
             "enum": [
               "store",
               "p2p",
-              "sale_reemit"
+              "sale_reemit",
+              "billpay_reemit"
             ]
           },
           "set": {
@@ -32511,7 +34529,7 @@
             "type": "integer"
           },
           "skipped": {
-            "description": "Skipped matched the store reference but is not a sale (scope store), or\nis not a CONFIRMED sale (scope sale_reemit). Never changed or emitted.",
+            "description": "Skipped matched the store reference but is not a sale (scope store), or\nis not a CONFIRMED sale (scope sale_reemit), or carries a BP: reference\nbut is not a confirmed, parseable bill-pay funding (scope\nbillpay_reemit). Never changed or emitted.",
             "type": "integer"
           },
           "skipped_untrusted": {
@@ -32685,7 +34703,7 @@
             }
           },
           "expected_payer_wallet": {
-            "description": "ExpectedPayerWallet, when set, is the ONLY wallet that may fund this\nfulfillment — see PayerBound and migration 000101. Never inferred from an\naccount and never backfilled from whoever paid; sender_wallet is the\nsnapshot/observed field and this is the RULE.",
+            "description": "ExpectedPayerWallet, when set, restricts who may fund this fulfillment\n(migration 000101): a settlement from any other payer is ledgered but\ndoes not confirm it. For kind=refund, a wallet registered to the sender\naccount (sender_user_id: the store owner the refund is raised as) may\nalso fund it — the owner's app can only pay from their own smart wallet.\nEvery other kind: this wallet only. See PayerBound. Never inferred from\nan account and never backfilled from whoever paid; sender_wallet is the\nsnapshot/observed field and this is the RULE.",
             "type": "string"
           },
           "expected_plan_hash": {
@@ -32740,6 +34758,10 @@
             "type": "string"
           },
           "pay_locked_by": {
+            "type": "string"
+          },
+          "payee_category_id": {
+            "description": "PayeeCategoryID is the payee category (an enforcer-cybrid id) the sender\nchose for a one-off DIRECT: payment (migration 000163). Forwarded on the\nfulfillment.direct-payment event; never set on any other kind. NULL means\nnone was chosen and cybrid applies its default rule.",
             "type": "string"
           },
           "payer_address": {
@@ -33083,6 +35105,10 @@
             "description": "NotifyMembers (\"Notify members when added\", 000145): a person added to\nthe group is emailed groups.member_added. Off by default.",
             "type": "boolean"
           },
+          "requestable": {
+            "description": "Requestable (000165): members of the tenant may ask to join this group\n(POST /groups/{id}/access-requests). Effective only while the group's\nTYPE has access_requests; set by PATCH /groups/{id} under the group's\nwrite gate, refused on any other type.",
+            "type": "boolean"
+          },
           "slug": {
             "type": "string"
           },
@@ -33126,6 +35152,14 @@
       "enforcer-v3_internal_domain_grouptype.GroupType": {
         "type": "object",
         "properties": {
+          "access_requests": {
+            "description": "AccessRequests (migration 000165): groups of this type may be marked\nrequestable and accept access requests (POST /groups/{id}/access-requests).\nRead-only here: only a migration sets it (sys_app_groups only, today).",
+            "type": "boolean"
+          },
+          "admin_only": {
+            "description": "AdminOnly (migration 000164): every HTTP write on a group of this type —\ncreate, retag onto it, edit, archive, delete, membership, invites — needs\nthe admin_managed grant. Read-only here: only a migration sets it.",
+            "type": "boolean"
+          },
           "created_at": {
             "type": "string"
           },
@@ -33778,6 +35812,64 @@
           }
         }
       },
+      "enforcer-v3_internal_domain_person.BillingAddressView": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "example": "Dallas"
+          },
+          "country": {
+            "description": "ISO 3166-1 alpha-2",
+            "type": "string",
+            "example": "US"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "example": "alex@example.test"
+          },
+          "full_name": {
+            "type": "string",
+            "example": "Alex Example"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string",
+            "example": "Home"
+          },
+          "line1": {
+            "type": "string",
+            "example": "1 Example St"
+          },
+          "line2": {
+            "type": "string",
+            "example": "Apt 1"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+1 555 010 0000"
+          },
+          "postal_code": {
+            "type": "string",
+            "example": "75201"
+          },
+          "region": {
+            "type": "string",
+            "example": "TX"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "enforcer-v3_internal_domain_person.CascadeResult": {
         "type": "object",
         "properties": {
@@ -33793,6 +35885,56 @@
           "person_deleted": {
             "description": "PersonDeleted is false when the person row was KEPT because they still\nhold live accounts in other tenants. A tenant-scoped delete removes the\nmembership, not the human.",
             "type": "boolean"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.LoyaltyProgram": {
+        "type": "object",
+        "properties": {
+          "member_number": {
+            "type": "string",
+            "example": "0000000000"
+          },
+          "program": {
+            "type": "string",
+            "example": "Delta SkyMiles"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.MaskedNumber": {
+        "type": "object",
+        "properties": {
+          "last4": {
+            "type": "string",
+            "example": "0000"
+          },
+          "set": {
+            "type": "boolean"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.PassportView": {
+        "type": "object",
+        "properties": {
+          "expiry": {
+            "type": "string",
+            "example": "2031-04-30"
+          },
+          "has_number": {
+            "type": "boolean"
+          },
+          "issuing_country": {
+            "type": "string",
+            "example": "US"
+          },
+          "nationality": {
+            "type": "string",
+            "example": "US"
+          },
+          "number_last4": {
+            "description": "NumberLast4 is the last four characters of the number; absent when none\nis stored (or it is too short to echo safely).",
+            "type": "string",
+            "example": "0000"
           }
         }
       },
@@ -33858,6 +36000,195 @@
           },
           "profile_image_url": {
             "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.Preferences": {
+        "type": "object",
+        "properties": {
+          "assistance": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cabin": {
+            "type": "string",
+            "example": "Economy"
+          },
+          "meal": {
+            "type": "string",
+            "example": "Vegetarian"
+          },
+          "seat": {
+            "type": "string",
+            "example": "Aisle"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.ProfileView": {
+        "type": "object",
+        "properties": {
+          "frequent_flyer_number": {
+            "type": "string"
+          },
+          "known_traveler_number": {
+            "description": "KnownTravelerNumber (TSA PreCheck / Global Entry) and RedressNumber are\nshown masked; the reveal route returns them in full.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.MaskedNumber"
+              }
+            ]
+          },
+          "loyalty_programs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.LoyaltyProgram"
+            }
+          },
+          "middle_name": {
+            "type": "string"
+          },
+          "passport": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.PassportView"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.Preferences"
+          },
+          "redress_number": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.MaskedNumber"
+          },
+          "residence_country": {
+            "type": "string",
+            "example": "US"
+          },
+          "title": {
+            "type": "string",
+            "example": "Ms"
+          },
+          "verified_identity_opt_in_at": {
+            "description": "VerifiedIdentityOptInAt is set while the person has opted in to having\ntheir KYC-verified identity returned (see verified_identity).",
+            "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.SiteEmails": {
+        "type": "object",
+        "properties": {
+          "booking": {
+            "type": "boolean",
+            "example": true
+          },
+          "cash_back_paid": {
+            "type": "boolean",
+            "example": true
+          },
+          "deals": {
+            "type": "boolean",
+            "example": false
+          },
+          "trip_reminders": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.SitePreferencesView": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string",
+            "example": "USD"
+          },
+          "emails": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.SiteEmails"
+          },
+          "hotel_sort": {
+            "type": "string",
+            "enum": [
+              "recommended",
+              "price_asc",
+              "price_desc"
+            ],
+            "example": "recommended"
+          },
+          "language": {
+            "type": "string",
+            "example": "en"
+          },
+          "results_view": {
+            "type": "string",
+            "enum": [
+              "list",
+              "compact",
+              "map"
+            ],
+            "example": "list"
+          },
+          "updated_at": {
+            "description": "UpdatedAt is absent until the owner first saves.",
+            "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_domain_person.TravelerView": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "dob": {
+            "description": "DOB is returned in full to the owner (checkout needs it), like the\nperson's own dob on GET /me/person; it is sealed at rest.",
+            "type": "string",
+            "example": "2015-06-01"
+          },
+          "first_name": {
+            "type": "string",
+            "example": "Sam"
+          },
+          "frequent_flyer_number": {
+            "type": "string"
+          },
+          "gender": {
+            "type": "string",
+            "example": "male"
+          },
+          "id": {
+            "type": "string"
+          },
+          "known_traveler_number": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.MaskedNumber"
+          },
+          "last_name": {
+            "type": "string",
+            "example": "Example"
+          },
+          "middle_name": {
+            "type": "string"
+          },
+          "passport": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.PassportView"
+          },
+          "redress_number": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.MaskedNumber"
+          },
+          "relationship": {
+            "type": "string",
+            "enum": [
+              "spouse_partner",
+              "child",
+              "parent",
+              "sibling",
+              "other"
+            ],
+            "example": "child"
+          },
+          "title": {
+            "type": "string",
+            "example": "Mr"
           },
           "updated_at": {
             "type": "string"
@@ -34817,6 +37148,34 @@
         "type": "object",
         "additionalProperties": {}
       },
+      "enforcer-v3_internal_usecase_accessrequests.RequestableGroup": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "group_type_slug": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "my_status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "member"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
       "enforcer-v3_internal_usecase_accounts.AdminSessionInfo": {
         "type": "object",
         "properties": {
@@ -35368,6 +37727,10 @@
           "tenant_code": {
             "type": "string"
           },
+          "tenant_id": {
+            "description": "TenantID is the workspace UUID, an alternative to TenantCode on public\nauth. Both set must name the same workspace (400 conflicting_tenant).\nA provider that stamps the tenant (Privy app id, SSO connection) still\nwins, and this field is not consulted — the same as TenantCode.",
+            "type": "string"
+          },
           "token": {
             "type": "string"
           }
@@ -35422,6 +37785,10 @@
             "type": "string"
           },
           "tenant_code": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "description": "TenantID is the workspace UUID, an alternative to TenantCode. Both set\nmust name the same workspace.",
             "type": "string"
           },
           "turnstile_token": {
@@ -35689,6 +38056,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "wallet_send_whitelist": {
+            "description": "WalletSendWhitelist, when present, REPLACES the row's whitelist (send []\nto clear it). Platform admin only. Entries are lowercased and deduped.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -35809,6 +38183,78 @@
           }
         }
       },
+      "enforcer-v3_internal_usecase_fulfillment.AdminConfirmMatch": {
+        "type": "object",
+        "properties": {
+          "block_number": {
+            "type": "integer"
+          },
+          "contract": {
+            "type": "string"
+          },
+          "input_spent": {
+            "type": "string"
+          },
+          "input_token": {
+            "type": "string"
+          },
+          "log_index": {
+            "type": "integer"
+          },
+          "notional": {
+            "type": "string"
+          },
+          "payer": {
+            "type": "string"
+          },
+          "recipient": {
+            "type": "string"
+          }
+        }
+      },
+      "enforcer-v3_internal_usecase_fulfillment.AdminConfirmResult": {
+        "type": "object",
+        "properties": {
+          "chain_id": {
+            "type": "integer"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "fulfillment": {
+            "description": "Fulfillment is the row's current state (after the confirm on a real run).",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/enforcer-v3_internal_domain_fulfillment.Fulfillment"
+              }
+            ]
+          },
+          "fulfillment_id": {
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_usecase_fulfillment.AdminConfirmMatch"
+          },
+          "payer_binding": {
+            "description": "PayerBinding says which payer rule the event's payer met: no_rule (the\nfulfillment names no expected payer), expected_payer, sender_wallet (a\nrefund paid from a wallet of its sender account), no_payer_evidence, or\nnot_allowed.",
+            "type": "string",
+            "example": "sender_wallet"
+          },
+          "result": {
+            "description": "Result: would_confirm (dry run), confirmed, already_confirmed, refused.",
+            "type": "string",
+            "example": "would_confirm"
+          },
+          "tx_hash": {
+            "type": "string"
+          },
+          "verdict": {
+            "description": "Verdict is the confirm path's: confirmed (or would), or the rule that\nrefused (payer_not_allowed, chain_mismatch, recipient_not_allowed,\namount_short, evidence_incomplete, not_in_flight).",
+            "type": "string",
+            "example": "confirmed"
+          }
+        }
+      },
       "enforcer-v3_internal_usecase_groups.CreateInput": {
         "type": "object",
         "properties": {
@@ -35918,6 +38364,10 @@
           },
           "notify_members": {
             "description": "NotifyMembers: nil = unchanged.",
+            "type": "boolean"
+          },
+          "requestable": {
+            "description": "Requestable (000165): nil = unchanged. true lets the tenant's members\nask to join (access requests); refused with ErrGroupTypeNotRequestable\nunless the group's type opts in (group_types.access_requests).",
             "type": "boolean"
           }
         }
@@ -36114,21 +38564,6 @@
           },
           "new_person": {
             "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.Person"
-          }
-        }
-      },
-      "enforcer-v3_internal_usecase_person.UpdateResult": {
-        "type": "object",
-        "properties": {
-          "email_changed": {
-            "description": "verified flag was cleared; re-verify needed",
-            "type": "boolean"
-          },
-          "person": {
-            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.Person"
-          },
-          "phone_changed": {
-            "type": "boolean"
           }
         }
       },
@@ -36628,6 +39063,251 @@
           }
         }
       },
+      "internal_delivery_http_handler.AccessRequestCreateInput": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestDenyInput": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestInboxListPage": {
+        "type": "object",
+        "properties": {
+          "filtered": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestInboxView"
+            }
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestInboxPageResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestInboxListPage"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestInboxResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestInboxView"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestInboxView": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "decided_at": {
+            "type": "string"
+          },
+          "decided_by": {
+            "type": "string"
+          },
+          "decision_note": {
+            "type": "string"
+          },
+          "group": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestGroup"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "intake": {
+            "description": "Intake is the opaque JSON a service attached to a pre-membership request.",
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "invite_id": {
+            "description": "InviteID is the group invite an approved pre-membership request created.",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "member",
+              "pre_member"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "requester": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestRequester"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled"
+            ]
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestListPage": {
+        "type": "object",
+        "properties": {
+          "filtered": {
+            "type": "integer"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestView"
+            }
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestPageResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestListPage"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestRequester": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestView"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.AccessRequestView": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "decided_at": {
+            "type": "string"
+          },
+          "decision_note": {
+            "type": "string"
+          },
+          "group": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.AccessRequestGroup"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "member",
+              "pre_member"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "cancelled"
+            ]
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
       "internal_delivery_http_handler.AccountDeletionData": {
         "type": "object",
         "properties": {
@@ -36871,6 +39551,52 @@
           "type": {
             "description": "\"seen\" | \"paid\"",
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AdminConfirmErrorResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_usecase_fulfillment.AdminConfirmResult"
+          },
+          "error": {
+            "type": "string",
+            "example": "payer_not_allowed"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AdminConfirmRequest": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "description": "DryRun defaults to TRUE when absent: only an explicit false confirms.",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason is required (at least 10 characters) and lands in the audit log.",
+            "type": "string",
+            "example": "Routed event missed while the refund payer rule refused the owner's wallet"
+          },
+          "tx_hash": {
+            "description": "TxHash is the transaction that paid the fulfillment. It is only a\npointer: the receipt is read off the fulfillment's own chain and the\nRouted event for its memo is decoded from it; nothing else is taken\nfrom the caller.",
+            "type": "string",
+            "example": "0xff24e2bae6b1a124df404e66b03b53d7520a898edc701a5c2c31c9d2b0846e4c"
+          }
+        }
+      },
+      "internal_delivery_http_handler.AdminConfirmResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_usecase_fulfillment.AdminConfirmResult"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
           }
         }
       },
@@ -37486,6 +40212,87 @@
           }
         }
       },
+      "internal_delivery_http_handler.BillingAddressListResponse": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.BillingAddressView"
+            }
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.BillingAddressRequest": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "example": "Dallas"
+          },
+          "country": {
+            "description": "ISO 3166-1 alpha-2",
+            "type": "string",
+            "example": "US"
+          },
+          "email": {
+            "type": "string",
+            "example": "alex@example.test"
+          },
+          "full_name": {
+            "type": "string",
+            "example": "Alex Example"
+          },
+          "is_default": {
+            "description": "IsDefault true makes this the default address (the previous default is\ncleared). false is ignored: make another address the default instead.",
+            "type": "boolean",
+            "example": true
+          },
+          "label": {
+            "type": "string",
+            "example": "Home"
+          },
+          "line1": {
+            "type": "string",
+            "example": "1 Example St"
+          },
+          "line2": {
+            "type": "string",
+            "example": "Apt 1"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+1 555 010 0000"
+          },
+          "postal_code": {
+            "type": "string",
+            "example": "75201"
+          },
+          "region": {
+            "type": "string",
+            "example": "TX"
+          }
+        }
+      },
+      "internal_delivery_http_handler.BillingAddressResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.BillingAddressView"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.BulkAckFulfillmentsRequest": {
         "type": "object",
         "properties": {
@@ -37699,7 +40506,7 @@
             "example": "travel"
           },
           "created_after": {
-            "description": "CreatedAfter (inclusive) / CreatedBefore (exclusive), RFC3339. Optional\nfor scope store, both required for scopes p2p and sale_reemit.",
+            "description": "CreatedAfter (inclusive) / CreatedBefore (exclusive), RFC3339. Optional\nfor scope store, both required for scopes p2p, sale_reemit,\nbillpay_reemit and direct_payment_reemit.",
             "type": "string",
             "example": "2026-11-01T00:00:00Z"
           },
@@ -37717,12 +40524,14 @@
             "example": "Backfill November travel sales for store X (megprime-v2#146)"
           },
           "scope": {
-            "description": "Scope is \"store\" (default: classify one store's sales and re-emit),\n\"p2p\" (re-emit settled p2p payments in a window; changes nothing) or\n\"sale_reemit\" (re-emit one store's settled sales in a window; changes\nnothing; untrusted sales are emitted with category and\nmerchant_reward_percentage stripped).",
+            "description": "Scope is \"store\" (default: classify one store's sales and re-emit),\n\"p2p\" (re-emit settled p2p payments in a window; changes nothing),\n\"sale_reemit\" (re-emit one store's settled sales in a window; changes\nnothing; untrusted sales are emitted with category and\nmerchant_reward_percentage stripped) or \"billpay_reemit\" (re-emit\nfulfillment.billpay-funding for confirmed bill-pay fundings in a\nwindow; changes nothing; no store_id or category).",
             "type": "string",
             "enum": [
               "store",
               "p2p",
-              "sale_reemit"
+              "sale_reemit",
+              "billpay_reemit",
+              "direct_payment_reemit"
             ],
             "example": "store"
           },
@@ -38034,7 +40843,7 @@
             "type": "string"
           },
           "expected_payer_wallet": {
-            "description": "ExpectedPayerWallet restricts funding to ONE wallet: a settlement from any\nother payer will not confirm this fulfillment. Optional; omitted means\nanyone may pay it, which is the normal case. Use it when the payer is the\npoint rather than a detail — a refund that must leave the merchant's\nsettlement wallet.",
+            "description": "ExpectedPayerWallet restricts funding to ONE wallet: a settlement from any\nother payer is ledgered but will not confirm this fulfillment. Optional;\nomitted means anyone may pay it, which is the normal case. Use it when the\npayer is the point rather than a detail. (A refund, raised only by\nPOST /service/fulfillments/{id}/refunds, also confirms from any wallet\nregistered to its sender account; that widening applies to kind=refund\nonly, never to a fulfillment created here.)",
             "type": "string"
           },
           "expected_plan_hash": {
@@ -38056,6 +40865,11 @@
           },
           "notional_uoa": {
             "type": "string"
+          },
+          "payee_category_id": {
+            "description": "PayeeCategoryID is the OPTIONAL payee category a one-off direct payment\n(reference DIRECT:...) is for — an enforcer-cybrid payee category id.\nMust be a UUID (400 invalid_payee_category_id) and only on a DIRECT:\nreference (400 payee_category_id_not_allowed). Forwarded to cybrid on the\nfulfillment.direct-payment event; omitted, the event carries \"\" and\ncybrid applies its default rule, exactly as before.",
+            "type": "string",
+            "example": "3f0c8a52-6d1e-4b7a-9c2f-1e8d5a4b6c70"
           },
           "receiver_user_id": {
             "type": "string"
@@ -39776,6 +42590,118 @@
           }
         }
       },
+      "internal_delivery_http_handler.MyPerson": {
+        "type": "object",
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "dob": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "home_address_line1": {
+            "type": "string"
+          },
+          "home_address_line2": {
+            "type": "string"
+          },
+          "home_city": {
+            "type": "string"
+          },
+          "home_country": {
+            "type": "string"
+          },
+          "home_place_id": {
+            "description": "Home address — canonical, owned here (cybrid KYC + report-builder read it).\nHomePlaceID references an enforcer-geo place; the rest is a denormalized\nsnapshot so /auth/me serves the address without a geo round-trip.",
+            "type": "string"
+          },
+          "home_postal_code": {
+            "type": "string"
+          },
+          "home_region": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "name": {
+            "description": "deprecated display name; prefer first_name/last_name",
+            "type": "string"
+          },
+          "phone_verified": {
+            "type": "boolean"
+          },
+          "preferred_tenant_id": {
+            "description": "PreferredTenantID (000141) is the workspace this person's connectors act\nin when it differs from their token's: the one they switched to and asked\nto remember, or the one that admitted them through an invite while they\nhad none. NULL is \"the workspace the token names\". Served by GET\n/auth/me as person.preferred_tenant_id.",
+            "type": "string"
+          },
+          "primary_email": {
+            "type": "string"
+          },
+          "primary_phone": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.ProfileView"
+          },
+          "profile_image_url": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "verified_identity": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.VerifiedIdentity"
+          }
+        }
+      },
+      "internal_delivery_http_handler.MyPersonResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.MyPerson"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.MyPersonUpdate": {
+        "type": "object",
+        "properties": {
+          "email_changed": {
+            "type": "boolean"
+          },
+          "person": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.MyPerson"
+          },
+          "phone_changed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "internal_delivery_http_handler.MyPersonUpdateResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.MyPersonUpdate"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.OAuthClientPageResponse": {
         "type": "object",
         "properties": {
@@ -39917,6 +42843,10 @@
         "type": "object",
         "properties": {
           "tenant_code": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "description": "TenantID is the workspace UUID, an alternative to TenantCode.",
             "type": "string"
           }
         }
@@ -40250,18 +43180,6 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/enforcer-v3_internal_usecase_person.SplitResult"
-          },
-          "success": {
-            "type": "boolean",
-            "example": true
-          }
-        }
-      },
-      "internal_delivery_http_handler.PersonUpdateResponse": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/enforcer-v3_internal_usecase_person.UpdateResult"
           },
           "success": {
             "type": "boolean",
@@ -40709,6 +43627,28 @@
           }
         }
       },
+      "internal_delivery_http_handler.RecheckFulfillmentRequest": {
+        "type": "object",
+        "properties": {
+          "tx_hash": {
+            "description": "TxHash is optional: absent, the hash recorded at submit is re-read. Only\na pointer either way — the receipt is read off the fulfillment's own\nchain and only a Router Routed event for its memo can confirm it.",
+            "type": "string",
+            "example": "0xff24e2bae6b1a124df404e66b03b53d7520a898edc701a5c2c31c9d2b0846e4c"
+          }
+        }
+      },
+      "internal_delivery_http_handler.RecheckFulfillmentResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_usecase_fulfillment.AdminConfirmResult"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.ReferralClaimResponse": {
         "type": "object",
         "properties": {
@@ -40919,6 +43859,21 @@
           }
         }
       },
+      "internal_delivery_http_handler.RequestableGroupsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/enforcer-v3_internal_usecase_accessrequests.RequestableGroup"
+            }
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.ResolveEmailsRequest": {
         "type": "object",
         "properties": {
@@ -40982,6 +43937,35 @@
           "status": {
             "description": "Status: found | not_found. An account that exists but is INACTIVE is\nstill `found` — whether that matters is the caller's policy, and `active`\nis there to decide it with.",
             "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.RevealedDocuments": {
+        "type": "object",
+        "properties": {
+          "known_traveler_number": {
+            "type": "string",
+            "example": "00000000"
+          },
+          "passport_number": {
+            "type": "string",
+            "example": "X00000000"
+          },
+          "redress_number": {
+            "type": "string",
+            "example": "0000000"
+          }
+        }
+      },
+      "internal_delivery_http_handler.RevealedDocumentsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_delivery_http_handler.RevealedDocuments"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
           }
         }
       },
@@ -41145,6 +44129,35 @@
           },
           "success": {
             "type": "boolean"
+          }
+        }
+      },
+      "internal_delivery_http_handler.ServiceAccessRequestInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 320
+          },
+          "group_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "intake": {
+            "description": "Intake: optional JSON object (at most 8 KiB), opaque to enforcer-v3,\nshown to approvers as-is.",
+            "type": "object"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "tenant_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -41691,6 +44704,76 @@
           "role_id": {
             "type": "string",
             "format": "uuid"
+          }
+        }
+      },
+      "internal_delivery_http_handler.SitePreferencesEmailsRequest": {
+        "type": "object",
+        "properties": {
+          "cash_back_paid": {
+            "type": "boolean",
+            "example": true
+          },
+          "deals": {
+            "type": "boolean",
+            "example": false
+          },
+          "trip_reminders": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.SitePreferencesRequest": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "description": "ISO 4217",
+            "type": "string",
+            "example": "USD"
+          },
+          "emails": {
+            "description": "Emails are the switchable email toggles. Booking emails are always on.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/internal_delivery_http_handler.SitePreferencesEmailsRequest"
+              }
+            ]
+          },
+          "hotel_sort": {
+            "type": "string",
+            "enum": [
+              "recommended",
+              "price_asc",
+              "price_desc"
+            ],
+            "example": "recommended"
+          },
+          "language": {
+            "description": "en, en-US, ...",
+            "type": "string",
+            "example": "en"
+          },
+          "results_view": {
+            "type": "string",
+            "enum": [
+              "list",
+              "compact",
+              "map"
+            ],
+            "example": "list"
+          }
+        }
+      },
+      "internal_delivery_http_handler.SitePreferencesResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.SitePreferencesView"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
           }
         }
       },
@@ -42245,6 +45328,106 @@
           }
         }
       },
+      "internal_delivery_http_handler.TravelerListResponse": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.TravelerView"
+            }
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.TravelerRequest": {
+        "type": "object",
+        "properties": {
+          "dob": {
+            "description": "YYYY-MM-DD, sealed at rest",
+            "type": "string",
+            "example": "2015-06-01"
+          },
+          "first_name": {
+            "type": "string",
+            "example": "Sam"
+          },
+          "frequent_flyer_number": {
+            "type": "string"
+          },
+          "gender": {
+            "type": "string",
+            "example": "male"
+          },
+          "known_traveler_number": {
+            "description": "write-only",
+            "type": "string",
+            "example": "00000000"
+          },
+          "last_name": {
+            "type": "string",
+            "example": "Example"
+          },
+          "middle_name": {
+            "type": "string"
+          },
+          "passport_expiry": {
+            "type": "string",
+            "example": "2031-04-30"
+          },
+          "passport_issuing_country": {
+            "type": "string",
+            "example": "US"
+          },
+          "passport_nationality": {
+            "type": "string",
+            "example": "US"
+          },
+          "passport_number": {
+            "description": "write-only",
+            "type": "string",
+            "example": "X00000000"
+          },
+          "redress_number": {
+            "description": "write-only",
+            "type": "string",
+            "example": "0000000"
+          },
+          "relationship": {
+            "type": "string",
+            "enum": [
+              "spouse_partner",
+              "child",
+              "parent",
+              "sibling",
+              "other"
+            ],
+            "example": "child"
+          },
+          "title": {
+            "type": "string",
+            "example": "Mr"
+          }
+        }
+      },
+      "internal_delivery_http_handler.TravelerResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.TravelerView"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_delivery_http_handler.TurnstileVerifyRequest": {
         "type": "object",
         "properties": {
@@ -42348,6 +45531,124 @@
             "type": "string"
           },
           "status": {
+            "type": "string"
+          }
+        }
+      },
+      "internal_delivery_http_handler.UpdateMyPersonRequest": {
+        "type": "object",
+        "properties": {
+          "dob": {
+            "description": "YYYY-MM-DD",
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "frequent_flyer_number": {
+            "type": "string"
+          },
+          "home_address_line1": {
+            "type": "string"
+          },
+          "home_address_line2": {
+            "type": "string"
+          },
+          "home_city": {
+            "type": "string"
+          },
+          "home_country": {
+            "type": "string"
+          },
+          "home_place_id": {
+            "type": "string"
+          },
+          "home_postal_code": {
+            "type": "string"
+          },
+          "home_region": {
+            "type": "string"
+          },
+          "known_traveler_number": {
+            "description": "KnownTravelerNumber (TSA PreCheck / Global Entry) and RedressNumber are\nwrite-only like the passport number.",
+            "type": "string",
+            "example": "00000000"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "loyalty_programs": {
+            "description": "replaces the whole list",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.LoyaltyProgram"
+            }
+          },
+          "middle_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "passport_expiry": {
+            "description": "YYYY-MM-DD",
+            "type": "string",
+            "example": "2031-04-30"
+          },
+          "passport_issuing_country": {
+            "type": "string",
+            "example": "US"
+          },
+          "passport_nationality": {
+            "type": "string",
+            "example": "US"
+          },
+          "passport_number": {
+            "description": "PassportNumber is write-only: reads return passport.number_last4.",
+            "type": "string",
+            "example": "X0000000"
+          },
+          "preferences": {
+            "description": "replaces the whole object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/enforcer-v3_internal_domain_person.Preferences"
+              }
+            ]
+          },
+          "preferred_tenant_id": {
+            "description": "PreferredTenantID (000141): the workspace your connectors act in when\nit differs from the one a token was issued for. A workspace you are an\nactive member of; \"\" clears it. Self-service only.",
+            "type": "string",
+            "example": "7d548352-3941-44fb-a217-09c55d86b379"
+          },
+          "primary_email": {
+            "type": "string"
+          },
+          "primary_phone": {
+            "type": "string"
+          },
+          "profile_image_url": {
+            "type": "string"
+          },
+          "redress_number": {
+            "type": "string",
+            "example": "0000000"
+          },
+          "residence_country": {
+            "description": "ISO 3166-1 alpha-2",
+            "type": "string",
+            "example": "US"
+          },
+          "title": {
+            "type": "string",
+            "example": "Ms"
+          },
+          "use_verified_identity": {
+            "description": "UseVerifiedIdentity opts in (true) or out (false) of verified_identity on\nthe profile read. Nothing is copied, so opting out deletes nothing.",
+            "type": "boolean"
+          },
+          "username": {
+            "description": "account-scoped; applied to the caller's current account",
             "type": "string"
           }
         }
@@ -42525,6 +45826,21 @@
           "success": {
             "type": "boolean",
             "example": true
+          }
+        }
+      },
+      "internal_delivery_http_handler.VerifiedIdentity": {
+        "type": "object",
+        "properties": {
+          "dob": {
+            "type": "string",
+            "example": "1990-01-31"
+          },
+          "kyc_verified": {
+            "type": "boolean"
+          },
+          "opted_in": {
+            "type": "boolean"
           }
         }
       },

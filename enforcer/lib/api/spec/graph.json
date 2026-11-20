@@ -11456,7 +11456,7 @@
           {
             "name": "include",
             "in": "query",
-            "description": "attention: add attention {primary, reasons, mentions_unread} to every node on the page that waits on the caller (graph_needs_me_for's arms, per node)",
+            "description": "attention: add attention {primary, reasons, mentions_unread} to every node on the page that waits on the caller (graph_needs_me_for's arms, per node: assigned, group_assigned, validation_seat, review, decision, mention, stuck, question)",
             "schema": {
               "type": "string"
             }
@@ -11861,7 +11861,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Edits type, title, description, data, lease_seconds, not_before, the assignee or assignment_mode. `data` is MERGED into the stored object one level deep (a top-level key sent as null is removed; nested objects are replaced whole); send merge_data=false to replace the whole object instead. `not_before` (RFC 3339) keeps the node off the frontier and unclaimable until that instant; an explicit JSON null clears it, and a past value is accepted and gates nothing. Changing not_before does not clear the node's rank. `assignee_account_id` (a uuid) and `assignee_group_slug` (a group slug) assign the node. Each is tri-state — a value sets it, an explicit null clears it, omitting it leaves it — and a real change emits node.assigned; it never clears the rank. `assignment_mode` is advisory (the default: `for=me|mine` narrows, nothing refuses a claim) or required (only the assignee account, or a member of the assignee group, can claim; anyone else gets 409 node_reserved, and the node is omitted from their frontier, waiting list and lobby seats). required needs an assignee on the resulting row, else 400. Changing assignment_mode, or the assignee of a node that is or becomes required, needs graph admin (a human or an agent holding admin), else 403 insufficient_scope. `data.private` is a separate flag, stored as sent and returned as `private`; required does not imply it, and the server does not enforce it (judgment still runs). The response carries `viewer_can_claim` and `claim_block` for THIS caller (`claim_block` is `node_reserved` or null).",
+        "description": "Edits type, title, description, data, lease_seconds, not_before, the assignee or assignment_mode. `data` is MERGED into the stored object one level deep (a top-level key sent as null is removed; nested objects are replaced whole); send merge_data=false to replace the whole object instead. `not_before` (RFC 3339) keeps the node off the frontier and unclaimable until that instant; an explicit JSON null clears it, and a past value is accepted and gates nothing. Changing not_before does not clear the node's rank. `assignee_account_id` (a uuid) and `assignee_group_slug` (a group slug) assign the node. Each is tri-state — a value sets it, an explicit null clears it, omitting it leaves it — and a real change emits node.assigned; it never clears the rank. `assignment_mode` is advisory (the default: `for=me|mine` narrows, nothing refuses a claim) or required (only the assignee account, or a member of the assignee group, can claim; anyone else gets 409 node_reserved, and the node is omitted from their frontier, waiting list and lobby seats). required needs an assignee on the resulting row, else 400. Changing assignment_mode, or the assignee of a node that is or becomes required, needs graph admin (a human or an agent holding admin), else 403 insufficient_scope. `data.private` is a separate flag, stored as sent and returned as `private`; required does not imply it. A claim is not refused because of it. Judgment is: a private node is not sent to Jev, and an observation on it is stored with no judgment call. The response carries `viewer_can_claim` and `claim_block` for THIS caller (`claim_block` is `node_reserved` or null).",
         "tags": [
           "nodes"
         ],
@@ -13076,6 +13076,86 @@
         }
       }
     },
+    "/graphs/{graphId}/nodes/{nodeId}/needs": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "A context card for one node, built in code from text already stored. No model is called and no sentence is written. `kind` is `decision` (POST .../decide), `review` (POST .../review/{itemId}/resolve) or `answer` (POST .../questions/{questionId}/answer). `waiting_since` is when the wait started; the client computes the age from it. `question` and `why` are the stored text in full — the client clamps them. `node_name` is the title, or the key when the title is empty. `private` is `data.private` (missing or non-boolean is false); a private node returns this same card, not a redacted one. `evidence_summary` is a count line built from the references, such as `From 3 facts · 2 runs`, and `evidence_count` is how many references that is. `evidence` carries the run, observation and review ids and the stored lines they quote. `tagged` is the assignee, or the graph owner and the validation arbitrators when the node is unassigned. `actions` are those existing endpoints. `state_hash` is the sha256 of the card aside from itself; it does not change merely because time passed. `not_needed` is true when nothing is waiting. The gate question is `data.decision`. Node data is free-form and no column declares that field; decide only checks `data.options`. `data.decision` is a string, or an object with `text`, `prompt` or `question` (the first of those that is a non-empty string). When it is absent, the question is the node title, or the key when the title is empty. `why` on a gate is that same stored question. Other text is copied from `data.options`, the review fields `verdict.reason`, `a2a_input.question`, `over_cap.reason`, `landing.reason` and `route.why` (and an observation's body, which is that item's text), a failed run's `data.stop` (`why`, `summary`, `tried`, `needs`, `options`, `suggested_who`; a `data.needs_person` run with no stop uses `data.reason`, else the run error), and an open question. An open question wins, then a review item, then a stop, then a gate whose work state is `looking_for_work` or `looking_for_arbitration`. The caller must be able to read the node: an invisible graph is 404 `graph_not_found`, a node that is not in it is 404 `node_not_found`. Read-only.",
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Why a node needs a person",
+        "operationId": "getNodeNeeds",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "description": "node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_needs.Response"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/graphs/{graphId}/nodes/{nodeId}/observations": {
       "get": {
         "security": [
@@ -13196,7 +13276,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Appends a fact. Idempotent on the body text: re-posting an identical observation returns the existing row with 200 instead of creating a duplicate, so re-processing a source document is safe. When the tenant has opted in to judgment (PUT /settings/judgment), a new body is then judged against the node's most recent observations in ONE call: the same fact restated returns the existing row with 200 and stores nothing (`judgment.decision` = merged); a possible duplicate is stored flagged with `review` = true and `merged_into` set; a distinct fact is stored plainly. Existing observations this one contradicts are recorded in `contradicts`. The judgment runs between two short transactions and never holds a row lock across the network, and adding an observation never fails because the judgment service did — an unavailable judgment stores the row plainly and says so in `judgment.state`.",
+        "description": "Appends a fact. Idempotent on the body text: re-posting an identical observation returns the existing row with 200 instead of creating a duplicate, so re-processing a source document is safe. When the tenant has opted in to judgment (PUT /settings/judgment), a new body is then judged against the node's most recent observations in ONE call: the same fact restated returns the existing row with 200 and stores nothing (`judgment.decision` = merged); a possible duplicate is stored flagged with `review` = true and `merged_into` set; a distinct fact is stored plainly. Existing observations this one contradicts are recorded in `contradicts`. The judgment runs between two short transactions and never holds a row lock across the network, and adding an observation never fails because the judgment service did — an unavailable judgment stores the row plainly and says so in `judgment.state`. A private node (`data.private` true, returned as `private`) is the exception: the row is stored with support `unjudged` and the response has no `judgment` object, and the body is not sent to the judge.",
         "tags": [
           "observations"
         ],
@@ -13565,6 +13645,96 @@
           },
           "429": {
             "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/graphs/{graphId}/nodes/{nodeId}/recommendations": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Returns a needs card for one node (D-NEEDS-CARD). The server decides eligibility and order; a client does not rank and does not recompute who the card is for. `mode` is `not_needed` unless the caller is the assignee (account or group), an owner or arbitrator of an unassigned node, or tagged in on a needs.stuck or needs.question arm (#505, which merges first: the latest run stopped or was given up, or an open question is still unanswered). Otherwise `mode` is `ranked` (Jev Choice ordered the actions; each `probability` is Jev's), `over_budget` (the graph's judgment budget or the tenant token cap refused the `recommend` call, or the judge did not answer — actions are the code order and every `probability` is null) or `private` (`data.private` is true — Jev is not called, actions are decide then review then answer, every `probability` is null). One `recommend` call carries the Choice, one Noul asking whether the stored evidence is sufficient, and one Noul per cited evidence line. `evidence_sufficient` is that sufficiency Noul on a ranked card (false keeps the Choice order) and null when the check is skipped. A reason is kept only when its cited line is supported; otherwise the reason is the plain code-built one (Decide, Review, or Answer). Reasons are stored text, never model prose. At most three `actions`. Each has `rank`, `label`, `probability`, `reason`, `flow` (`decide`, `review` or `answer`) and `prefill` (decide: `decision` and `note`; review: `action`, `item_id` and `note`; answer: `question_id` and `text`). `evidence_summary` is built in code, for example `From 3 facts · 2 runs`, and `evidence_count` is those two counts added. `state_hash` is the sha256 of the text the card was built from. Candidates come only from text already stored: gate `data.options`, report and observation lines, `data.stop` options, open review items, open questions, and the decide/review/answer flows. The card, including `evidence_sufficient` and the reasons, is computed on this request and cached by `state_hash` (migration 172). A later read of the same state returns the cache and does not ask again. The cache is dropped when the node, a run, an observation, a review source or a question changes. `over_budget` is not cached. Nothing is applied.",
+        "tags": [
+          "nodes"
+        ],
+        "summary": "Recommend next actions on a node",
+        "operationId": "getNodeRecommendations",
+        "parameters": [
+          {
+            "name": "graphId",
+            "in": "path",
+            "description": "graph id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nodeId",
+            "in": "path",
+            "description": "node id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_recommend.Response"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/enforcer-graph_internal_httpx.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
             "content": {
               "application/json": {
                 "schema": {
@@ -28916,7 +29086,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Everything waiting on the caller across every plan they can see, one item per thing, oldest first: tasks assigned to them (assigned) or their groups (group_assigned) that are looking_for_work, runs where they hold an unfilled validation seat (validation), the review queue on plans they admin (review), gates nobody is assigned and arbitration they may decide (decision), and unread mentions in a plan's discussion (mention). Each arm is graph_needs_me_for's (139), item by item, so without kind= `meta.total` is the overview's `me.needs_me.total` and `meta.counts` its breakdown. Keyset paging: pass `meta.next_cursor` back as `cursor`; absent on the last page. More than 5,000 visible graphs is 422 `query_too_broad`. Read-only.",
+        "description": "Everything waiting on the caller across every plan they can see, one item per thing, oldest first: tasks assigned to them (assigned) or their groups (group_assigned) that are looking_for_work, runs where they hold an unfilled validation seat (validation), the review queue on plans they admin (review; repeated handoff notes collapse to one entry per plan), gates nobody is assigned and arbitration they may decide (decision), unread mentions in a plan's discussion (mention), a latest run that failed or stopped with data.stop or a dispatcher give-up (stuck), and an open question.asked (question). Stuck and question wait on whoever is tagged in: the assignee, or the owner or an arbitrator when the node is unassigned. Each arm is graph_needs_me_for's (139, 171), item by item, so without kind= `meta.total` is the overview's `me.needs_me.total` and `meta.counts` its breakdown. Keyset paging: pass `meta.next_cursor` back as `cursor`; absent on the last page. More than 5,000 visible graphs is 422 `query_too_broad`. Read-only.",
         "tags": [
           "work"
         ],
@@ -28937,7 +29107,7 @@
           {
             "name": "kind",
             "in": "query",
-            "description": "csv of assigned, group_assigned, validation, review, decision, mention",
+            "description": "csv of assigned, group_assigned, validation, review, decision, mention, stuck, question",
             "schema": {
               "type": "string"
             }
@@ -30029,7 +30199,9 @@
               "validation_seat",
               "review",
               "decision",
-              "mention"
+              "mention",
+              "stuck",
+              "question"
             ],
             "example": "assigned"
           },
@@ -35531,13 +35703,23 @@
             "type": "integer",
             "example": 3
           },
+          "questions_open": {
+            "description": "QuestionsOpen is unanswered question.asked rows where the caller is\ntagged in.",
+            "type": "integer",
+            "example": 1
+          },
           "review_open": {
             "type": "integer",
             "example": 0
           },
+          "stuck_open": {
+            "description": "StuckOpen is latest runs that failed or stopped for a person\n(data.stop, or a dispatcher give-up) where the caller is tagged in.",
+            "type": "integer",
+            "example": 1
+          },
           "total": {
             "type": "integer",
-            "example": 7
+            "example": 9
           },
           "validation_seats": {
             "type": "integer",
@@ -41542,6 +41724,172 @@
           }
         }
       },
+      "internal_needs.Action": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string",
+            "example": "POST"
+          },
+          "name": {
+            "type": "string",
+            "example": "decide"
+          },
+          "path": {
+            "type": "string",
+            "example": "/api/v1/graph/graphs/{graphId}/nodes/{nodeId}/decide"
+          }
+        }
+      },
+      "internal_needs.Card": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "description": "Actions are the existing decide, review and answer calls that close\nthis wait. Each name is the body's action where the route takes one.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_needs.Action"
+            }
+          },
+          "evidence": {
+            "description": "Evidence quotes the stored lines each reference points at.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_needs.Evidence"
+            }
+          },
+          "evidence_count": {
+            "description": "EvidenceCount is how many evidence references the card carries.",
+            "type": "integer",
+            "example": 5
+          },
+          "evidence_summary": {
+            "description": "EvidenceSummary is a count line built in code, such as\n\"From 3 facts · 2 runs\". Empty when there is no evidence.",
+            "type": "string",
+            "example": "From 3 facts · 2 runs"
+          },
+          "kind": {
+            "description": "Kind is which endpoint answers the wait. Absent when not_needed.",
+            "type": "string",
+            "enum": [
+              "decision",
+              "review",
+              "answer"
+            ]
+          },
+          "node_name": {
+            "description": "NodeName is the node's title, or its key when the title is empty.",
+            "type": "string",
+            "example": "Person: send the 19 Ask Xeni questions"
+          },
+          "not_needed": {
+            "description": "NotNeeded is true when nothing on the node is waiting on a person.",
+            "type": "boolean",
+            "example": false
+          },
+          "options": {
+            "description": "Options are the stored choices (a gate's data.options, or a stop's).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "private": {
+            "description": "Private is data.private. Missing or non-boolean is false. A private\nnode returns this same card; the flag does not redact it.",
+            "type": "boolean",
+            "example": false
+          },
+          "question": {
+            "description": "Question is the ask, copied in full. For a gate it is data.decision:\na string, or an object with text, prompt or question (first non-empty).\nWhen data.decision is absent, it is the node title, or the key when\nthe title is empty. The client clamps it.",
+            "type": "string",
+            "example": "Has Xeni answered the data-gap questions?"
+          },
+          "review_kind": {
+            "description": "ReviewKind is the graph_review_items kind when Kind is review.",
+            "type": "string",
+            "example": "verdict_unverified"
+          },
+          "state_hash": {
+            "description": "StateHash is the sha256 of the card aside from this field. It changes\nonly when the wait changes.",
+            "type": "string",
+            "example": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          },
+          "suggested_who": {
+            "description": "SuggestedWho is data.stop.suggested_who, copied as stored.",
+            "type": "string"
+          },
+          "tagged": {
+            "description": "Tagged is who the wait is for: the assignee, or the owner and the\narbitrators when the node is unassigned.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_needs.Party"
+            }
+          },
+          "waiting_since": {
+            "description": "WaitingSince is when this wait started. The client computes the age.",
+            "type": "string"
+          },
+          "why": {
+            "description": "Why is the stored reason, copied in full. On a gate it is the same\ndata.decision text, or the title fallback. The client clamps it to a line.",
+            "type": "string",
+            "example": "Has Xeni answered the data-gap questions?"
+          }
+        }
+      },
+      "internal_needs.Evidence": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "run",
+              "observation",
+              "review"
+            ]
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "internal_needs.Party": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "group": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "assignee",
+              "assignee_group",
+              "owner",
+              "arbitrator"
+            ]
+          }
+        }
+      },
+      "internal_needs.Response": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_needs.Card"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          }
+        }
+      },
       "internal_nodes.Assignee": {
         "type": "object",
         "properties": {
@@ -41898,7 +42246,7 @@
             "example": "2026-10-07T00:00:00Z"
           },
           "private": {
-            "description": "Private is data.private, copied out so a client does not re-read the\npayload. It is not implied by required, and the server does not enforce\nit: judgment still runs. Missing or non-boolean data.private is false.",
+            "description": "Private is data.private, copied out so a client does not re-read the\npayload. It is not implied by required. The server does not refuse a\nclaim because of it. It does refuse judgment: a private node is not\nsent to Jev (verification, extraction, alignment, ranking, routing,\ntiers, recommendations). Missing or non-boolean data.private is false.",
             "type": "boolean",
             "example": false
           },
@@ -42008,7 +42356,9 @@
               "validation_seat",
               "review",
               "decision",
-              "mention"
+              "mention",
+              "stuck",
+              "question"
             ],
             "example": "assigned"
           },
@@ -42043,7 +42393,7 @@
             "example": "release-team"
           },
           "assignment_mode": {
-            "description": "AssignmentMode is advisory (default, including when omitted) or required.\nrequired needs assignee_account_id or assignee_group_slug on the\nresulting row, else 400. Setting required, or changing the mode or\nassignee of a node that is or becomes required, needs graph admin\n(403 insufficient_scope otherwise). data.private is unrelated and is\nstored as sent; the server does not enforce it.",
+            "description": "AssignmentMode is advisory (default, including when omitted) or required.\nrequired needs assignee_account_id or assignee_group_slug on the\nresulting row, else 400. Setting required, or changing the mode or\nassignee of a node that is or becomes required, needs graph admin\n(403 insufficient_scope otherwise). data.private is unrelated to\nassignment and is stored as sent. Judgment does not run when it is true.",
             "type": "string",
             "enum": [
               "advisory",
@@ -42472,7 +42822,7 @@
             "example": "release-team"
           },
           "assignment_mode": {
-            "description": "AssignmentMode is advisory or required. Omit it to leave the stored\nmode. required needs an assignee on the resulting row (400 otherwise).\nChanging the mode, or the assignee of a required node, needs graph\nadmin — a human or an agent holding admin — else 403 insufficient_scope.\ndata.private is a separate flag, stored as sent, not enforced.",
+            "description": "AssignmentMode is advisory or required. Omit it to leave the stored\nmode. required needs an assignee on the resulting row (400 otherwise).\nChanging the mode, or the assignee of a required node, needs graph\nadmin — a human or an agent holding admin — else 403 insufficient_scope.\ndata.private is a separate flag, stored as sent. Judgment does not run\nwhen it is true.",
             "type": "string",
             "enum": [
               "advisory",
@@ -42881,7 +43231,9 @@
               "validation",
               "review",
               "decision",
-              "mention"
+              "mention",
+              "stuck",
+              "question"
             ],
             "example": "decision"
           },
@@ -42913,6 +43265,11 @@
           "status": {
             "type": "string",
             "example": "ready"
+          },
+          "text": {
+            "description": "Text is the open question's text (graph_questions) or, on a stuck item,\ndata.stop.summary, else the latest dispatcher_note body. question.asked\nitself stores only the node id and key.",
+            "type": "string",
+            "example": "Has Xeni answered the data-gap questions?"
           },
           "title": {
             "type": "string"
@@ -43087,6 +43444,10 @@
             "description": "MentionsUnread is discussion messages naming the caller, not yet read.",
             "type": "integer"
           },
+          "questions_open": {
+            "description": "QuestionsOpen is unanswered question.asked rows where the caller is\ntagged in.",
+            "type": "integer"
+          },
           "review_on_my_admin_graphs": {
             "type": "integer"
           },
@@ -43094,8 +43455,12 @@
             "description": "StalledAdminGraphs is context, not an ask: it is not in Total.",
             "type": "integer"
           },
+          "stuck_open": {
+            "description": "StuckOpen is latest runs that failed or stopped with data.stop, or a\ndispatcher give-up, where the caller is tagged in (the assignee, else\nthe owner or an arbitrator when the node is unassigned).",
+            "type": "integer"
+          },
           "total": {
-            "description": "Total is the six asks added up (stalled_admin_graphs left out): the\nbadge number.",
+            "description": "Total is the eight asks added up (stalled_admin_graphs left out): the\nbadge number.",
             "type": "integer"
           },
           "validation_seats": {
@@ -43125,7 +43490,13 @@
           "name": {
             "type": "string"
           },
+          "questions_open": {
+            "type": "integer"
+          },
           "review_open": {
+            "type": "integer"
+          },
+          "stuck_open": {
             "type": "integer"
           },
           "total": {
@@ -44389,7 +44760,7 @@
             "example": "2026-10-07T00:00:00Z"
           },
           "private": {
-            "description": "Private is data.private, copied out so a client does not re-read the\npayload. It is not implied by required, and the server does not enforce\nit: judgment still runs. Missing or non-boolean data.private is false.",
+            "description": "Private is data.private, copied out so a client does not re-read the\npayload. It is not implied by required. The server does not refuse a\nclaim because of it. It does refuse judgment: a private node is not\nsent to Jev (verification, extraction, alignment, ranking, routing,\ntiers, recommendations). Missing or non-boolean data.private is false.",
             "type": "boolean",
             "example": false
           },
@@ -44814,6 +45185,136 @@
           "total_groups": {
             "type": "integer",
             "example": 3
+          }
+        }
+      },
+      "internal_recommend.Action": {
+        "type": "object",
+        "properties": {
+          "flow": {
+            "description": "Flow is the route the client opens. The server picked it.",
+            "type": "string",
+            "enum": [
+              "decide",
+              "review",
+              "answer"
+            ],
+            "example": "decide"
+          },
+          "label": {
+            "description": "Label is the existing text (a gate option, a stop option, a report or\nobservation line, a question) or the flow's name when none of those exist.",
+            "type": "string",
+            "example": "ship"
+          },
+          "prefill": {
+            "description": "Prefill is the body for that flow: decide sends decision and note,\nreview sends action, item_id and note, answer sends question_id and text.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/internal_recommend.Prefill"
+              }
+            ]
+          },
+          "probability": {
+            "description": "Probability is Jev's probability for this action when mode is ranked,\nand null when mode is over_budget or private. The field is present\neither way.",
+            "type": "number",
+            "nullable": true,
+            "example": 0.72
+          },
+          "rank": {
+            "type": "integer",
+            "example": 1
+          },
+          "reason": {
+            "description": "Reason is the existing line the action cites.",
+            "type": "string",
+            "example": "Gate option: ship"
+          }
+        }
+      },
+      "internal_recommend.Card": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "description": "Actions is at most three, already ordered. Empty when mode is not_needed.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/internal_recommend.Action"
+            }
+          },
+          "evidence_count": {
+            "description": "EvidenceCount is the facts plus the runs that summary names.",
+            "type": "integer",
+            "example": 5
+          },
+          "evidence_sufficient": {
+            "description": "EvidenceSufficient is the Noul sufficiency answer on a ranked card.\nFalse means the stored lines are not enough to support a recommendation;\nthe actions stay in Choice order. Null when the check was skipped\n(private, over budget, or not needed). The value is Noul's, not text\nan LLM wrote.",
+            "type": "boolean",
+            "nullable": true,
+            "example": true
+          },
+          "evidence_summary": {
+            "description": "EvidenceSummary is built in code from the counts, for example\n\"From 3 facts · 2 runs\".",
+            "type": "string",
+            "example": "From 3 facts · 2 runs"
+          },
+          "mode": {
+            "description": "Mode is ranked (Jev ordered the actions), over_budget (the graph budget\nor the tenant cap refused the call, or the judge did not answer — the\nactions are the code order and probability is null), private (the node\nis data.private; Jev was not called; the actions are the code order and\nprobability is null) or not_needed (this caller has no attention reason;\nactions is empty).",
+            "type": "string",
+            "enum": [
+              "ranked",
+              "over_budget",
+              "private",
+              "not_needed"
+            ],
+            "example": "ranked"
+          },
+          "state_hash": {
+            "description": "StateHash is the sha256 of the text the card was built from. A later\nread with the same hash is the cached card.",
+            "type": "string",
+            "example": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+          }
+        }
+      },
+      "internal_recommend.Prefill": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "description": "Action is the review resolve action (approve, keep, reject, ...).",
+            "type": "string",
+            "example": "approve"
+          },
+          "decision": {
+            "description": "Decision is the decide body's decision (a gate or stop option).",
+            "type": "string",
+            "example": "ship"
+          },
+          "item_id": {
+            "description": "ItemID is the review item id, when the action cites one.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Note is decide's note, or review's note.",
+            "type": "string"
+          },
+          "question_id": {
+            "description": "QuestionID is the question the answer flow posts to.",
+            "type": "string"
+          },
+          "text": {
+            "description": "Text is the answer body's text. Empty until the person writes it:\nthe card does not invent an answer.",
+            "type": "string"
+          }
+        }
+      },
+      "internal_recommend.Response": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/internal_recommend.Card"
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
           }
         }
       },
@@ -48333,7 +48834,7 @@
             "example": "2026-10-07T00:00:00Z"
           },
           "private": {
-            "description": "Private is data.private. Not implied by required, and not enforced.",
+            "description": "Private is data.private. Not implied by required. A private node is not\nsent to Jev.",
             "type": "boolean",
             "example": false
           },

@@ -5,28 +5,28 @@
       "repo": "enforcer-graph",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "43f32e7c2d0f60e977c4cc843ae02738e43035b1",
+      "ref": "8be031af6e118453c998085a61f5e88cb1db64ff",
       "file": "spec/graph.json",
-      "upstream_sha256": "031d4a1e8b57bccedb3b1ceefc8bdbb11f8d26654792bbf56fd057c4d50d0b84",
-      "sha256": "7af63f2f03025e5b346b3aef1cc3ae853f33669d93e39e2d85f4cdbaff42231e"
+      "upstream_sha256": "8f2c4c1be95f6c354905be7ad8dbd82fb36fee2f7096aa670f4ecacccf7e119d",
+      "sha256": "145d71702e3bb1adf45f7d0d80acf0813360699a6210bbf06db5a70fd1a6e032"
     },
     "v3": {
       "repo": "enforcer-v3",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "9edf34c8864f3003a31af626e4dbd6da1e005a11",
+      "ref": "1dafaebb3400251316256cbbcf42fb05bda7b0b5",
       "file": "spec/v3.json",
-      "upstream_sha256": "8325c47845055d152f9a85e22f7bff1d49485d72b156b722f9335d340deefaf6",
-      "sha256": "9311f3ba05d08f393c2bace98e72e56cb0f306309bcf81b32651928b1a85e1e7"
+      "upstream_sha256": "88ecc1f76c5252cbafb3213173fad4632b49d5d548278e49c01a689660b6dc80",
+      "sha256": "b6750bd4db7b04f3867909ae8a6a220e5d73d226874955b7fadd78b36fd4b6b9"
     },
     "files": {
       "repo": "enforcer-files",
       "path": "docs/swagger.json",
       "kind": "swagger2",
-      "ref": "a3af8366e9570e2cd9fe2d41e2d9f496d8e0f96f",
+      "ref": "cd8313bf22af7c1d4033a71154a2e12ae702c2c8",
       "file": "spec/files.json",
-      "upstream_sha256": "d4e32e44383ee6fae71654443135071d2746d679300e28a34f924b03c47a6b00",
-      "sha256": "a52d076c68f690b5f3147eedc192c77b5653b74f57ec4f397e299dfa42c0c24c"
+      "upstream_sha256": "d52ed9bd733e4bec21d3032e7b1f0d94aa04e1b1a11062f190ecee66383484f2",
+      "sha256": "739312d413f3d1952f6ad96b818a9262d0ccd241081bc92ab572cc7e8d668d03"
     },
     "governance": {
       "repo": "enforcer-governance",
@@ -41,10 +41,10 @@
       "repo": "enforcer-v3-mcp",
       "path": "tool-names.json",
       "kind": "json",
-      "ref": "a164d134f4a65997c9e14d02e6deabdb87e782a3",
+      "ref": "fe2763714994637fbaba55d9ee744a75d8a6a061",
       "file": "spec/mcp-manifest.json",
-      "upstream_sha256": "b8fbd67dc32d1b183c91f37310a346768b3c6b13714955c41a116dd453c288da",
-      "sha256": "b8fbd67dc32d1b183c91f37310a346768b3c6b13714955c41a116dd453c288da"
+      "upstream_sha256": "ea82b3f2125a2637f944928db452f19e087151597cba266f5b14f9b46fd11b0d",
+      "sha256": "ea82b3f2125a2637f944928db452f19e087151597cba266f5b14f9b46fd11b0d"
     }
   }
 }

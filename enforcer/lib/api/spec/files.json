@@ -2965,7 +2965,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Second half of the presigned upload flow. After the client PUTs the bytes to the URL from presigned-upload-url, it calls this with the same file_name; the service confirms the object exists at the server-derived key, reads its real size, and creates the metadata row that listing, download, move, copy, trash and delete all key off. Without this call a presigned upload lands in the bucket but never appears in the file system. Same-path collisions follow the multipart upload rule: 409 unless overwrite=true, which refreshes the existing row instead.",
+        "description": "Second half of the presigned upload flow. After the client PUTs the bytes to the URL from presigned-upload-url, it calls this with the same file_name; the service confirms the object exists at the server-derived key, reads its real size, and creates the metadata row that listing, download, move, copy, trash and delete all key off. Without this call a presigned upload lands in the bucket but never appears in the file system. Same-path collisions follow the multipart upload rule: 409 unless overwrite=true, which refreshes the existing row instead. For an image, data.media_metadata carries its EXIF capture metadata read from the head of the stored object (null for other files; extraction never fails the completion).",
         "tags": [
           "files"
         ],
@@ -3368,7 +3368,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Uploads a file to S3 under the caller's tenant/user prefix, with optional OCR flagging and server-side image processing.",
+        "description": "Uploads a file to S3 under the caller's tenant/user prefix, with optional OCR flagging and server-side image processing. For an image, data.media_metadata carries the EXIF capture metadata of the stored bytes (null for other files; a processed image is stripped, so its status is none; extraction never fails the upload).",
         "tags": [
           "files"
         ],
@@ -4622,6 +4622,224 @@
         }
       }
     },
+    "/storage/file/{file_id}/media-metadata": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "The EXIF capture metadata extracted from the file when its upload completed (or by POST .../media-metadata/extract): capture time, GPS position, device, orientation, size, plus raw (every other EXIF tag, binary tags dropped, capped at 32 KiB). Readable by whoever may read the file's bytes (owner, a group the file is shared with, read on its folder); a service principal reads only files in a folder it manages and must name the tenant. 404 not_found when the file is not visible to the caller, 404 media_metadata_not_found when nothing was extracted for it (not an image, or stored before extraction existed).",
+        "tags": [
+          "files"
+        ],
+        "summary": "Get an image's capture metadata",
+        "operationId": "getFileMediaMetadata",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "File ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "description": "Service principal only, and required for one",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.MediaMetadataResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "tenant_id_required, tenant_id_not_allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found, media_metadata_not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/storage/file/{file_id}/media-metadata/extract": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "description": "Reads the head of the stored object again, replaces the file's media metadata and returns it as GET .../media-metadata does. For files stored before extraction existed (backfill) or after an extractor upgrade. Runs on any file: one that is not a readable image records status unsupported. Needs the file's uploader, write on its folder, or the managing service (which must name the tenant). s3 and house storage only.",
+        "tags": [
+          "files"
+        ],
+        "summary": "Re-extract an image's capture metadata",
+        "operationId": "extractFileMediaMetadata",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "description": "File ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenant_id",
+            "in": "query",
+            "description": "Service principal only, and required for one",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.MediaMetadataResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "tenant_id_required, tenant_id_not_allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "insufficient_scope, forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "not_found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "storage_provider_mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "storage_unavailable, storage_not_configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/github_com_enforcer-files_internal_delivery_http_dto.ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/storage/folders": {
       "get": {
         "security": [
@@ -5551,7 +5769,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Multipart upload into the folder, as POST /storage/file/s3/upload (no process_image). Requires write on the folder. The object lands under the uploader's own namespace in the folder's path space. A same-path file is 409 unless it is your own upload and overwrite=true; another member's file at that path is 409 file_exists. The size is checked against the folder's quota before anything is written. s3 and house tenants only.",
+        "description": "Multipart upload into the folder, as POST /storage/file/s3/upload (no process_image). For an image, data.media_metadata carries its EXIF capture metadata (null for other files; extraction never fails the upload). Requires write on the folder. The object lands under the uploader's own namespace in the folder's path space. A same-path file is 409 unless it is your own upload and overwrite=true; another member's file at that path is 409 file_exists. The size is checked against the folder's quota before anything is written. s3 and house tenants only.",
         "tags": [
           "folders"
         ],
@@ -6500,7 +6718,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Second half of the folder presigned flow: confirms the object exists at the key, reads its real size, checks the folder's quota (on breach the object is DELETED and no row is written), and creates the row. Requires write on the folder.",
+        "description": "Second half of the folder presigned flow: confirms the object exists at the key, reads its real size, checks the folder's quota (on breach the object is DELETED and no row is written), and creates the row. Requires write on the folder. For an image, data.media_metadata carries its EXIF capture metadata read from the head of the stored object (null for other files; extraction never fails the upload).",
         "tags": [
           "folders"
         ],
@@ -7038,7 +7256,7 @@
             "ApiKeyAuth": []
           }
         ],
-        "description": "Adds one of YOUR files to a group you belong to. Idempotent — re-sharing succeeds without creating a duplicate. Tenant admins may share any file in the tenant.",
+        "description": "Adds one of YOUR files to a group you belong to, or to a group you can see in your tenant (v3 group visibility, checked with your credential) without belonging to it. Idempotent — re-sharing succeeds without creating a duplicate. Tenant admins may share any file in the tenant.",
         "tags": [
           "sharing"
         ],
@@ -7750,6 +7968,14 @@
               "file_id": {
                 "type": "string"
               },
+              "media_metadata": {
+                "description": "MediaMetadata is the image's capture metadata (EXIF); null for a\nfile that is not an image.",
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.MediaMetadata"
+                  }
+                ]
+              },
               "presigned_url": {
                 "type": "string"
               },
@@ -7990,6 +8216,170 @@
           }
         }
       },
+      "github_com_enforcer-files_internal_domain_models.MediaMetadata": {
+        "type": "object",
+        "properties": {
+          "captured_at": {
+            "description": "CapturedAt is the UTC instant of capture: DateTimeOriginal with\nOffsetTimeOriginal, else the GPS date+time stamp (already UTC), else\nabsent (captured_at_local may still be set).",
+            "type": "string",
+            "example": "2026-11-19T15:04:05Z"
+          },
+          "captured_at_local": {
+            "description": "CapturedAtLocal is DateTimeOriginal as the camera recorded it (wall\nclock, no zone), formatted 2006-01-02T15:04:05.",
+            "type": "string",
+            "example": "2026-11-19T09:04:05"
+          },
+          "captured_tz_offset_min": {
+            "description": "CapturedTZOffsetMin is OffsetTimeOriginal in minutes east of UTC.",
+            "type": "integer",
+            "example": -360
+          },
+          "device_make": {
+            "type": "string",
+            "example": "Apple"
+          },
+          "device_model": {
+            "type": "string",
+            "example": "iPhone 15"
+          },
+          "gps_altitude_m": {
+            "description": "GPSAltitudeM is metres above sea level (negative below).",
+            "type": "number",
+            "example": 131.2
+          },
+          "gps_h_accuracy_m": {
+            "description": "GPSHAccuracyM is GPSHPositioningError in metres.",
+            "type": "number",
+            "example": 4.7
+          },
+          "gps_lat": {
+            "type": "number",
+            "example": 32.7767
+          },
+          "gps_lng": {
+            "type": "number",
+            "example": -96.797
+          },
+          "height": {
+            "type": "integer",
+            "example": 3024
+          },
+          "orientation": {
+            "description": "Orientation is the EXIF orientation, 1-8.",
+            "type": "integer",
+            "example": 6
+          },
+          "status": {
+            "description": "Status is extracted, none, unsupported or failed.",
+            "type": "string",
+            "enum": [
+              "extracted",
+              "none",
+              "unsupported",
+              "failed"
+            ],
+            "example": "extracted"
+          },
+          "width": {
+            "description": "Width and Height are the stored pixel dimensions (before orientation).",
+            "type": "integer",
+            "example": 4032
+          }
+        }
+      },
+      "github_com_enforcer-files_internal_domain_models.MediaMetadataDetail": {
+        "type": "object",
+        "properties": {
+          "captured_at": {
+            "description": "CapturedAt is the UTC instant of capture: DateTimeOriginal with\nOffsetTimeOriginal, else the GPS date+time stamp (already UTC), else\nabsent (captured_at_local may still be set).",
+            "type": "string",
+            "example": "2026-11-19T15:04:05Z"
+          },
+          "captured_at_local": {
+            "description": "CapturedAtLocal is DateTimeOriginal as the camera recorded it (wall\nclock, no zone), formatted 2006-01-02T15:04:05.",
+            "type": "string",
+            "example": "2026-11-19T09:04:05"
+          },
+          "captured_tz_offset_min": {
+            "description": "CapturedTZOffsetMin is OffsetTimeOriginal in minutes east of UTC.",
+            "type": "integer",
+            "example": -360
+          },
+          "device_make": {
+            "type": "string",
+            "example": "Apple"
+          },
+          "device_model": {
+            "type": "string",
+            "example": "iPhone 15"
+          },
+          "extracted_at": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string",
+            "example": "3f1c2a4e-0000-4000-8000-000000000001"
+          },
+          "gps_altitude_m": {
+            "description": "GPSAltitudeM is metres above sea level (negative below).",
+            "type": "number",
+            "example": 131.2
+          },
+          "gps_h_accuracy_m": {
+            "description": "GPSHAccuracyM is GPSHPositioningError in metres.",
+            "type": "number",
+            "example": 4.7
+          },
+          "gps_lat": {
+            "type": "number",
+            "example": 32.7767
+          },
+          "gps_lng": {
+            "type": "number",
+            "example": -96.797
+          },
+          "height": {
+            "type": "integer",
+            "example": 3024
+          },
+          "orientation": {
+            "description": "Orientation is the EXIF orientation, 1-8.",
+            "type": "integer",
+            "example": 6
+          },
+          "raw": {
+            "description": "Raw maps EXIF tag name to value.",
+            "type": "object"
+          },
+          "status": {
+            "description": "Status is extracted, none, unsupported or failed.",
+            "type": "string",
+            "enum": [
+              "extracted",
+              "none",
+              "unsupported",
+              "failed"
+            ],
+            "example": "extracted"
+          },
+          "width": {
+            "description": "Width and Height are the stored pixel dimensions (before orientation).",
+            "type": "integer",
+            "example": 4032
+          }
+        }
+      },
+      "github_com_enforcer-files_internal_domain_models.MediaMetadataResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.MediaMetadataDetail"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
       "github_com_enforcer-files_internal_domain_models.MoveToTrashRequest": {
         "type": "object",
         "properties": {
@@ -8040,29 +8430,40 @@
         "type": "object",
         "properties": {
           "data": {
-            "type": "object",
-            "properties": {
-              "bucket": {
-                "type": "string"
-              },
-              "file_id": {
-                "type": "string"
-              },
-              "presigned_url": {
-                "type": "string"
-              },
-              "s3_response": {},
-              "url": {
-                "description": "URL is the permanent public CDN URL for the object. Only populated\nwhen the upload was server-side processed (process_image=true) AND\nthe tenant has an S3 CDN configured (cdn_root_url on its s3\nconnection); empty otherwise, so existing callers are unaffected.\nUnlike PresignedURL — which is short-TTL and scoped to the file's\nown owner — this URL is unauthenticated and renderable by anyone,\nwhich is what makes it usable as an avatar/profile picture source.",
-                "type": "string"
-              }
-            }
+            "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.UploadResponseData"
           },
           "message": {
             "type": "string"
           },
           "success": {
             "type": "boolean"
+          }
+        }
+      },
+      "github_com_enforcer-files_internal_domain_models.UploadResponseData": {
+        "type": "object",
+        "properties": {
+          "bucket": {
+            "type": "string"
+          },
+          "file_id": {
+            "type": "string"
+          },
+          "media_metadata": {
+            "description": "MediaMetadata is the image's capture metadata (EXIF), read from the\nstored bytes when the upload completed; null for a file that is not an\nimage. Extraction never fails an upload: a read or parse error is\nstatus \"failed\". Set by the s3 and folder upload routes only.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/github_com_enforcer-files_internal_domain_models.MediaMetadata"
+              }
+            ]
+          },
+          "presigned_url": {
+            "type": "string"
+          },
+          "s3_response": {},
+          "url": {
+            "description": "URL is the permanent public CDN URL for the object. Only populated\nwhen the upload was server-side processed (process_image=true) AND\nthe tenant has an S3 CDN configured (cdn_root_url on its s3\nconnection); empty otherwise, so existing callers are unaffected.\nUnlike PresignedURL — which is short-TTL and scoped to the file's\nown owner — this URL is unauthenticated and renderable by anyone,\nwhich is what makes it usable as an avatar/profile picture source.",
+            "type": "string"
           }
         }
       },
