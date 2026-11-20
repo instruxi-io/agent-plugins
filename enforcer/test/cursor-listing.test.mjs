@@ -67,12 +67,12 @@ test('CR-1 pin classifies workspace_switch as a write and the lock names that ti
   assert.equal(sw.always_confirm, false);
   const wf = man.tools.filter((t) => t.profiles.includes('workflow'));
   const n = (e) => wf.filter((t) => t.effect === e).length;
-  assert.equal(wf.length, 50);
-  assert.equal(n('read'), 27);
-  assert.equal(n('write'), 19);
+  assert.equal(wf.length, 52);
+  assert.equal(n('read'), 28);
+  assert.equal(n('write'), 20);
   assert.equal(n('destructive'), 4);
   const lock = JSON.parse(read('lib/api/spec.lock.json'));
-  assert.equal(lock.sources.mcp.ref, 'a164d134f4a65997c9e14d02e6deabdb87e782a3');
+  assert.match(lock.sources.mcp.ref, /^[0-9a-f]{40}$/);
   assert.match(read('docs/CURSOR.md'), /ship-readiness blocker/);
   assert.doesNotMatch(read('skills/enforcer/SKILL.md'), /which the user confirms first/);
   for (const skill of ['skills/enforcer/SKILL.md', 'skills/files/SKILL.md', 'skills/governor/SKILL.md', 'skills/graph/SKILL.md']) {

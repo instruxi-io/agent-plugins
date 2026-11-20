@@ -312,6 +312,15 @@
       ]
     },
     {
+      "name": "graph_assign",
+      "effect": "write",
+      "always_confirm": false,
+      "profiles": [
+        "graph",
+        "workflow"
+      ]
+    },
+    {
       "name": "graph_decide",
       "effect": "write",
       "always_confirm": false,
@@ -420,6 +429,15 @@
     },
     {
       "name": "graph_recall",
+      "effect": "read",
+      "always_confirm": false,
+      "profiles": [
+        "graph",
+        "workflow"
+      ]
+    },
+    {
+      "name": "graph_recommend",
       "effect": "read",
       "always_confirm": false,
       "profiles": [
